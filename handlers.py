@@ -1,6 +1,8 @@
 import asyncio
+import html
 import logging
 import secrets
+import traceback
 
 import httpx
 from aiogram import F, Router
@@ -37,6 +39,7 @@ class GenerationStates(StatesGroup):
         waiting_for_prompt: Состояние ожидания ввода текстового описания (промпта).
         waiting_for_title: Состояние ожидания ввода названия будущей песни.
     """
+
     waiting_for_prompt = State()
     waiting_for_title = State()
 
@@ -142,6 +145,22 @@ def get_cancel_keyboard():
     return builder.as_markup(resize_keyboard=True)
 
 
+async def notify_owner(bot, context: str, err: Exception) -> None:
+    """Логирует ошибку полностью и отправляет traceback владельцу в TG."""
+    log.exception(context)  # в лог тоже пишем — не вместо, а в дополнение
+
+    if bot is None or not config.BOT_OWNER_ID:
+        return  # бота нет (служебный апдейт) — только лог
+
+    tb = "".join(traceback.format_exception(type(err), err, err.__traceback__))
+    text = f"🐞 <b>{html.escape(context)}</b>\n<code>{html.escape(tb[-3000:])}</code>"
+
+    try:
+        await bot.send_message(config.BOT_OWNER_ID, text, parse_mode="HTML")
+    except Exception:
+        log.exception("Failed to notify owner")
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     """Обработчик команды /start.
@@ -233,7 +252,7 @@ async def cmd_credits(message: Message, state: FSMContext):
 
             def _songs_counter(value, msg):
                 """Конвертирует сумму в кол-во песен (по 0.08 у.е. за штуку)."""
-                return int(value / 0.08) if isinstance(value, (int, float)) else msg
+                return int(value / config.SONG_PRICE) if isinstance(value, (int, float)) else msg
 
             total_songs = _songs_counter(value=total, msg="Без лимита")
             used_songs = _songs_counter(value=used, msg="0")
@@ -249,8 +268,8 @@ async def cmd_credits(message: Message, state: FSMContext):
                 reply_markup=get_main_keyboard(),
             )
     except Exception as e:
-        log.exception("Credits check failed")
-        await message.answer(f"❌ Не получилось проверить остатки: {e}")
+        await notify_owner(message.bot, f"Проверка кредитов упала (user={message.from_user.id})", e)
+        await message.answer("❌ Не получилось проверить остатки. Влад уже в курсе 🙂")
 
 
 @router.message(F.text == "🎵 Сгенерировать")
@@ -295,13 +314,7 @@ async def cmd_generate(message: Message, state: FSMContext):
         "<b>Шаблон — нажмите, чтобы скопировать:</b>"
     )
 
-    template = ("Жанр: \n"
-                "Настроение: \n"
-                "Инструменты: \n"
-                "Темп и ритм: \n"
-                "Голос: \n"
-                "Текст песни: ")
-
+    template = "Жанр: \nНастроение: \nИнструменты: \nТемп и ритм: \nГолос: \nТекст песни: "
 
     await message.answer(text=text, reply_markup=get_cancel_keyboard(), parse_mode="HTML")
     await message.answer(f"<code>{template}</code>", parse_mode="HTML")
@@ -397,8 +410,12 @@ async def handle_title(message: Message, state: FSMContext):
         else:
             audio_bytes = await generation.generate_song_real(prompt)
     except Exception as e:
-        log.exception("Generation failed")
-        await status.edit_text(f"❌ Не получилось: {e}")
+        await notify_owner(
+            message.bot,
+            f"Генерация упала (user={message.from_user.id}, title={title!r})",
+            e,
+        )
+        await status.edit_text("😔 Не получилось сгенерировать. Попробуйте ещё раз чуть позже.")
         await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
         return
 
@@ -432,10 +449,8 @@ async def handle_key(message: Message):
         await message.answer("⚠️ Бот не настроен. Сообщите владельцу.")
         return
 
-    if not secrets.compare_digest(key, expected_key):
-        # Используем compare_digest против timing-атак
-        log.warning("Bad auth attempt from user %s", uid)
-        await message.answer("❌ Неверный ключ.")
+    if not secrets.compare_digest(key.encode("utf-8"), expected_key.encode("utf-8")):
+        await message.answer("❌ Неверный ключ доступа.")
         return
 
     # Upsert без гонки: add + flush, при конфликте — update
