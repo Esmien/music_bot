@@ -1,0 +1,10 @@
+services:
+  bot:
+    build: .
+    container_name: lyria-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    # Опционально: если нужен прокси через Cloudflare
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
