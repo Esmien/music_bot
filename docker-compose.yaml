@@ -5,6 +5,13 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////data/bot.db
+    volumes:
+      - db_data:/data
     # Опционально: если нужен прокси через Cloudflare
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
+
+volumes:
+  db_data:

@@ -12,4 +12,5 @@ BOT_ACCESS_KEY = os.getenv("BOT_ACCESS_KEY", "")
 MOCK_MODE = os.getenv("MOCK_MODE", "0") == "1"
 MOCK_FILE = os.getenv("MOCK_FILE", "")
 
-DATABASE_URL = "sqlite+aiosqlite:///./bot.db"
+# Путь к БД: по умолчанию локальный файл, в Docker переопределяется через переменную окружения
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./bot.db")

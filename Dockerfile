@@ -6,10 +6,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bot.py .
+COPY . .
 
-# Непривилегированный пользователь
-RUN useradd -m botuser
-USER botuser
+# Создаем непривилегированного пользователя и папку для данных
+RUN useradd -m botuser \
+    && mkdir /data \
+    && chown botuser:botuser /data
 
-CMD ["python", "-u", "bot.py"]
+# Копируем entrypoint для корректной смены прав на смонтированный том
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
