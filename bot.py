@@ -5,7 +5,6 @@ from aiogram import Bot, Dispatcher
 
 import config
 from database import init_db
-from middlewares.auth import AuthMiddleware
 from handlers import router
 
 logging.basicConfig(level=logging.INFO)
@@ -13,7 +12,6 @@ log = logging.getLogger(__name__)
 
 bot = Bot(token=config.BOT_TOKEN)
 dp = Dispatcher()
-dp.message.middleware(AuthMiddleware())
 dp.include_router(router)
 
 

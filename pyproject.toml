@@ -16,3 +16,47 @@ dependencies = [
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+# Фиксируем версию Python для правильных подсказок
+target-version = "py312"
+
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    "__pypackages__",
+    "alembic",
+    "migrations"
+]
+
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E", # Стандартные ошибки PEP8 (pycodestyle)
+    "F", # Логические ошибки, неиспользуемые переменные (Pyflakes)
+    "I", # Автоматическая сортировка импортов (isort)
+    "UP", # Автоматический апгрейд синтаксиса до Python 3.12 (pyupgrade)
+    "B", # Поиск неочевидных багов, например, mutable defaults (flake8-bugbear)
+    "C4", # Улучшение работы со списками и словарями (flake8-comprehensions)
+    "SIM", # Советы по упрощению логики кода (flake8-simplify)
+]
+
+# Какие правила игнорировать (обычно это конфликтующие с форматтером вещи)
+ignore = [
+    "B008", # Разрешаем вызовы функций в аргументах
+]
+
+[tool.ruff.format]
+# Настройки форматтера
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint.isort]
+# Группировка импортов, чтобы всё было красиво
+known-first-party = ["bot"] # Основной модуль будет отделен пустой строкой

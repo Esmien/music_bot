@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Boolean
+from sqlalchemy import Boolean, Integer
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
