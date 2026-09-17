@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import re
+import time
 
 import httpx
 
@@ -9,19 +10,57 @@ import config
 
 log = logging.getLogger(__name__)
 
+# Типичное время генерации песни — на его основе оцениваем долю прогресса,
+# т.к. поток SSE не сообщает общий размер ответа.
+TYPICAL_GENERATION_SECONDS = 75.0
+
+
+AUDIO_B64_RE = re.compile(r'data:audio/mpeg;base64,([A-Za-z0-9+/=]+)')
+
+
+def _find_audio_b64(node) -> str | None:
+    """Рекурсивно ищет base64-аудио в JSON любой структуры."""
+    if isinstance(node, str):
+        m = AUDIO_B64_RE.search(node)
+        if m:
+            return m.group(1)
+    elif isinstance(node, dict):
+        for value in node.values():
+            found = _find_audio_b64(value)
+            if found:
+                return found
+    elif isinstance(node, list):
+        for item in node:
+            found = _find_audio_b64(item)
+            if found:
+                return found
+    return None
+
 
 def load_mock_audio() -> bytes:
     with open(config.MOCK_FILE, encoding="utf-8") as f:
         data = json.load(f)
-    for msg in data[0]["chat"]["history"]["messages"].values():
-        content = msg.get("content", "")
-        m = re.search(r'src="data:audio/mpeg;base64,([^"]+)"', content)
-        if m:
-            return base64.b64decode(m.group(1))
+    b64 = _find_audio_b64(data)
+    if b64:
+        return base64.b64decode(b64)
     raise RuntimeError("Аудио не найдено в мок-файле")
 
 
-async def generate_song_real(prompt: str) -> bytes:
+async def generate_song_real(prompt: str, on_progress=None) -> bytes:
+    """Генерирует песню через OpenRouter, стримит ответ.
+
+    on_progress — опциональная корутина on_progress(stage: str, fraction: float),
+    вызывается по мере продвижения генерации (fraction в диапазоне 0..1).
+    """
+
+    async def report(stage: str, fraction: float) -> None:
+        if on_progress is None:
+            return
+        try:
+            await on_progress(stage, min(max(fraction, 0.0), 1.0))
+        except Exception:
+            log.exception("Ошибка в on_progress")
+
     headers = {
         "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
@@ -37,6 +76,13 @@ async def generate_song_real(prompt: str) -> bytes:
     }
 
     chunks: list[str] = []
+    started = time.monotonic()
+
+    async def stream_progress() -> None:
+        fraction = (time.monotonic() - started) / TYPICAL_GENERATION_SECONDS
+        await report("Получаю аудио…", fraction * 0.95)
+
+    await report("Соединяюсь с сервером…", 0.02)
     async with (
         httpx.AsyncClient(timeout=180.0) as client,
         client.stream(
@@ -63,7 +109,10 @@ async def generate_song_real(prompt: str) -> bytes:
             audio = delta.get("audio") or {}
             if audio.get("data"):
                 chunks.append(audio["data"])
+                await stream_progress()
 
     if not chunks:
         raise RuntimeError("Аудио не пришло в потоке")
+
+    await report("Собираю файл…", 0.97)
     return base64.b64decode("".join(chunks))
