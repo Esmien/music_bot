@@ -14,6 +14,10 @@ log = logging.getLogger(__name__)
 # т.к. поток SSE не сообщает общий размер ответа.
 TYPICAL_GENERATION_SECONDS = 75.0
 
+# Максимальный размер аудио в base64-символах (~30 МБ после декодирования).
+# Защита от исчерпания памяти, если сервер шлёт аномально большой поток.
+MAX_AUDIO_B64_LEN = 40 * 1024 * 1024
+
 
 AUDIO_B64_RE = re.compile(r'data:audio/mpeg;base64,([A-Za-z0-9+/=]+)')
 
@@ -76,6 +80,7 @@ async def generate_song_real(prompt: str, on_progress=None) -> bytes:
     }
 
     chunks: list[str] = []
+    total_b64 = 0
     started = time.monotonic()
 
     async def stream_progress() -> None:
@@ -105,9 +110,13 @@ async def generate_song_real(prompt: str, on_progress=None) -> bytes:
                 chunk = json.loads(s)
             except json.JSONDecodeError:
                 continue
-            delta = chunk.get("choices", [{}])[0].get("delta", {})
+            choices = chunk.get("choices") or [{}]
+            delta = choices[0].get("delta", {})
             audio = delta.get("audio") or {}
             if audio.get("data"):
+                total_b64 += len(audio["data"])
+                if total_b64 > MAX_AUDIO_B64_LEN:
+                    raise RuntimeError("Аудио в потоке превышает допустимый размер")
                 chunks.append(audio["data"])
                 await stream_progress()
 

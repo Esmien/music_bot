@@ -23,7 +23,10 @@ async def notify_owner(bot, context: str, err: Exception) -> None:
         return
 
     tb = "".join(traceback.format_exception(type(err), err, err.__traceback__))
-    text = f"🐞 <b>{html.escape(context)}</b>\n<code>{html.escape(tb[-3000:])}</code>"
+    # Обрезаем с начала: конец стека (где возникла ошибка) важнее первых кадров
+    if len(tb) > 3000:
+        tb = "…\n" + tb[-2997:]
+    text = f"🐞 <b>{html.escape(context)}</b>\n<code>{html.escape(tb)}</code>"
 
     try:
         await bot.send_message(config.BOT_OWNER_ID, text, parse_mode="HTML")

@@ -24,6 +24,10 @@ router = Router()
 # Ожидающие авторизации пользователи временно живут в памяти (множество ID)
 pending_auth: set[int] = set()
 
+# Защита от перебора ключа доступа: счётчик неудачных попыток на пользователя
+MAX_KEY_ATTEMPTS = 5
+failed_key_attempts: dict[int, int] = {}
+
 
 async def is_authorized(uid: int) -> bool:
     """Проверяет по БД, авторизован ли пользователь."""
@@ -83,6 +87,12 @@ async def handle_key(message: Message):
     uid = message.from_user.id
     key = message.text.strip()
 
+    # Удаляем сообщение с ключом, чтобы он не оставался в истории чата
+    try:
+        await message.delete()
+    except Exception:
+        log.warning("Не удалось удалить сообщение с ключом (user=%s)", uid)
+
     expected_key = config.BOT_ACCESS_KEY
     if not expected_key:
         log.error("BOT_ACCESS_KEY не настроен — авторизация невозможна")
@@ -90,8 +100,18 @@ async def handle_key(message: Message):
         return
 
     if not secrets.compare_digest(key.encode("utf-8"), expected_key.encode("utf-8")):
+        attempts = failed_key_attempts.get(uid, 0) + 1
+        failed_key_attempts[uid] = attempts
+        if attempts >= MAX_KEY_ATTEMPTS:
+            pending_auth.discard(uid)
+            failed_key_attempts.pop(uid, None)
+            log.warning("Исчерпаны попытки ввода ключа (user=%s)", uid)
+            await message.answer("❌ Слишком много неверных попыток. Отправьте /start, чтобы начать заново.")
+            return
         await message.answer("❌ Неверный ключ доступа.")
         return
+
+    failed_key_attempts.pop(uid, None)
 
     async with SessionLocal() as session:
         result = await session.execute(select(User).where(User.tg_id == uid))

@@ -45,7 +45,9 @@ async def cmd_credits(message: Message, state: FSMContext):
 
             def _songs_counter(value, msg):
                 """Конвертирует сумму в примерное кол-во песен."""
-                return int(value / config.SONG_PRICE) if isinstance(value, (int, float)) else msg
+                if isinstance(value, (int, float)) and config.SONG_PRICE > 0:
+                    return int(value / config.SONG_PRICE)
+                return msg
 
             total_songs = _songs_counter(total, "Без лимита")
             used_songs = _songs_counter(used, "0")
