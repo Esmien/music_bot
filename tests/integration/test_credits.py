@@ -42,9 +42,7 @@ def patch_key_info(monkeypatch):
     """Подменяет httpx.AsyncClient в хендлере кредитов на заглушку."""
 
     def _install(response):
-        monkeypatch.setattr(
-            handlers_credits.httpx, "AsyncClient", lambda **kwargs: FakeAsyncClient(response)
-        )
+        monkeypatch.setattr(handlers_credits.httpx, "AsyncClient", lambda **kwargs: FakeAsyncClient(response))
 
     return _install
 
@@ -55,9 +53,7 @@ async def _make_authorized_user(sessionmaker, tg_id: int) -> None:
         await session.commit()
 
 
-async def test_cmd_credits_counts_songs(
-    patched_auth_db, clean_auth_state, make_message, fake_state, patch_key_info
-):
+async def test_cmd_credits_counts_songs(patched_auth_db, clean_auth_state, make_message, fake_state, patch_key_info):
     # SONG_PRICE=0.5 из тестового окружения: одна генерация стоит 0.5$
     await _make_authorized_user(patched_auth_db, tg_id=7)
     patch_key_info(FakeKeyInfoResponse(data={"limit": 5.0, "usage": 1.5, "limit_remaining": 3.5}))
@@ -71,9 +67,7 @@ async def test_cmd_credits_counts_songs(
     assert "Доступное количество генераций: 7" in text
 
 
-async def test_cmd_credits_without_limit(
-    patched_auth_db, clean_auth_state, make_message, fake_state, patch_key_info
-):
+async def test_cmd_credits_without_limit(patched_auth_db, clean_auth_state, make_message, fake_state, patch_key_info):
     await _make_authorized_user(patched_auth_db, tg_id=8)
     patch_key_info(FakeKeyInfoResponse(data={"usage": 1.0}))
 
@@ -99,9 +93,7 @@ async def test_cmd_credits_api_error_status(
     assert f"Ошибка запроса: {status_code}" in msg.answers[0]
 
 
-async def test_cmd_credits_network_failure(
-    patched_auth_db, clean_auth_state, make_message, fake_state, patch_key_info
-):
+async def test_cmd_credits_network_failure(patched_auth_db, clean_auth_state, make_message, fake_state, patch_key_info):
     await _make_authorized_user(patched_auth_db, tg_id=10)
     patch_key_info(RuntimeError("connection refused"))
 

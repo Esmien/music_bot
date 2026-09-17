@@ -19,7 +19,7 @@ TYPICAL_GENERATION_SECONDS = 75.0
 MAX_AUDIO_B64_LEN = 40 * 1024 * 1024
 
 
-AUDIO_B64_RE = re.compile(r'data:audio/mpeg;base64,([A-Za-z0-9+/=]+)')
+AUDIO_B64_RE = re.compile(r"data:audio/mpeg;base64,([A-Za-z0-9+/=]+)")
 
 
 def _find_audio_b64(node) -> str | None:

@@ -24,7 +24,6 @@ import database  # noqa: E402
 from handlers import auth as handlers_auth  # noqa: E402
 from handlers.auth import failed_key_attempts  # noqa: E402
 from handlers.state import pending_auth  # noqa: E402
-from models import Base  # noqa: E402
 
 
 @pytest.fixture

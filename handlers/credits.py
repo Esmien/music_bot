@@ -64,9 +64,7 @@ async def cmd_credits(message: Message, state: FSMContext):
 
             total_songs = _songs_counter(total, "Без лимита")
             used_songs = _songs_counter(used, "0")
-            remaining_songs = _songs_counter(
-                remaining, "Пока не кончится бабосик или Влад не вспомнит про лимит 😁"
-            )
+            remaining_songs = _songs_counter(remaining, "Пока не кончится бабосик или Влад не вспомнит про лимит 😁")
 
             await message.answer(
                 f"💳 Баланс песен:\n"
