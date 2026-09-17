@@ -16,7 +16,7 @@ from models import User
 
 from .filters import IsPendingAuth, NotCommand
 from .keyboards import get_main_keyboard
-from .state import pending_auth
+from .state import active_tasks, pending_auth
 
 log = logging.getLogger(__name__)
 
@@ -85,6 +85,11 @@ async def cmd_start(message: Message, state: FSMContext):
 @router.message(F.text == "🚪 Выйти")
 async def cmd_logout(message: Message, state: FSMContext):
     """Выход: снимает авторизацию в БД и очищает состояние ожидания."""
+    # Гасим живую генерацию, если она есть: иначе после logout пользователю
+    # всё равно прилетит песня.
+    task = active_tasks.get(message.from_user.id)
+    if task is not None and not task.done():
+        task.cancel()
     await state.clear()
     uid = message.from_user.id
     pending_auth.discard(uid)

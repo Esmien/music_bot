@@ -16,6 +16,7 @@ from services import generation as generation_service
 
 from .auth import _require_auth, is_authorized
 from .keyboards import get_cancel_keyboard, get_main_keyboard
+from .state import active_tasks
 from .utils import notify_owner
 
 log = logging.getLogger(__name__)
@@ -28,6 +29,19 @@ MAX_TITLE_LEN = 100
 
 # Минимальный интервал между правками сообщения прогресса (лимиты Telegram)
 PROGRESS_EDIT_INTERVAL = 3.0
+
+# Пер-пользовательские локи: превращают проверку-и-установку флага generating
+# в атомарную — иначе два параллельных апдейта оба пройдут проверку.
+_generation_locks: dict[int, asyncio.Lock] = {}
+
+
+def _generation_lock(user_id: int) -> asyncio.Lock:
+    """Возвращает лок генерации для пользователя, создавая при необходимости."""
+    lock = _generation_locks.get(user_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _generation_locks[user_id] = lock
+    return lock
 
 
 def _progress_bar(fraction: float, width: int = 10) -> str:
@@ -49,70 +63,101 @@ async def _generate_and_send(
     message: Message, state: FSMContext, prompt: str, title: str, user_id: int
 ) -> None:
     """Генерит аудио и шлёт его. При ошибке оставляет состояние живым для повтора."""
-    # Маркер текущей генерации: защищает от параллельных запусков и от
-    # затирания нового FSM-состояния поздно завершившейся старой генерацией.
-    gen_id = uuid4().hex
-    await state.update_data(generating=True, gen_id=gen_id)
-
-    await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_DOCUMENT)
-    status = await message.answer("🎼 Генерирую… Это может занять до 1–2 минут.")
-
-    loop = asyncio.get_running_loop()
-    # Отрицательный старт, чтобы первый же вызов on_progress не отсеялся интервалом
-    last_edit = -PROGRESS_EDIT_INTERVAL
-
-    async def on_progress(stage: str, fraction: float) -> None:
-        nonlocal last_edit
-        now = loop.time()
-        if now - last_edit < PROGRESS_EDIT_INTERVAL:
-            return
-        last_edit = now
-        text = f"🎼 {stage}\n{_progress_bar(fraction)} {int(fraction * 100)}%"
-        with contextlib.suppress(Exception):
-            await status.edit_text(text)
-
+    task = asyncio.current_task()
     try:
-        if config.MOCK_MODE:
-            for i in (0.2, 0.5, 0.8):
-                await on_progress("Генерирую (демо-режим)…", i)
-                # Спим дольше интервала правки, иначе демо-прогресс не виден
-                await asyncio.sleep(PROGRESS_EDIT_INTERVAL + 0.1)
-            await on_progress("Собираю файл…", 0.97)
-            audio_bytes = generation_service.load_mock_audio()
-        else:
-            audio_bytes = await generation_service.generate_song_real(prompt, on_progress)
-    except Exception as e:
-        # Сбой уведомления не должен лишить пользователя кнопки ретрая
-        with contextlib.suppress(Exception):
-            await notify_owner(
-                message.bot,
-                f"Генерация упала (user={user_id}, title={title!r})",
-                e,
-            )
-        # Состояние НЕ чистим: prompt и title остались в FSM, повтор бесплатный.
-        # Флаг снимаем только если генерация всё ещё актуальна.
-        if (await state.get_data()).get("gen_id") == gen_id:
-            await state.update_data(generating=False)
-        retry_kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="retry_generation")]
-            ]
-        )
-        with contextlib.suppress(Exception):
-            await status.edit_text(
-                "😔 Не получилось сгенерировать. Попробуйте ещё раз чуть позже.",
-                reply_markup=retry_kb,
-            )
-        return
+        # Лок делает проверку-и-установку флага атомарной: между get_data() и
+        # update_data нет точки, куда мог бы вклиниться параллельный апдейт.
+        async with _generation_lock(user_id):
+            if (await state.get_data()).get("generating"):
+                await message.answer(
+                    "⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена»."
+                )
+                return
+            # Маркер текущей генерации: защищает от параллельных запусков и от
+            # затирания нового FSM-состояния поздно завершившейся старой генерацией.
+            gen_id = uuid4().hex
+            await state.update_data(generating=True, gen_id=gen_id)
+            # Регистрируем задачу под локом: «активной» становится только та
+            # генерация, что прошла проверку, — иначе cancel() погасил бы
+            # задачу, которая лишь ждёт лок, а не реально генерирует.
+            active_tasks[user_id] = task
 
-    # Чистим состояние, только если это всё ещё актуальная генерация:
-    # иначе «поздний» успех после «❌ Отмена» затрёт состояние новой сессии.
-    if (await state.get_data()).get("gen_id") == gen_id:
-        await state.clear()
-    safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in title)[:80] or "song"
-    file = BufferedInputFile(audio_bytes, filename=f"{safe_title}.mp3")
-    await message.answer_audio(file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
-    await status.delete()
+        await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_DOCUMENT)
+        status = await message.answer("🎼 Генерирую… Это может занять до 1–2 минут.")
+
+        loop = asyncio.get_running_loop()
+        # Отрицательный старт, чтобы первый же вызов on_progress не отсеялся интервалом
+        last_edit = -PROGRESS_EDIT_INTERVAL
+
+        async def on_progress(stage: str, fraction: float) -> None:
+            nonlocal last_edit
+            now = loop.time()
+            if now - last_edit < PROGRESS_EDIT_INTERVAL:
+                return
+            last_edit = now
+            text = f"🎼 {stage}\n{_progress_bar(fraction)} {int(fraction * 100)}%"
+            with contextlib.suppress(Exception):
+                await status.edit_text(text)
+
+        try:
+            if config.MOCK_MODE:
+                for i in (0.2, 0.5, 0.8):
+                    await on_progress("Генерирую (демо-режим)…", i)
+                    # Спим дольше интервала правки, иначе демо-прогресс не виден
+                    await asyncio.sleep(PROGRESS_EDIT_INTERVAL + 0.1)
+                await on_progress("Собираю файл…", 0.97)
+                audio_bytes = generation_service.load_mock_audio()
+            else:
+                audio_bytes = await generation_service.generate_song_real(prompt, on_progress)
+        except asyncio.CancelledError:
+            # Честная отмена (из cmd_cancel_generation / cmd_logout): убираем
+            # «ползущее» сообщение прогресса и пробрасываем CancelledError —
+            # задача обязана завершиться именно как отменённая, иначе
+            # рассинхрон с event-loop (task.cancelled() == False).
+            with contextlib.suppress(Exception):
+                await status.delete()
+            # Флаг обычно уже стёрт state.clear() в отменившем хендлере; снимаем
+            # сами, только если состояние всё ещё наше (отмена пришла раньше).
+            if (await state.get_data()).get("gen_id") == gen_id:
+                await state.update_data(generating=False)
+            raise
+        except Exception as e:
+            # Сбой уведомления не должен лишить пользователя кнопки ретрая
+            with contextlib.suppress(Exception):
+                await notify_owner(
+                    message.bot,
+                    f"Генерация упала (user={user_id}, title={title!r})",
+                    e,
+                )
+            # Состояние НЕ чистим: prompt и title остались в FSM, повтор бесплатный.
+            # Флаг снимаем только если генерация всё ещё актуальна.
+            if (await state.get_data()).get("gen_id") == gen_id:
+                await state.update_data(generating=False)
+            retry_kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="retry_generation")]
+                ]
+            )
+            with contextlib.suppress(Exception):
+                await status.edit_text(
+                    "😔 Не получилось сгенерировать. Попробуйте ещё раз чуть позже.",
+                    reply_markup=retry_kb,
+                )
+            return
+
+        # Чистим состояние, только если это всё ещё актуальная генерация:
+        # иначе «поздний» успех после «❌ Отмена» затрёт состояние новой сессии.
+        if (await state.get_data()).get("gen_id") == gen_id:
+            await state.clear()
+        safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in title)[:80] or "song"
+        file = BufferedInputFile(audio_bytes, filename=f"{safe_title}.mp3")
+        await message.answer_audio(file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
+        await status.delete()
+    finally:
+        # Снимаем регистрацию только своей записи: за время генерации могла
+        # начаться новая (другая задача) — её запись не трогаем.
+        if active_tasks.get(user_id) is task:
+            active_tasks.pop(user_id, None)
 
 
 class GenerationStates(StatesGroup):
@@ -181,6 +226,11 @@ async def cmd_generate(message: Message, state: FSMContext):
 @router.message(GenerationStates.waiting_for_title, F.text == "❌ Отмена")
 async def cmd_cancel_generation(message: Message, state: FSMContext):
     """Отмена генерации по кнопке "❌ Отмена"."""
+    # Гасим живую задачу генерации, если она есть: иначе она продолжит крутиться
+    # и позже «внезапно» пришлёт песню или «😔 Не получилось» поверх отмены.
+    task = active_tasks.get(message.from_user.id)
+    if task is not None and not task.done():
+        task.cancel()
     await state.clear()
     await message.answer("❌ Генерация отменена.", reply_markup=get_main_keyboard())
 
