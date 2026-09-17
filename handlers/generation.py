@@ -1,6 +1,7 @@
 """Процесс генерации песни: FSM-состояния, промпт, название, отправка аудио."""
 
 import asyncio
+import contextlib
 import logging
 
 from aiogram import F, Router
@@ -173,11 +174,9 @@ async def handle_title(message: Message, state: FSMContext):
             return
         last_edit = now
         text = f"🎼 {stage}\n{_progress_bar(fraction)} {int(fraction * 100)}%"
-        try:
+        # Игнорируем "message is not modified" и прочие мелкие сбои правки
+        with contextlib.suppress(Exception):
             await status.edit_text(text)
-        except Exception:
-            # Игнорируем "message is not modified" и прочие мелкие сбои правки
-            pass
 
     try:
         if config.MOCK_MODE:
