@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import math
 import re
 import time
 
@@ -106,9 +107,10 @@ async def generate_song_real(prompt: str, on_progress=None) -> bytes:
     started = time.monotonic()
 
     async def stream_progress() -> None:
-        # SSE не сообщает общий размер, поэтому прогресс оцениваем по времени:
-        # 0.95 — оставляем визуальный "хвост" на финальную сборку файла
-        fraction = (time.monotonic() - started) / TYPICAL_GENERATION_SECONDS
+        # Асимптота 1 - exp(-t/τ): даже если генерация затянется вдвое против
+        # типичной, индикатор продолжает ползти, а не замирает на 95%
+        elapsed = time.monotonic() - started
+        fraction = 1.0 - math.exp(-elapsed / TYPICAL_GENERATION_SECONDS)
         await report("Получаю аудио…", fraction * 0.95)
 
     await report("Соединяюсь с сервером…", 0.02)

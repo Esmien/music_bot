@@ -8,7 +8,7 @@ from aiogram import F, Router
 from aiogram.enums import ChatAction
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import BufferedInputFile, Message
+from aiogram.types import BufferedInputFile, Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 import config
 from services import generation as generation_service
@@ -42,6 +42,64 @@ def _progress_bar(fraction: float, width: int = 10) -> str:
     # round, а не int: при fraction=0.5 полоса выглядит наполовину заполненной
     filled = round(fraction * width)
     return "█" * filled + "░" * (width - filled)
+
+
+async def _generate_and_send(
+    message: Message, state: FSMContext, prompt: str, title: str, user_id: int
+) -> None:
+    """Генерит аудио и шлёт его. При ошибке оставляет состояние живым для повтора."""
+    await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_DOCUMENT)
+    status = await message.answer("🎼 Генерирую… Это может занять до 1–2 минут.")
+
+    loop = asyncio.get_running_loop()
+    # Отрицательный старт, чтобы первый же вызов on_progress не отсеялся интервалом
+    last_edit = -PROGRESS_EDIT_INTERVAL
+
+    async def on_progress(stage: str, fraction: float) -> None:
+        nonlocal last_edit
+        now = loop.time()
+        if now - last_edit < PROGRESS_EDIT_INTERVAL:
+            return
+        last_edit = now
+        text = f"🎼 {stage}\n{_progress_bar(fraction)} {int(fraction * 100)}%"
+        with contextlib.suppress(Exception):
+            await status.edit_text(text)
+
+    try:
+        if config.MOCK_MODE:
+            for i in (0.2, 0.5, 0.8):
+                await on_progress("Генерирую (демо-режим)…", i)
+                # Спим дольше интервала правки, иначе демо-прогресс не виден
+                await asyncio.sleep(PROGRESS_EDIT_INTERVAL + 0.1)
+            await on_progress("Собираю файл…", 0.97)
+            audio_bytes = generation_service.load_mock_audio()
+        else:
+            audio_bytes = await generation_service.generate_song_real(prompt, on_progress)
+    except Exception as e:
+        await notify_owner(
+            message.bot,
+            f"Генерация упала (user={user_id}, title={title!r})",
+            e,
+        )
+        # Состояние НЕ чистим: prompt и title остались в FSM, повтор бесплатный
+        retry_kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="retry_generation")]
+            ]
+        )
+        with contextlib.suppress(Exception):
+            await status.edit_text(
+                "😔 Не получилось сгенерировать. Попробуйте ещё раз чуть позже.",
+                reply_markup=retry_kb,
+            )
+        return
+
+    # Только теперь, когда файл реально у нас, можно чистить состояние
+    await state.clear()
+    safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in title)[:80] or "song"
+    file = BufferedInputFile(audio_bytes, filename=f"{safe_title}.mp3")
+    await message.answer_audio(file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
+    await status.delete()
 
 
 class GenerationStates(StatesGroup):
@@ -158,49 +216,28 @@ async def handle_title(message: Message, state: FSMContext):
 
     data = await state.get_data()
     prompt = data.get("prompt", "")
-    await state.clear()
+    # title кладём в FSM — пригодится для retry
+    await state.update_data(title=title)
 
-    await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_VOICE)
-    status = await message.answer("🎼 Генерирую… Это может занять до 1–2 минут.")
+    await _generate_and_send(message, state, prompt, title, message.from_user.id)
 
-    loop = asyncio.get_running_loop()
-    last_edit = 0.0
 
-    async def on_progress(stage: str, fraction: float) -> None:
-        """Обновляет сообщение статуса не чаще, чем раз в PROGRESS_EDIT_INTERVAL сек."""
-        nonlocal last_edit
-        now = loop.time()
-        if now - last_edit < PROGRESS_EDIT_INTERVAL:
-            return
-        last_edit = now
-        text = f"🎼 {stage}\n{_progress_bar(fraction)} {int(fraction * 100)}%"
-        # Игнорируем "message is not modified" и прочие мелкие сбои правки
-        with contextlib.suppress(Exception):
-            await status.edit_text(text)
+@router.callback_query(F.data == "retry_generation")
+async def retry_generation(callback: CallbackQuery, state: FSMContext):
+    """Перезапуск генерации с сохранёнными prompt и title после сбоя."""
+    data = await state.get_data()
+    prompt = data.get("prompt", "")
+    title = data.get("title", "")
 
-    try:
-        if config.MOCK_MODE:
-            # Режим заглушки для тестов: имитируем прогресс и отдаём файл с диска
-            for i in (0.2, 0.5, 0.8):
-                await on_progress("Генерирую (демо-режим)…", i)
-                await asyncio.sleep(1)
-            await on_progress("Собираю файл…", 0.97)
-            audio_bytes = generation_service.load_mock_audio()
-        else:
-            audio_bytes = await generation_service.generate_song_real(prompt, on_progress)
-    except Exception as e:
-        await notify_owner(
-            message.bot,
-            f"Генерация упала (user={message.from_user.id}, title={title!r})",
-            e,
-        )
-        await status.edit_text("😔 Не получилось сгенерировать. Попробуйте ещё раз чуть позже.")
-        await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
+    if not prompt:
+        # Состояние потерялось (перезапуск бота?) — честно просим начать заново
+        await callback.answer("Начните заново: 🎵 Сгенерировать", show_alert=True)
+        await state.clear()
         return
 
-    # Telegram не любит спецсимволы в именах файлов: заменяем их на "_",
-    # ограничиваем длину и подстраховываемся от пустой строки
-    safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in title)[:80] or "song"
-    file = BufferedInputFile(audio_bytes, filename=f"{safe_title}.mp3")
-    await message.answer_audio(file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
-    await status.delete()
+    # Старое сообщение с кнопкой удаляем, чтобы не плодить «😔» в истории
+    with contextlib.suppress(Exception):
+        await callback.message.delete()
+    await callback.answer()
+
+    await _generate_and_send(callback.message, state, prompt, title, callback.from_user.id)
