@@ -187,3 +187,14 @@ async def test_generate_song_real_rejects_oversized_audio(patch_openrouter, monk
 
     with pytest.raises(RuntimeError, match="превышает допустимый размер"):
         await gen.generate_song_real("промпт")
+
+
+async def test_generate_song_real_swallows_progress_errors(patch_openrouter):
+    """Сбой колбека прогресса не должен ронять генерацию."""
+
+    async def broken_on_progress(stage: str, fraction: float) -> None:
+        raise RuntimeError("progress blew up")
+
+    patch_openrouter(FakeStreamResponse([_audio_chunk(_b64(b"ABC")), "data: [DONE]"]))
+
+    assert await gen.generate_song_real("промпт", broken_on_progress) == b"ABC"

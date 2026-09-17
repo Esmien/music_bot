@@ -20,8 +20,14 @@ pytestmark = pytest.mark.unit
     ],
 )
 def test_progress_bar(fraction, width, expected):
+    """Полоса строится по round(fraction * width): заполненные и пустые блоки.
+
+    Отдельно покрываем округление вверх (0.99 → полная) и вниз
+    (0.04 → пустая), а также нестандартную ширину.
+    """
     assert _progress_bar(fraction, width) == expected
 
 
 def test_progress_bar_default_width():
+    """Без указания ширины используется значение по умолчанию (10)."""
     assert _progress_bar(0.0) == "░" * 10

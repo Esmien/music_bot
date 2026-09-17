@@ -11,6 +11,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def clean_pending_auth():
+    """Чистый pending_auth до и после теста."""
     pending_auth.clear()
     yield
     pending_auth.clear()
@@ -27,6 +28,10 @@ def clean_pending_auth():
     ],
 )
 async def test_not_command(text, expected):
+    """NotCommand пропускает любой текст, кроме начинающегося с '/'.
+
+    Отсутствие текста (None) тоже считается не-командой.
+    """
     message = Message.model_construct(text=text)
     assert await NotCommand()(message) is expected
 

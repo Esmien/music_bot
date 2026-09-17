@@ -69,20 +69,56 @@ def clean_auth_state():
 
 @pytest.fixture
 def make_message():
-    """Фабрика сообщений-заглушек: копит ответы бота и факт удаления."""
+    """Фабрика сообщений-заглушек для хендлеров генерации и авторизации.
+
+    FakeMessage копит текстовые ответы (answers), отправленные сообщения
+    с историей правок (sent — нужно для проверки прогресс-бара), аудио,
+    факт удаления и chat actions. fail_delete имитирует сбой удаления
+    сообщения (например, недостаточно прав у бота).
+    """
+
+    class FakeBot:
+        def __init__(self):
+            self.chat_actions = []
+
+        async def send_chat_action(self, chat_id, action):
+            self.chat_actions.append(action)
 
     class FakeMessage:
         def __init__(self, text=None, uid=1):
             self.text = text
             self.from_user = SimpleNamespace(id=uid)
-            self.bot = SimpleNamespace()
+            self.chat = SimpleNamespace(id=uid)
+            self.bot = FakeBot()
             self.answers = []
+            self.sent = []
+            self.audios = []
             self.deleted = False
+            self.fail_delete = False
 
         async def answer(self, text, **kwargs):
             self.answers.append(text)
+            sent = SimpleNamespace(text=text, edits=[], deleted=False)
+
+            async def edit_text(new_text, **kw):
+                sent.text = new_text
+                sent.edits.append(new_text)
+                return sent
+
+            async def delete():
+                sent.deleted = True
+
+            sent.edit_text = edit_text
+            sent.delete = delete
+            self.sent.append(sent)
+            return sent
+
+        async def answer_audio(self, file, **kwargs):
+            self.audios.append(file)
 
         async def delete(self):
+            if self.fail_delete:
+                raise RuntimeError("delete failed")
             self.deleted = True
 
     return FakeMessage
@@ -90,13 +126,29 @@ def make_message():
 
 @pytest.fixture
 def fake_state():
-    """Фабрика FSM-контекстов-заглушек, запоминающих вызов clear()."""
+    """Фабрика FSM-контекстов-заглушек с хранилищем данных в памяти.
+
+    Помимо факта clear() запоминает текущее состояние (set_state) и
+    держит словарь данных (get_data/update_data), как настоящий FSMContext.
+    """
 
     class FakeState:
         def __init__(self):
             self.cleared = False
+            self.state = None
+            self._data = {}
 
         async def clear(self):
             self.cleared = True
+            self._data.clear()
+
+        async def get_data(self):
+            return dict(self._data)
+
+        async def update_data(self, **kwargs):
+            self._data.update(kwargs)
+
+        async def set_state(self, state):
+            self.state = state
 
     return FakeState

@@ -11,6 +11,7 @@ pytestmark = pytest.mark.integration
 
 
 async def test_user_roundtrip(db_sessionmaker):
+    """Запись User сохраняется и читается обратно с теми же полями."""
     async with db_sessionmaker() as session:
         session.add(User(tg_id=7, is_authorized=True))
         await session.commit()
@@ -21,6 +22,7 @@ async def test_user_roundtrip(db_sessionmaker):
 
 
 async def test_duplicate_tg_id_rejected(db_sessionmaker):
+    """Один tg_id не может встречаться дважды — уникальность на уровне БД."""
     async with db_sessionmaker() as session:
         session.add(User(tg_id=1000))
         await session.commit()
@@ -32,5 +34,8 @@ async def test_duplicate_tg_id_rejected(db_sessionmaker):
 
 
 async def test_init_db_is_idempotent(db_sessionmaker):
-    # Схема уже создана фикстурой — повторный прогон init_db не должен падать
+    """Повторный вызов init_db() не падает и не трогает существующие таблицы.
+
+    Схема уже создана фикстурой db_sessionmaker.
+    """
     await database.init_db()

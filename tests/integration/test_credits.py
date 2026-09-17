@@ -54,7 +54,11 @@ async def _make_authorized_user(sessionmaker, tg_id: int) -> None:
 
 
 async def test_cmd_credits_counts_songs(patched_auth_db, clean_auth_state, make_message, fake_state, patch_key_info):
-    # SONG_PRICE=0.5 из тестового окружения: одна генерация стоит 0.5$
+    """Баланс пересчитывается из долларов в количество песен.
+
+    SONG_PRICE=0.5 из тестового окружения: одна генерация стоит 0.5$,
+    поэтому лимит 5.0$ → 10 песен, трата 1.5$ → 3 песни, остаток 3.5$ → 7.
+    """
     await _make_authorized_user(patched_auth_db, tg_id=7)
     patch_key_info(FakeKeyInfoResponse(data={"limit": 5.0, "usage": 1.5, "limit_remaining": 3.5}))
 
@@ -68,6 +72,11 @@ async def test_cmd_credits_counts_songs(patched_auth_db, clean_auth_state, make_
 
 
 async def test_cmd_credits_without_limit(patched_auth_db, clean_auth_state, make_message, fake_state, patch_key_info):
+    """API без поля limit считается безлимитным.
+
+    Если OpenRouter не вернул limit, total показывается как
+    «Без лимита», а остаток — как «Пока не кончится бабосик».
+    """
     await _make_authorized_user(patched_auth_db, tg_id=8)
     patch_key_info(FakeKeyInfoResponse(data={"usage": 1.0}))
 
@@ -101,3 +110,21 @@ async def test_cmd_credits_network_failure(patched_auth_db, clean_auth_state, ma
     await handlers_credits.cmd_credits(msg, fake_state())
 
     assert "Не получилось проверить остатки" in msg.answers[0]
+
+
+async def test_cmd_credits_without_api_key(
+    patched_auth_db, clean_auth_state, make_message, fake_state, monkeypatch
+):
+    """Без OPENROUTER_API_KEY команда сразу предупреждает о ненастроенном боте.
+
+    Запрос к API не выполняется — уходит ровно одно сообщение.
+    """
+    await _make_authorized_user(patched_auth_db, tg_id=11)
+    monkeypatch.setattr(handlers_credits.config, "OPENROUTER_API_KEY", "")
+
+    msg = make_message(uid=11)
+    await handlers_credits.cmd_credits(msg, fake_state())
+
+    assert "Бот не настроен (API)" in msg.answers[0]
+    assert msg.answers[0]  # ровно одно сообщение: после проверки ключа выходим
+    assert len(msg.answers) == 1
