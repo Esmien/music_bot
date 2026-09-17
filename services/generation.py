@@ -114,10 +114,17 @@ async def generate_song_real(prompt: str, on_progress=None) -> bytes:
             delta = choices[0].get("delta", {})
             audio = delta.get("audio") or {}
             if audio.get("data"):
-                total_b64 += len(audio["data"])
+                data = audio["data"]
+                # Защита от кумулятивных чанков: если сервер шлёт не дельты,
+                # а полные снимки аудио, каждый следующий чанк начинается
+                # с предыдущего. Тогда заменяем, а не добавляем.
+                if chunks and data.startswith(chunks[-1]):
+                    total_b64 -= len(chunks[-1])
+                    chunks.pop()
+                total_b64 += len(data)
                 if total_b64 > MAX_AUDIO_B64_LEN:
                     raise RuntimeError("Аудио в потоке превышает допустимый размер")
-                chunks.append(audio["data"])
+                chunks.append(data)
                 await stream_progress()
 
     if not chunks:
