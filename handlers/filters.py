@@ -12,8 +12,7 @@ class IsPendingAuth(Filter):
     """
 
     async def __call__(self, message: Message) -> bool:
-        # Ленивый импорт, чтобы избежать цикла filters <-> auth
-        from .auth import pending_auth
+        from .state import pending_auth
 
         return message.from_user is not None and message.from_user.id in pending_auth
 

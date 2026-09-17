@@ -16,13 +16,11 @@ from models import User
 
 from .filters import IsPendingAuth, NotCommand
 from .keyboards import get_main_keyboard
+from .state import pending_auth
 
 log = logging.getLogger(__name__)
 
 router = Router()
-
-# Ожидающие авторизации пользователи временно живут в памяти (множество ID)
-pending_auth: set[int] = set()
 
 # Защита от перебора ключа доступа: счётчик неудачных попыток на пользователя
 MAX_KEY_ATTEMPTS = 5
