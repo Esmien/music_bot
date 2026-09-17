@@ -20,7 +20,8 @@ log = logging.getLogger(__name__)
 
 router = Router()
 
-MAX_PROMPT_LEN = 800
+# Полный текст песни (куплеты + припевы) в среднем занимает 1500–3000 символов
+MAX_PROMPT_LEN = 4000
 MAX_TITLE_LEN = 100
 
 # Минимальный интервал между правками сообщения прогресса (лимиты Telegram)
