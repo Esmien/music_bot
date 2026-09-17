@@ -112,9 +112,7 @@ async def test_cmd_credits_network_failure(patched_auth_db, clean_auth_state, ma
     assert "Не получилось проверить остатки" in msg.answers[0]
 
 
-async def test_cmd_credits_without_api_key(
-    patched_auth_db, clean_auth_state, make_message, fake_state, monkeypatch
-):
+async def test_cmd_credits_without_api_key(patched_auth_db, clean_auth_state, make_message, fake_state, monkeypatch):
     """Без OPENROUTER_API_KEY команда сразу предупреждает о ненастроенном боте.
 
     Запрос к API не выполняется — уходит ровно одно сообщение.

@@ -1,7 +1,5 @@
 """Юнит-тесты вспомогательных функций (уведомление владельца)."""
 
-from types import SimpleNamespace
-
 import pytest
 
 import config

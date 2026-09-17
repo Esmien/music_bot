@@ -10,11 +10,12 @@ from types import SimpleNamespace
 import pytest
 
 import config
-
 from handlers import generation as handlers_generation
+from handlers import generation_pipeline as pipeline
 from handlers.generation import GenerationStates
 from handlers.state import active_tasks as registry
 from models import User
+from services import generation as generation_service
 
 pytestmark = pytest.mark.integration
 
@@ -52,7 +53,7 @@ async def _make_authorized_user(sessionmaker, tg_id: int) -> None:
 
 
 def _install_generation(monkeypatch, impl):
-    monkeypatch.setattr(handlers_generation.generation_service, "generate_song_real", impl)
+    monkeypatch.setattr(generation_service, "generate_song_real", impl)
 
 
 async def test_cmd_generate_sends_hint_and_sets_state(
@@ -273,7 +274,7 @@ async def test_generate_and_send_blocked_inside_lock(
 ):
     """Guard внутри лока: если generating уже выставлен — второй запуск ничего не делает.
 
-    Покрывает строки 89–92 _generate_and_send: параллельный запуск,
+    Покрывает guard в generate_and_send: параллельный запуск,
     проскочивший внешнюю проверку в handle_title, атомарно отсекается
     под _generation_lock — пользователь получает «Дождитесь окончания»,
     сервис генерации не вызывается.
@@ -289,7 +290,7 @@ async def test_generate_and_send_blocked_inside_lock(
     await state.update_data(generating=True, prompt="промпт")
     msg = make_message(uid=60)
 
-    await handlers_generation._generate_and_send(msg, state, "промпт", "Название", 60)
+    await pipeline.generate_and_send(msg, state, "промпт", "Название", 60)
 
     assert "Дождитесь окончания" in msg.answers[-1]
     assert len(msg.audios) == 0
@@ -307,10 +308,8 @@ async def test_mock_mode_generates_audio(
     """
     monkeypatch.setattr(config, "MOCK_MODE", True)
     # Ускоряем демо-прогресс, иначе тест спит ~9 секунд
-    monkeypatch.setattr(handlers_generation, "PROGRESS_EDIT_INTERVAL", 0.01)
-    monkeypatch.setattr(
-        handlers_generation.generation_service, "load_mock_audio", lambda: b"mock-audio"
-    )
+    monkeypatch.setattr(pipeline, "PROGRESS_EDIT_INTERVAL", 0.01)
+    monkeypatch.setattr(generation_service, "load_mock_audio", lambda: b"mock-audio")
 
     async def unexpected_generate(prompt, on_progress=None):
         raise AssertionError("в mock-режиме generate_song_real не вызывается")
@@ -334,7 +333,7 @@ async def test_cancelled_generation_deletes_status_and_unsets_flag(
 ):
     """Честная отмена генерации (строки 121–126).
 
-    Покрывает обработчик CancelledError в _generate_and_send: сообщение
+    Покрывает обработчик CancelledError в generate_and_send: сообщение
     прогресса удаляется, флаг generating снимается (gen_id совпадает —
     отмена пришла раньше нового состояния), CancelledError пробрасывается
     дальше, задача снимается с реестра. Задача запускается явно через
@@ -345,9 +344,7 @@ async def test_cancelled_generation_deletes_status_and_unsets_flag(
     async def hanging_generate(prompt, on_progress=None):
         await asyncio.sleep(60)
 
-    monkeypatch.setattr(
-        handlers_generation.generation_service, "generate_song_real", hanging_generate
-    )
+    monkeypatch.setattr(generation_service, "generate_song_real", hanging_generate)
 
     state = fake_state()
     await state.update_data(prompt="промпт")
@@ -391,7 +388,7 @@ async def test_generation_failure_notifies_owner(
     async def fake_notify_owner(bot, context, err):
         notified.append((context, err))
 
-    monkeypatch.setattr(handlers_generation, "notify_owner", fake_notify_owner)
+    monkeypatch.setattr(pipeline, "notify_owner", fake_notify_owner)
 
     state = fake_state()
     await state.update_data(prompt="промпт")
