@@ -29,12 +29,27 @@ PROGRESS_EDIT_INTERVAL = 3.0
 
 
 def _progress_bar(fraction: float, width: int = 10) -> str:
+    """Строит текстовый индикатор прогресса вида `████░░░░░░`.
+
+    Args:
+        fraction: Доля выполнения, 0..1.
+        width: Ширина полосы в символах.
+
+    Returns:
+        Строка с заполненными и пустыми блоками.
+    """
+    # round, а не int: при fraction=0.5 полоса выглядит наполовину заполненной
     filled = round(fraction * width)
     return "█" * filled + "░" * (width - filled)
 
 
 class GenerationStates(StatesGroup):
-    """FSM-состояния процесса генерации песни."""
+    """FSM-состояния процесса генерации песни.
+
+    Атрибуты:
+        waiting_for_prompt: Ждём описание/текст песни.
+        waiting_for_title: Ждём название трека.
+    """
 
     waiting_for_prompt = State()
     waiting_for_title = State()
@@ -42,7 +57,11 @@ class GenerationStates(StatesGroup):
 
 @router.message(F.text == "🎵 Сгенерировать")
 async def cmd_generate(message: Message, state: FSMContext):
-    """Старт генерации: показывает подсказку и запрашивает описание песни."""
+    """Старт генерации: показывает подсказку и запрашивает описание песни.
+
+    Два сообщения подряд: сначала расширенная подсказка, затем
+    копируемый шаблон в <code> — так его удобно вставить и заполнить.
+    """
     if not await _require_auth(message):
         return
 
@@ -92,7 +111,12 @@ async def cmd_cancel_generation(message: Message, state: FSMContext):
 
 @router.message(GenerationStates.waiting_for_prompt, F.text)
 async def handle_prompt(message: Message, state: FSMContext):
-    """Принимает и валидирует описание песни, запрашивает название."""
+    """Принимает и валидирует описание песни, запрашивает название.
+
+    Если пользователь заполнил шаблон (есть маркеры вида "Жанр:"),
+    промпт оборачивается в бриф с явным указанием петь по-русски.
+    Если пришли просто стихи — используется более мягкая формулировка.
+    """
     prompt = message.text.strip()
 
     if not prompt:
@@ -157,7 +181,7 @@ async def handle_title(message: Message, state: FSMContext):
 
     try:
         if config.MOCK_MODE:
-            # Режим заглушки для тестов без обращения к внешним API
+            # Режим заглушки для тестов: имитируем прогресс и отдаём файл с диска
             for i in (0.2, 0.5, 0.8):
                 await on_progress("Генерирую (демо-режим)…", i)
                 await asyncio.sleep(1)
@@ -175,7 +199,8 @@ async def handle_title(message: Message, state: FSMContext):
         await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
         return
 
-    # Очищаем имя файла от спецсимволов, ограничиваем длину
+    # Telegram не любит спецсимволы в именах файлов: заменяем их на "_",
+    # ограничиваем длину и подстраховываемся от пустой строки
     safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in title)[:80] or "song"
     file = BufferedInputFile(audio_bytes, filename=f"{safe_title}.mp3")
     await message.answer_audio(file, caption="🎵 Готово!", reply_markup=get_main_keyboard())

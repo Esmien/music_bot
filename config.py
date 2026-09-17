@@ -1,7 +1,15 @@
+"""Конфигурация проекта: чтение переменных окружения.
+
+Все настройки собираются здесь в одном месте — остальные модули
+импортируют только этот файл, ничего не читая из окружения напрямую.
+"""
+
 import os
 
 from dotenv import load_dotenv
 
+# Подхватываем .env из корня проекта при локальном запуске;
+# в Docker переменные приходят через environment/docker-compose
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
@@ -19,5 +27,6 @@ SONG_PRICE = float(_song_price)
 MOCK_MODE = os.getenv("MOCK_MODE", "0") == "1"
 MOCK_FILE = os.getenv("MOCK_FILE", "")
 
-# Путь к БД: по умолчанию локальный файл, в Docker переопределяется через переменную окружения
+# Путь к БД: по умолчанию локальный файл, в Docker переопределяется через переменную окружения.
+# aiosqlite — асинхронный драйвер, обязателен для SQLAlchemy в async-режиме
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./bot.db")

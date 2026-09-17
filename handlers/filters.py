@@ -8,7 +8,7 @@ class IsPendingAuth(Filter):
     """Фильтр: пользователь ожидает авторизации (ввод ключа доступа).
 
     Класс вместо лямбды — чтобы корректно обрабатывать служебные
-    апдейты без поля from_user.
+    апдейты без поля from_user (например, some channel posts).
     """
 
     async def __call__(self, message: Message) -> bool:

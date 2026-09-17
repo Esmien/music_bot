@@ -22,7 +22,12 @@ router = Router()
 @router.message(Command("credits"))
 @router.message(F.text == "💳 Кредиты")
 async def cmd_credits(message: Message, state: FSMContext):
-    """Показывает остаток генераций по данным API OpenRouter."""
+    """Показывает остаток генераций по данным API OpenRouter.
+
+    Args:
+        message: Входящее сообщение (команда или нажатие кнопки).
+        state: FSM-контекст; сбрасываем, чтобы прервать незавершённую генерацию.
+    """
     if not await _require_auth(message):
         return
     await state.clear()
@@ -44,7 +49,15 @@ async def cmd_credits(message: Message, state: FSMContext):
             used = credits_.get("usage")
 
             def _songs_counter(value, msg):
-                """Конвертирует сумму в примерное кол-во песен."""
+                """Конвертирует сумму в долларах в примерное количество песен.
+
+                Args:
+                    value: Сумма (int/float) или None, если API не вернул значение.
+                    msg: Заглушка для случая, когда посчитать нельзя.
+
+                Returns:
+                    Целое число песен либо msg, если value не число или цена не задана.
+                """
                 if isinstance(value, (int, float)) and config.SONG_PRICE > 0:
                     return int(value / config.SONG_PRICE)
                 return msg

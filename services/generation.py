@@ -23,7 +23,17 @@ AUDIO_B64_RE = re.compile(r'data:audio/mpeg;base64,([A-Za-z0-9+/=]+)')
 
 
 def _find_audio_b64(node) -> str | None:
-    """Рекурсивно ищет base64-аудио в JSON любой структуры."""
+    """Рекурсивно ищет base64-аудио в JSON любой структуры.
+
+    Структура ответа модели не зафиксирована контрактом, поэтому
+    обходим узлы наугад, а не по заранее известным полям.
+
+    Args:
+        node: Узел JSON — строка, dict или list.
+
+    Returns:
+        Base64-строка аудио или None, если ничего не найдено.
+    """
     if isinstance(node, str):
         m = AUDIO_B64_RE.search(node)
         if m:
@@ -51,10 +61,22 @@ def load_mock_audio() -> bytes:
 
 
 async def generate_song_real(prompt: str, on_progress=None) -> bytes:
-    """Генерирует песню через OpenRouter, стримит ответ.
+    """Генерирует песню через OpenRouter, читая ответ как SSE-поток.
 
-    on_progress — опциональная корутина on_progress(stage: str, fraction: float),
-    вызывается по мере продвижения генерации (fraction в диапазоне 0..1).
+    Аудио приходит кусками в base64 внутри delta-чанков, поэтому
+    собираем их в список и декодируем в конце.
+
+    Args:
+        prompt: Промпт для модели (описание песни / текст).
+        on_progress: Опциональная корутина `on_progress(stage, fraction)`,
+            вызывается по мере продвижения; fraction в диапазоне 0..1.
+
+    Returns:
+        Байты готового mp3-файла.
+
+    Raises:
+        RuntimeError: Если сервер вернул не-200, аудио не пришло в потоке,
+            или поток превысил MAX_AUDIO_B64_LEN.
     """
 
     async def report(stage: str, fraction: float) -> None:
@@ -84,6 +106,8 @@ async def generate_song_real(prompt: str, on_progress=None) -> bytes:
     started = time.monotonic()
 
     async def stream_progress() -> None:
+        # SSE не сообщает общий размер, поэтому прогресс оцениваем по времени:
+        # 0.95 — оставляем визуальный "хвост" на финальную сборку файла
         fraction = (time.monotonic() - started) / TYPICAL_GENERATION_SECONDS
         await report("Получаю аудио…", fraction * 0.95)
 
@@ -110,6 +134,7 @@ async def generate_song_real(prompt: str, on_progress=None) -> bytes:
                 chunk = json.loads(s)
             except json.JSONDecodeError:
                 continue
+            # Пустой choices — легитимный случай для некоторых промежуточных чанков
             choices = chunk.get("choices") or [{}]
             delta = choices[0].get("delta", {})
             audio = delta.get("audio") or {}

@@ -17,12 +17,28 @@ log = logging.getLogger(__name__)
 
 
 async def on_error(event: ErrorEvent, bot: Bot):
-    """Глобальный обработчик не пойманных исключений в хендлерах."""
+    """Глобальный обработчик непойманных исключений в хендлерах.
+
+    Регистрируется в Dispatcher.errors. Возвращаем True, чтобы aiogram
+    считал ошибку обработанной и не пробовал другие обработчики ошибок.
+
+    Args:
+        event: Служебный апдейт с подробностями ошибки.
+        bot: Экземпляр бота, через который шлём уведомление владельцу.
+
+    Returns:
+        Всегда True — ошибка считается обработанной.
+    """
     await notify_owner(bot, f"Необработанная ошибка: {event.update.update_id}", event.exception)
     return True
 
 
 async def main() -> None:
+    """Точка входа: настраивает логирование, БД, Bot и Dispatcher, запускает polling.
+
+    Сессия бота закрывается в finally, чтобы при любой ошибке
+    не оставлять открытые HTTP-соединения.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
@@ -40,7 +56,7 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()
-    dp.include_router(router)  # регистрация роутера из пакета handlers
+    dp.include_router(router)  # все хендлеры собраны в один роутер пакета handlers
     dp.errors.register(on_error)
 
     try:

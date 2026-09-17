@@ -9,8 +9,8 @@ from aiogram import Router
 from . import auth, credits, generation
 
 router = Router()
-# Порядок важен: обработчики с состояниями и команды должны быть
-# зарегистрированы раньше catch-all fallback из auth.
+# Порядок важен: aiogram проверяет хендлеры по очереди,
+# поэтому catch-all fallback из auth должен быть последним.
 router.include_router(generation.router)
 router.include_router(credits.router)
 router.include_router(auth.router)

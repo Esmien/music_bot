@@ -2,16 +2,22 @@ services:
   bot:
     build: .
     container_name: lyria-bot
+    # Перезапускать при падении и после перезагрузки хоста,
+    # но не при явном docker compose stop
     restart: unless-stopped
+    # Все настройки бота читаются из .env в корне проекта
     env_file:
       - .env
     environment:
+      # В контейнере БД живёт на томе; четыре слэша дают абсолютный путь /data/bot.db
       - DATABASE_URL=sqlite+aiosqlite:////data/bot.db
     volumes:
+      # Именованный том: база переживает пересоздание контейнера
       - db_data:/data
     # Опционально: если нужен прокси через Cloudflare
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
 
+# Хранилище базы данных SQLite
 volumes:
   db_data:

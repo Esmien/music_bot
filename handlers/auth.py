@@ -22,13 +22,21 @@ log = logging.getLogger(__name__)
 
 router = Router()
 
-# Защита от перебора ключа доступа: счётчик неудачных попыток на пользователя
+# Защита от перебора ключа доступа: счётчик неудачных попыток на пользователя.
+# Как и pending_auth, живёт в памяти и сбрасывается при перезапуске
 MAX_KEY_ATTEMPTS = 5
 failed_key_attempts: dict[int, int] = {}
 
 
 async def is_authorized(uid: int) -> bool:
-    """Проверяет по БД, авторизован ли пользователь."""
+    """Проверяет по БД, авторизован ли пользователь.
+
+    Args:
+        uid: Telegram user_id.
+
+    Returns:
+        True, если пользователь найден и is_authorized=True.
+    """
     async with SessionLocal() as session:
         result = await session.execute(select(User).where(User.tg_id == uid))
         db_user = result.scalar_one_or_none()
@@ -36,7 +44,15 @@ async def is_authorized(uid: int) -> bool:
 
 
 async def _require_auth(message: Message) -> bool:
-    """Гарантирует авторизацию перед действием; иначе уведомляет пользователя."""
+    """Гарантирует авторизацию перед действием.
+
+    Args:
+        message: Входящее сообщение от пользователя.
+
+    Returns:
+        True, если пользователь авторизован; иначе отправляет
+        подсказку и возвращает False.
+    """
     uid = message.from_user.id
     if uid in pending_auth or not await is_authorized(uid):
         await message.answer("Сначала отправьте ключ доступа.", reply_markup=ReplyKeyboardRemove())
@@ -46,7 +62,11 @@ async def _require_auth(message: Message) -> bool:
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
-    """/start: приветствие и проверка статуса авторизации."""
+    """/start: приветствие и проверка статуса авторизации.
+
+    Неавторизованным добавляет их в pending_auth — дальше
+    ввод ключа перехватит handle_key через фильтр IsPendingAuth.
+    """
     await state.clear()
     uid = message.from_user.id
     if await is_authorized(uid):
@@ -119,6 +139,7 @@ async def handle_key(message: Message):
         else:
             try:
                 session.add(User(tg_id=uid, is_authorized=True))
+                # flush вместо commit: IntegrityError поймаем до фиксации транзакции
                 await session.flush()
             except IntegrityError:
                 # На случай параллельной вставки того же пользователя
