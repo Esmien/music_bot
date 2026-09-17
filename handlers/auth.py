@@ -64,8 +64,14 @@ async def _require_auth(message: Message) -> bool:
 async def cmd_start(message: Message, state: FSMContext):
     """/start: приветствие и проверка статуса авторизации.
 
-    Неавторизованным добавляет их в pending_auth — дальше
+    Точка входа для нового пользователя. Авторизованным отправляет
+    приветствие с основной клавиатурой, неавторизованным — предложение
+    отправить ключ доступа, попутно добавляя их в pending_auth: дальше
     ввод ключа перехватит handle_key через фильтр IsPendingAuth.
+
+    Args:
+        message: Входящее сообщение с командой /start.
+        state: FSM-контекст; очищается, чтобы сбросить незавершённые сценарии.
     """
     await state.clear()
     uid = message.from_user.id
@@ -84,7 +90,17 @@ async def cmd_start(message: Message, state: FSMContext):
 @router.message(Command("logout"))
 @router.message(F.text == "🚪 Выйти")
 async def cmd_logout(message: Message, state: FSMContext):
-    """Выход: снимает авторизацию в БД и очищает состояние ожидания."""
+    """Выход: снимает авторизацию в БД и очищает состояние ожидания.
+
+    Отзывает доступ (is_authorized=False в БД), удаляет пользователя
+    из pending_auth и сбрасывает FSM. Параллельно гасит активную
+    генерацию, если она запущена, — иначе после выхода пользователю
+    всё равно пришла бы готовая песня.
+
+    Args:
+        message: Входящее сообщение (команда /logout или кнопка «🚪 Выйти»).
+        state: FSM-контекст текущего пользователя.
+    """
     # Гасим живую генерацию, если она есть: иначе после logout пользователю
     # всё равно прилетит песня.
     task = active_tasks.get(message.from_user.id)
@@ -106,7 +122,18 @@ async def cmd_logout(message: Message, state: FSMContext):
 
 @router.message(F.text, NotCommand(), IsPendingAuth())
 async def handle_key(message: Message):
-    """Обработка ключа доступа от неавторизованного пользователя."""
+    """Обработка ключа доступа от неавторизованного пользователя.
+
+    Сразу удаляет сообщение с ключом, чтобы он не остался в истории чата.
+    Ключ сравнивается с BOT_ACCESS_KEY через secrets.compare_digest
+    (защита от timing-атак). После MAX_KEY_ATTEMPTS неверных попыток
+    пользователь выбывает из pending_auth и должен начать с /start.
+    При успехе создаёт либо авторизует запись User в БД и снимает
+    статус ожидания ключа.
+
+    Args:
+        message: Входящее сообщение с ключом доступа.
+    """
     uid = message.from_user.id
     key = message.text.strip()
 
@@ -161,7 +188,17 @@ async def handle_key(message: Message):
 
 @router.message(F.text, NotCommand())
 async def fallback(message: Message):
-    """Fallback для нераспознанных текстовых сообщений (регистрируется последним)."""
+    """Fallback для нераспознанных текстовых сообщений.
+
+    Регистрируется последним, поэтому срабатывает, только если текст
+    не подошёл ни одному более специфичному хендлеру. Сообщения от
+    ожидающих ввод ключа пользователей пропускает (их обработает
+    handle_key), неавторизованным напоминает про /start, авторизованным —
+    про управление кнопками.
+
+    Args:
+        message: Входящее текстовое сообщение.
+    """
     uid = message.from_user.id
     if uid in pending_auth:
         return  # пусть обработает handle_key

@@ -3,6 +3,8 @@
 from aiogram.filters import Filter
 from aiogram.types import Message
 
+from .state import pending_auth
+
 
 class IsPendingAuth(Filter):
     """Фильтр: пользователь ожидает авторизации (ввод ключа доступа).
@@ -12,8 +14,6 @@ class IsPendingAuth(Filter):
     """
 
     async def __call__(self, message: Message) -> bool:
-        from .state import pending_auth
-
         return message.from_user is not None and message.from_user.id in pending_auth
 
 

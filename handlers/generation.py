@@ -62,11 +62,28 @@ def _progress_bar(fraction: float, width: int = 10) -> str:
 async def _generate_and_send(
     message: Message, state: FSMContext, prompt: str, title: str, user_id: int
 ) -> None:
-    """Генерит аудио и шлёт его. При ошибке оставляет состояние живым для повтора."""
+    """Генерирует аудио и отправляет его в чат.
+
+    Запускается как фоновая задача из handle_title и retry_generation.
+    Под локом проверяет и выставляет флаг generating в FSM (защита от
+    параллельных запусков) и регистрирует себя в active_tasks, чтобы
+    генерацию можно было погасить из cmd_cancel_generation / cmd_logout.
+    По ходу дела правит сообщение-статус с прогресс-баром (не чаще
+    PROGRESS_EDIT_INTERVAL). При ошибке оставляет prompt и title в FSM
+    и вешает кнопку повтора; при отмене убирает сообщение прогресса и
+    пробрасывает CancelledError. Успех завершается отправкой аудио и
+    очисткой FSM — но только если генерация всё ещё актуальна.
+
+    Args:
+        message: Сообщение, от имени которого шлются статусы и аудио.
+        state: FSM-контекст пользователя.
+        prompt: Подготовленное описание песни.
+        title: Название трека (используется и в имени файла).
+        user_id: Telegram user_id владельца генерации.
+    """
     task = asyncio.current_task()
     try:
-        # Лок делает проверку-и-установку флага атомарной: между get_data() и
-        # update_data нет точки, куда мог бы вклиниться параллельный апдейт.
+        # Атомарная проверка-и-установка флага generating (см. _generation_locks).
         async with _generation_lock(user_id):
             if (await state.get_data()).get("generating"):
                 await message.answer(
@@ -176,8 +193,14 @@ class GenerationStates(StatesGroup):
 async def cmd_generate(message: Message, state: FSMContext):
     """Старт генерации: показывает подсказку и запрашивает описание песни.
 
-    Два сообщения подряд: сначала расширенная подсказка, затем
+    Доступна только авторизованным и не во время идущей генерации.
+    Шлёт два сообщения подряд: сначала расширенную подсказку, затем
     копируемый шаблон в <code> — так его удобно вставить и заполнить.
+    После этого переводит FSM в ожидание описания песни.
+
+    Args:
+        message: Входящее сообщение (кнопка «🎵 Сгенерировать»).
+        state: FSM-контекст текущего пользователя.
     """
     if not await _require_auth(message):
         return
@@ -225,7 +248,16 @@ async def cmd_generate(message: Message, state: FSMContext):
 @router.message(GenerationStates.waiting_for_prompt, F.text == "❌ Отмена")
 @router.message(GenerationStates.waiting_for_title, F.text == "❌ Отмена")
 async def cmd_cancel_generation(message: Message, state: FSMContext):
-    """Отмена генерации по кнопке "❌ Отмена"."""
+    """Отмена генерации по кнопке «❌ Отмена».
+
+    Гасит живую задачу генерации из active_tasks (та удалит сообщение
+    прогресса и завершится как отменённая), сбрасывает FSM и возвращает
+    основную клавиатуру.
+
+    Args:
+        message: Входящее сообщение с кнопкой «❌ Отмена».
+        state: FSM-контекст текущего пользователя.
+    """
     # Гасим живую задачу генерации, если она есть: иначе она продолжит крутиться
     # и позже «внезапно» пришлёт песню или «😔 Не получилось» поверх отмены.
     task = active_tasks.get(message.from_user.id)
@@ -242,6 +274,12 @@ async def handle_prompt(message: Message, state: FSMContext):
     Если пользователь заполнил шаблон (есть маркеры вида "Жанр:"),
     промпт оборачивается в бриф с явным указанием петь по-русски.
     Если пришли просто стихи — используется более мягкая формулировка.
+    Подготовленный промпт сохраняется в FSM, состояние переключается
+    на ожидание названия.
+
+    Args:
+        message: Входящее сообщение с описанием песни.
+        state: FSM-контекст текущего пользователя.
     """
     prompt = message.text.strip()
 
@@ -272,7 +310,15 @@ async def handle_prompt(message: Message, state: FSMContext):
 
 @router.message(GenerationStates.waiting_for_title, F.text)
 async def handle_title(message: Message, state: FSMContext):
-    """Принимает название, генерирует песню и отправляет аудиофайл."""
+    """Принимает название, генерирует песню и отправляет аудиофайл.
+
+    Валидирует название, сохраняет его в FSM (пригодится для повтора
+    после сбоя) и запускает фоновую задачу _generate_and_send.
+
+    Args:
+        message: Входящее сообщение с названием песни.
+        state: FSM-контекст текущего пользователя.
+    """
     title = message.text.strip()
     if not title:
         await message.answer("Пожалуйста, введите непустое название.")
@@ -294,7 +340,18 @@ async def handle_title(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "retry_generation")
 async def retry_generation(callback: CallbackQuery, state: FSMContext):
-    """Перезапуск генерации с сохранёнными prompt и title после сбоя."""
+    """Перезапуск генерации с сохранёнными prompt и title после сбоя.
+
+    Доступен только авторизованным и не во время идущей генерации:
+    кнопка повтора могла остаться в чате после logout или запуска
+    новой генерации. Если сохранённый промпт потерялся (например,
+    после перезапуска бота), предлагает начать заново. Перед запуском
+    удаляет старое сообщение с кнопкой, чтобы не плодить «😔» в истории.
+
+    Args:
+        callback: Нажатие на кнопку «🔄 Попробовать снова».
+        state: FSM-контекст текущего пользователя.
+    """
     # Кнопка могла остаться в чате после logout — без этой проверки
     # отозванный ключ позволил бы продолжать генерацию.
     if not await is_authorized(callback.from_user.id):

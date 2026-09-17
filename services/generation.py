@@ -1,3 +1,5 @@
+"""Генерация песни через OpenRouter: SSE-поток, сборка base64-аудио, прогресс."""
+
 import base64
 import json
 import logging
@@ -53,6 +55,17 @@ def _find_audio_b64(node) -> str | None:
 
 
 def load_mock_audio() -> bytes:
+    """Читает аудио из мок-файла, указанного в config.MOCK_FILE.
+
+    Мок-файл — JSON, внутри которого рекурсивно ищется base64-строка
+    с аудио в формате data-URI.
+
+    Returns:
+        Байты mp3-файла из мока.
+
+    Raises:
+        RuntimeError: Если аудио в мок-файле не найдено.
+    """
     with open(config.MOCK_FILE, encoding="utf-8") as f:
         data = json.load(f)
     b64 = _find_audio_b64(data)
