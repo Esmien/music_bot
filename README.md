@@ -17,6 +17,7 @@
 - **SQLAlchemy 2 + aiosqlite** — асинхронная работа с SQLite
 - **httpx** — запросы к OpenRouter, чтение SSE-потока
 - **python-dotenv** — конфигурация через `.env`
+- **Poetry** — управление зависимостями (`pyproject.toml` + `poetry.lock`)
 - **Docker + docker compose** — развёртывание
 
 ## Структура проекта
@@ -36,7 +37,7 @@ handlers/
 └── utils.py         # уведомления владельцу об ошибках
 services/
 └── generation.py    # запрос к OpenRouter (SSE) и мок-режим
-Dockerfile · docker-compose.yaml · entrypoint.sh
+pyproject.toml · poetry.lock · Dockerfile · docker-compose.yaml · entrypoint.sh
 ~~~
 
 ## Переменные окружения
@@ -80,10 +81,8 @@ docker compose logs -f
 ## Локальный запуск (без Docker)
 
 ~~~bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python bot.py
+poetry install
+poetry run python bot.py
 ~~~
 
 ## Как пользоваться

@@ -1,0 +1,28 @@
+# Секреты и локальное окружение не должны попадать в образ
+.git
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets/
+*.db
+*.sqlite3
+
+# Кэши инструментов
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.venv
+venv
+
+# Тесты и инфраструктура сборки в рантайме не нужны
+tests/
+Dockerfile
+docker-compose.yaml
+.dockerignore

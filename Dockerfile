@@ -3,10 +3,15 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Зависимости отдельным слоем: пока requirements.txt не меняется,
+# Зависимости отдельным слоем: пока pyproject.toml и poetry.lock не меняются,
 # Docker берёт слой из кэша и не переустанавливает пакеты
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml poetry.lock ./
+
+# Poetry ставит пакеты прямо в системный site-packages, без виртуального
+# окружения; --only main — без dev-зависимостей, --no-root — без установки
+# самого пакета проекта
+RUN pip install --no-cache-dir poetry==2.2.1 \
+    && poetry install --only main --no-root
 
 COPY . .
 
