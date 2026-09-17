@@ -60,3 +60,30 @@ line-ending = "auto"
 [tool.ruff.lint.isort]
 # Группировка импортов, чтобы всё было красиво
 known-first-party = ["bot"] # Основной модуль будет отделен пустой строкой
+
+[tool.pytest.ini_options]
+# Режим "auto" — то самое "always": async-тесты и фикстуры выполняются
+# без @pytest.mark.asyncio и ручных обёрток
+asyncio_mode = "auto"
+# Явный scope цикла событий для фикстур — без него pytest-asyncio
+# сыплет deprecation-предупреждения при каждом запуске
+asyncio_default_fixture_loop_scope = "function"
+# Корень проекта в sys.path: тесты импортируют config, models, handlers напрямую
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "unit: быстрые изолированные тесты (сеть и БД замоканы)",
+    "integration: тесты с реальной in-memory БД",
+]
+# Покрытие включено по умолчанию; источники заданы в [tool.coverage.run]
+addopts = "--cov --cov-report=term-missing:skip-covered"
+
+[tool.coverage.run]
+# Измеряем только код проекта — тесты и зависимости не считаем.
+# bot.py не включён: это точка входа с polling, в тестах не импортируется,
+# из-за чего coverage предупреждал "Module bot was never imported"
+source = ["config", "database", "models", "handlers", "services"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
