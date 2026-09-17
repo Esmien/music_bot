@@ -10,7 +10,8 @@ COPY pyproject.toml poetry.lock ./
 # Poetry ставит пакеты прямо в системный site-packages, без виртуального
 # окружения; --only main — без dev-зависимостей, --no-root — без установки
 # самого пакета проекта
-RUN pip install --no-cache-dir poetry==2.2.1 \
+RUN pip install --no-cache-dir poetry \
+    && poetry config virtualenvs.create false \
     && poetry install --only main --no-root
 
 COPY . .
