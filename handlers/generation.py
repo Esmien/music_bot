@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+from uuid import uuid4
 
 from aiogram import F, Router
 from aiogram.enums import ChatAction
@@ -13,7 +14,7 @@ from aiogram.types import BufferedInputFile, Message, InlineKeyboardMarkup, Inli
 import config
 from services import generation as generation_service
 
-from .auth import _require_auth
+from .auth import _require_auth, is_authorized
 from .keyboards import get_cancel_keyboard, get_main_keyboard
 from .utils import notify_owner
 
@@ -48,6 +49,11 @@ async def _generate_and_send(
     message: Message, state: FSMContext, prompt: str, title: str, user_id: int
 ) -> None:
     """Генерит аудио и шлёт его. При ошибке оставляет состояние живым для повтора."""
+    # Маркер текущей генерации: защищает от параллельных запусков и от
+    # затирания нового FSM-состояния поздно завершившейся старой генерацией.
+    gen_id = uuid4().hex
+    await state.update_data(generating=True, gen_id=gen_id)
+
     await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_DOCUMENT)
     status = await message.answer("🎼 Генерирую… Это может занять до 1–2 минут.")
 
@@ -76,12 +82,17 @@ async def _generate_and_send(
         else:
             audio_bytes = await generation_service.generate_song_real(prompt, on_progress)
     except Exception as e:
-        await notify_owner(
-            message.bot,
-            f"Генерация упала (user={user_id}, title={title!r})",
-            e,
-        )
-        # Состояние НЕ чистим: prompt и title остались в FSM, повтор бесплатный
+        # Сбой уведомления не должен лишить пользователя кнопки ретрая
+        with contextlib.suppress(Exception):
+            await notify_owner(
+                message.bot,
+                f"Генерация упала (user={user_id}, title={title!r})",
+                e,
+            )
+        # Состояние НЕ чистим: prompt и title остались в FSM, повтор бесплатный.
+        # Флаг снимаем только если генерация всё ещё актуальна.
+        if (await state.get_data()).get("gen_id") == gen_id:
+            await state.update_data(generating=False)
         retry_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="retry_generation")]
@@ -94,8 +105,10 @@ async def _generate_and_send(
             )
         return
 
-    # Только теперь, когда файл реально у нас, можно чистить состояние
-    await state.clear()
+    # Чистим состояние, только если это всё ещё актуальная генерация:
+    # иначе «поздний» успех после «❌ Отмена» затрёт состояние новой сессии.
+    if (await state.get_data()).get("gen_id") == gen_id:
+        await state.clear()
     safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in title)[:80] or "song"
     file = BufferedInputFile(audio_bytes, filename=f"{safe_title}.mp3")
     await message.answer_audio(file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
@@ -122,6 +135,10 @@ async def cmd_generate(message: Message, state: FSMContext):
     копируемый шаблон в <code> — так его удобно вставить и заполнить.
     """
     if not await _require_auth(message):
+        return
+
+    if (await state.get_data()).get("generating"):
+        await message.answer("⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
         return
 
     text = (
@@ -215,6 +232,9 @@ async def handle_title(message: Message, state: FSMContext):
         return
 
     data = await state.get_data()
+    if data.get("generating"):
+        await message.answer("⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
+        return
     prompt = data.get("prompt", "")
     # title кладём в FSM — пригодится для retry
     await state.update_data(title=title)
@@ -225,7 +245,18 @@ async def handle_title(message: Message, state: FSMContext):
 @router.callback_query(F.data == "retry_generation")
 async def retry_generation(callback: CallbackQuery, state: FSMContext):
     """Перезапуск генерации с сохранёнными prompt и title после сбоя."""
+    # Кнопка могла остаться в чате после logout — без этой проверки
+    # отозванный ключ позволил бы продолжать генерацию.
+    if not await is_authorized(callback.from_user.id):
+        await callback.answer("Доступ закрыт. Авторизуйтесь заново: /start", show_alert=True)
+        await state.clear()
+        return
+
     data = await state.get_data()
+    if data.get("generating"):
+        await callback.answer("Генерация уже идёт.", show_alert=True)
+        return
+
     prompt = data.get("prompt", "")
     title = data.get("title", "")
 
