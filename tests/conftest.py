@@ -124,8 +124,8 @@ def make_message():
             self.sent.append(sent)
             return sent
 
-        async def answer_audio(self, file, **kwargs):
-            self.audios.append(file)
+        async def answer_audio(self, audio, **kwargs):
+            self.audios.append(audio)
 
         async def delete(self):
             if self.fail_delete:

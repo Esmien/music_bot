@@ -274,7 +274,7 @@ async def _deliver_result(run: GenerationRun, status: Message, audio_bytes: byte
         await run.state.clear()
     safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in run.title)[:80] or "song"
     file = BufferedInputFile(file=audio_bytes, filename=f"{safe_title}.mp3")
-    await run.message.answer_audio(file=file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
+    await run.message.answer_audio(audio=file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
     await status.delete()
 
 
