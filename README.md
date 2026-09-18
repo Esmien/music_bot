@@ -17,6 +17,7 @@
 - **SQLAlchemy 2 + aiosqlite** — асинхронная работа с SQLite
 - **httpx** — запросы к OpenRouter, чтение SSE-потока
 - **python-dotenv** — конфигурация через `.env`
+- **Pytest + pytest-asyncio** — юнит- и интеграционные тесты
 - **Poetry** — управление зависимостями (`pyproject.toml` + `poetry.lock`)
 - **Docker + docker compose** — развёртывание
 
@@ -25,11 +26,14 @@
 ~~~text
 bot.py               # точка входа: Bot, Dispatcher, polling
 config.py            # все настройки из переменных окружения
-database.py          # async-движок и фабрика сессий SQLAlchemy
-models.py            # ORM-модели (User)
+database/
+├── engine.py        # async-движок, фабрика сессий, init_db
+└── models.py        # ORM-модели (User)
 handlers/
 ├── auth.py          # /start, ввод ключа доступа, /logout, fallback
 ├── generation.py    # FSM-сценарий генерации песни
+├── generation_fsm.py       # FSM-состояния и лимиты диалога генерации
+├── generation_pipeline.py  # конвейер генерации: локи, прогресс, отмена, сбои
 ├── credits.py       # остаток генераций
 ├── keyboards.py     # reply-клавиатуры
 ├── filters.py       # кастомные фильтры
@@ -37,6 +41,7 @@ handlers/
 └── utils.py         # уведомления владельцу об ошибках
 services/
 └── generation.py    # запрос к OpenRouter (SSE) и мок-режим
+tests/               # юнит- и интеграционные тесты
 pyproject.toml · poetry.lock · Dockerfile · docker-compose.yaml · entrypoint.sh
 ~~~
 
@@ -83,6 +88,12 @@ docker compose logs -f
 ~~~bash
 poetry install
 poetry run python bot.py
+~~~
+
+## Тесты
+
+~~~bash
+poetry run pytest
 ~~~
 
 ## Как пользоваться
