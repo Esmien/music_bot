@@ -9,7 +9,6 @@
 import asyncio
 import contextlib
 import logging
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -24,6 +23,7 @@ from aiogram.types import (
 
 import config
 from services import generation as generation_service
+from services.generation import ProgressCallback
 
 from .keyboards import get_main_keyboard
 from .state import active_tasks
@@ -33,9 +33,6 @@ log = logging.getLogger(__name__)
 
 # Минимальный интервал между правками сообщения прогресса (лимиты Telegram)
 PROGRESS_EDIT_INTERVAL = 3.0
-
-# Колбек прогресса: `on_progress(stage, fraction)`, fraction в диапазоне 0..1
-ProgressCallback = Callable[[str, float], Awaitable[None]]
 
 # Пер-пользовательские локи: превращают проверку-и-установку флага generating
 # в атомарную — иначе два параллельных апдейта оба пройдут проверку.
@@ -124,14 +121,14 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
         status = await _start_status(run)
         on_progress = _make_progress_reporter(status)
         try:
-            audio_bytes = await _run_generation(run, on_progress)
+            audio_bytes = await _run_generation(run=run, on_progress=on_progress)
         except asyncio.CancelledError:
-            await _cleanup_cancelled(run, status)
+            await _cleanup_cancelled(run=run, status=status)
             raise
-        except Exception as e:
-            await _handle_failure(run, status, e)
+        except Exception as error:
+            await _handle_failure(run=run, status=status, error=error)
             return
-        await _deliver_result(run, status, audio_bytes)
+        await _deliver_result(run=run, status=status, audio_bytes=audio_bytes)
     finally:
         _release_slot(run)
 
@@ -187,6 +184,7 @@ def _make_progress_reporter(status: Message) -> ProgressCallback:
         last_edit = now
         text = f"🎼 {stage}\n{_progress_bar(fraction)} {int(fraction * 100)}%"
         with contextlib.suppress(Exception):
+            # Позиционно: заглушки edit_text в тестах объявлены как (new_text, **kwargs)
             await status.edit_text(text)
 
     return on_progress
@@ -203,11 +201,11 @@ async def _run_generation(run: GenerationRun, on_progress: ProgressCallback) -> 
         Байты готового аудио.
     """
     if config.MOCK_MODE:
-        for i in (0.2, 0.5, 0.8):
-            await on_progress("Генерирую (демо-режим)…", i)
+        for fraction in (0.2, 0.5, 0.8):
+            await on_progress(stage="Генерирую (демо-режим)…", fraction=fraction)
             # Спим дольше интервала правки, иначе демо-прогресс не виден
             await asyncio.sleep(PROGRESS_EDIT_INTERVAL + 0.1)
-        await on_progress("Собираю файл…", 0.97)
+        await on_progress(stage="Собираю файл…", fraction=0.97)
         return generation_service.load_mock_audio()
     return await generation_service.generate_song_real(prompt=run.prompt, on_progress=on_progress)
 
@@ -245,9 +243,9 @@ async def _handle_failure(run: GenerationRun, status: Message, error: Exception)
     """
     with contextlib.suppress(Exception):
         await notify_owner(
-            run.message.bot,
-            f"Генерация упала (user={run.user_id}, title={run.title!r})",
-            error,
+            bot=run.message.bot,
+            context=f"Генерация упала (user={run.user_id}, title={run.title!r})",
+            err=error,
         )
     if (await run.state.get_data()).get("gen_id") == run.gen_id:
         await run.state.update_data(generating=False)

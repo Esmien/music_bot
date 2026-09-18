@@ -16,7 +16,7 @@ from handlers.utils import notify_owner
 log = logging.getLogger(__name__)
 
 
-async def on_error(event: ErrorEvent, bot: Bot):
+async def on_error(event: ErrorEvent, bot: Bot) -> bool:
     """Глобальный обработчик непойманных исключений в хендлерах.
 
     Регистрируется в Dispatcher.errors. Возвращаем True, чтобы aiogram

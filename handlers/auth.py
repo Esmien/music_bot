@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 import config
 from database import SessionLocal
-from models import User
+from database.models import User
 
 from .filters import IsPendingAuth, NotCommand
 from .keyboards import get_main_keyboard
@@ -55,7 +55,7 @@ async def _require_auth(message: Message) -> bool:
     """
     uid = message.from_user.id
     if uid in pending_auth or not await is_authorized(uid):
-        await message.answer("Сначала отправьте ключ доступа.", reply_markup=ReplyKeyboardRemove())
+        await message.answer(text="Сначала отправьте ключ доступа.", reply_markup=ReplyKeyboardRemove())
         return False
     return True
 
@@ -77,13 +77,13 @@ async def cmd_start(message: Message, state: FSMContext):
     uid = message.from_user.id
     if await is_authorized(uid):
         await message.answer(
-            "👋 Привет! Я бот для генерации песен.\nИспользуйте кнопки ниже для управления.",
+            text="👋 Привет! Я бот для генерации песен.\nИспользуйте кнопки ниже для управления.",
             reply_markup=get_main_keyboard(),
         )
     else:
         pending_auth.add(uid)
         await message.answer(
-            "👋 Привет! Для использования бота отправьте ключ доступа.", reply_markup=ReplyKeyboardRemove()
+            text="👋 Привет! Для использования бота отправьте ключ доступа.", reply_markup=ReplyKeyboardRemove()
         )
 
 
@@ -117,7 +117,7 @@ async def cmd_logout(message: Message, state: FSMContext):
             session.add(db_user)
             await session.commit()
     log.info("User %s logged out", uid)
-    await message.answer("👋 Вы вышли. /start чтобы войти снова.", reply_markup=ReplyKeyboardRemove())
+    await message.answer(text="👋 Вы вышли. /start чтобы войти снова.", reply_markup=ReplyKeyboardRemove())
 
 
 @router.message(F.text, NotCommand(), IsPendingAuth())
@@ -146,9 +146,10 @@ async def handle_key(message: Message):
     expected_key = config.BOT_ACCESS_KEY
     if not expected_key:
         log.error("BOT_ACCESS_KEY не настроен — авторизация невозможна")
-        await message.answer("⚠️ Бот не настроен. Сообщите владельцу.")
+        await message.answer(text="⚠️ Бот не настроен. Сообщите владельцу.")
         return
 
+    # Позиционно: compare_digest — C-функция, именованные аргументы не принимает
     if not secrets.compare_digest(key.encode("utf-8"), expected_key.encode("utf-8")):
         attempts = failed_key_attempts.get(uid, 0) + 1
         failed_key_attempts[uid] = attempts
@@ -156,9 +157,9 @@ async def handle_key(message: Message):
             pending_auth.discard(uid)
             failed_key_attempts.pop(uid, None)
             log.warning("Исчерпаны попытки ввода ключа (user=%s)", uid)
-            await message.answer("❌ Слишком много неверных попыток. Отправьте /start, чтобы начать заново.")
+            await message.answer(text="❌ Слишком много неверных попыток. Отправьте /start, чтобы начать заново.")
             return
-        await message.answer("❌ Неверный ключ доступа.")
+        await message.answer(text="❌ Неверный ключ доступа.")
         return
 
     failed_key_attempts.pop(uid, None)
@@ -183,7 +184,7 @@ async def handle_key(message: Message):
         await session.commit()
 
     pending_auth.discard(uid)
-    await message.answer("✅ Вы успешно авторизованы!", reply_markup=get_main_keyboard())
+    await message.answer(text="✅ Вы успешно авторизованы!", reply_markup=get_main_keyboard())
 
 
 @router.message(F.text, NotCommand())
@@ -203,6 +204,6 @@ async def fallback(message: Message):
     if uid in pending_auth:
         return  # пусть обработает handle_key
     if not await is_authorized(uid):
-        await message.answer("🔒 Сначала /start и введи ключ доступа.", reply_markup=ReplyKeyboardRemove())
+        await message.answer(text="🔒 Сначала /start и введи ключ доступа.", reply_markup=ReplyKeyboardRemove())
         return
-    await message.answer("Не понял. Используйте кнопки внизу.", reply_markup=get_main_keyboard())
+    await message.answer(text="Не понял. Используйте кнопки внизу.", reply_markup=get_main_keyboard())

@@ -1,9 +1,10 @@
 """Интеграционные тесты раздела «Кредиты»: реальная БД, OpenRouter замокан."""
 
+import httpx
 import pytest
 
+from database.models import User
 from handlers import credits as handlers_credits
-from models import User
 
 pytestmark = pytest.mark.integration
 
@@ -104,7 +105,7 @@ async def test_cmd_credits_api_error_status(
 
 async def test_cmd_credits_network_failure(patched_auth_db, clean_auth_state, make_message, fake_state, patch_key_info):
     await _make_authorized_user(patched_auth_db, tg_id=10)
-    patch_key_info(RuntimeError("connection refused"))
+    patch_key_info(httpx.ConnectError("connection refused"))
 
     msg = make_message(uid=10)
     await handlers_credits.cmd_credits(msg, fake_state())

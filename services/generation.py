@@ -6,12 +6,17 @@ import logging
 import math
 import re
 import time
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import httpx
 
 import config
 
 log = logging.getLogger(__name__)
+
+# Колбек прогресса: `on_progress(stage, fraction)`, fraction в диапазоне 0..1
+ProgressCallback = Callable[[str, float], Awaitable[None]]
 
 # Типичное время генерации песни — на его основе оцениваем долю прогресса,
 # т.к. поток SSE не сообщает общий размер ответа.
@@ -25,7 +30,7 @@ MAX_AUDIO_B64_LEN = 40 * 1024 * 1024
 AUDIO_B64_RE = re.compile(r"data:audio/mpeg;base64,([A-Za-z0-9+/=]+)")
 
 
-def _find_audio_b64(node) -> str | None:
+def _find_audio_b64(node: Any) -> str | None:
     """Рекурсивно ищет base64-аудио в JSON любой структуры.
 
     Структура ответа модели не зафиксирована контрактом, поэтому
@@ -38,9 +43,9 @@ def _find_audio_b64(node) -> str | None:
         Base64-строка аудио или None, если ничего не найдено.
     """
     if isinstance(node, str):
-        m = AUDIO_B64_RE.search(node)
-        if m:
-            return m.group(1)
+        match = AUDIO_B64_RE.search(node)
+        if match:
+            return match.group(1)
     elif isinstance(node, dict):
         for value in node.values():
             found = _find_audio_b64(value)
@@ -74,7 +79,7 @@ def load_mock_audio() -> bytes:
     raise RuntimeError("Аудио не найдено в мок-файле")
 
 
-async def generate_song_real(prompt: str, on_progress=None) -> bytes:
+async def generate_song_real(prompt: str, on_progress: ProgressCallback | None = None) -> bytes:
     """Генерирует песню через OpenRouter, читая ответ как SSE-поток.
 
     Аудио приходит кусками в base64 внутри delta-чанков, поэтому
@@ -124,7 +129,7 @@ async def generate_song_real(prompt: str, on_progress=None) -> bytes:
         # типичной, индикатор продолжает ползти, а не замирает на 95%
         elapsed = time.monotonic() - started
         fraction = 1.0 - math.exp(-elapsed / TYPICAL_GENERATION_SECONDS)
-        await report("Получаю аудио…", fraction * 0.95)
+        await report(stage="Получаю аудио…", fraction=fraction * 0.95)
 
     await report(stage="Соединяюсь с сервером…", fraction=0.02)
     async with (
@@ -137,16 +142,16 @@ async def generate_song_real(prompt: str, on_progress=None) -> bytes:
         ) as resp,
     ):
         if resp.status_code != 200:
-            err = (await resp.aread()).decode("utf-8", "ignore")
-            raise RuntimeError(f"OpenRouter {resp.status_code}: {err[:300]}")
+            error_body = (await resp.aread()).decode("utf-8", "ignore")
+            raise RuntimeError(f"OpenRouter {resp.status_code}: {error_body[:300]}")
         async for line in resp.aiter_lines():
             if not line.startswith("data: "):
                 continue
-            s = line[6:].strip()
-            if s == "[DONE]":
+            raw_payload = line[6:].strip()
+            if raw_payload == "[DONE]":
                 break
             try:
-                chunk = json.loads(s)
+                chunk = json.loads(raw_payload)
             except json.JSONDecodeError:
                 continue
             # Пустой choices — легитимный случай для некоторых промежуточных чанков
@@ -154,17 +159,17 @@ async def generate_song_real(prompt: str, on_progress=None) -> bytes:
             delta = choices[0].get("delta", {})
             audio = delta.get("audio") or {}
             if audio.get("data"):
-                data = audio["data"]
+                audio_b64 = audio["data"]
                 # Защита от кумулятивных чанков: если сервер шлёт не дельты,
                 # а полные снимки аудио, каждый следующий чанк начинается
                 # с предыдущего. Тогда заменяем, а не добавляем.
-                if chunks and data.startswith(chunks[-1]):
+                if chunks and audio_b64.startswith(chunks[-1]):
                     total_b64 -= len(chunks[-1])
                     chunks.pop()
-                total_b64 += len(data)
+                total_b64 += len(audio_b64)
                 if total_b64 > MAX_AUDIO_B64_LEN:
                     raise RuntimeError("Аудио в потоке превышает допустимый размер")
-                chunks.append(data)
+                chunks.append(audio_b64)
                 await stream_progress()
 
     if not chunks:

@@ -4,6 +4,7 @@
 config.py читает и валидирует их прямо на этапе импорта.
 """
 
+import importlib
 import os
 
 os.environ["BOT_TOKEN"] = "test-token"
@@ -25,6 +26,13 @@ from handlers import auth as handlers_auth  # noqa: E402
 from handlers.auth import failed_key_attempts  # noqa: E402
 from handlers.state import pending_auth  # noqa: E402
 
+# import database.engine as ... вернул бы не модуль, а затенённый атрибут
+# пакета database — AsyncEngine (реэкспорт engine в database/__init__.py).
+# Поэтому модуль достаём через importlib: он отдаёт запись из sys.modules,
+# минуя затенённый атрибут, и db_sessionmaker патчит переменную engine
+# именно в database/engine.py
+database_engine_module = importlib.import_module("database.engine")
+
 
 @pytest.fixture
 async def db_engine():
@@ -45,7 +53,10 @@ async def db_sessionmaker(db_engine, monkeypatch):
     Подменяет database.engine, чтобы init_db() собирал схему в тестовой
     базе, а не в боевом sqlite-файле из config.DATABASE_URL.
     """
-    monkeypatch.setattr(database, "engine", db_engine)
+    # Патчим engine внутри модуля database.engine: init_db замыкается
+    # на него, а не на атрибут пакета database (который затенён
+    # импортом from .engine import engine в database/__init__.py)
+    monkeypatch.setattr(database_engine_module, "engine", db_engine)
     await database.init_db()
     return async_sessionmaker(db_engine, expire_on_commit=False)
 

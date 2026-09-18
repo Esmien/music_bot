@@ -10,11 +10,11 @@ from types import SimpleNamespace
 import pytest
 
 import config
+from database.models import User
 from handlers import generation as handlers_generation
 from handlers import generation_pipeline as pipeline
 from handlers.generation import GenerationStates
 from handlers.state import active_tasks as registry
-from models import User
 from services import generation as generation_service
 
 pytestmark = pytest.mark.integration

@@ -3,9 +3,9 @@
 import pytest
 
 import config
+from database.models import User
 from handlers import auth as handlers_auth
 from handlers.state import pending_auth
-from models import User
 
 pytestmark = pytest.mark.integration
 

@@ -92,7 +92,7 @@ addopts = "--cov --cov-report=term-missing:skip-covered"
 # Измеряем только код проекта — тесты и зависимости не считаем.
 # bot.py не включён: это точка входа с polling, в тестах не импортируется,
 # из-за чего coverage предупреждал "Module bot was never imported"
-source = ["config", "database", "models", "handlers", "services"]
+source = ["config", "database", "handlers", "services"]
 
 [tool.coverage.report]
 show_missing = true

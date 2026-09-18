@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 import database
-from models import User
+from database.models import User
 
 pytestmark = pytest.mark.integration
 

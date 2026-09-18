@@ -73,7 +73,7 @@ async def cmd_generate(message: Message, state: FSMContext):
         return
 
     await message.answer(text=_PROMPT_HINT, reply_markup=get_cancel_keyboard(), parse_mode="HTML")
-    await message.answer(f"<code>{_PROMPT_TEMPLATE}</code>", parse_mode="HTML")
+    await message.answer(text=f"<code>{_PROMPT_TEMPLATE}</code>", parse_mode="HTML")
 
     await state.set_state(GenerationStates.waiting_for_prompt)
 
@@ -168,7 +168,7 @@ async def handle_title(message: Message, state: FSMContext):
     # title кладём в FSM — пригодится для retry
     await state.update_data(title=title)
 
-    await generate_and_send(message, state, prompt, title, message.from_user.id)
+    await generate_and_send(message=message, state=state, prompt=prompt, title=title, user_id=message.from_user.id)
 
 
 @router.callback_query(F.data == "retry_generation")
@@ -211,4 +211,10 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
         await callback.message.delete()
     await callback.answer()
 
-    await generate_and_send(message=callback.message, state=state, prompt=prompt, title=title, user_id=callback.from_user.id)
+    await generate_and_send(
+        message=callback.message,
+        state=state,
+        prompt=prompt,
+        title=title,
+        user_id=callback.from_user.id,
+    )
