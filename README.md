@@ -42,7 +42,7 @@ handlers/
 services/
 └── generation.py    # запрос к OpenRouter (SSE) и мок-режим
 tests/               # юнит- и интеграционные тесты
-pyproject.toml · poetry.lock · Dockerfile · docker-compose.yaml · entrypoint.sh
+pyproject.toml · poetry.lock · infra/Dockerfile · infra/docker-compose.yml · infra/entrypoint.sh · .github/workflows (CI/CD)
 ~~~
 
 ## Переменные окружения
@@ -81,7 +81,11 @@ docker compose up -d --build
 docker compose logs -f
 ~~~
 
-В логах должна появиться строка `Starting bot`. Таблицы БД создаются автоматически при первом запуске. Остановка: `docker compose down`. База SQLite хранится в именованном томе `db_data` и переживает пересоздание контейнера.
+В логах должна появиться строка `Starting bot`. Таблицы БД создаются автоматически при первом запуске. Остановка: `docker compose down`. База SQLite хранится в именованном томе и переживает пересоздание контейнера.
+
+## CI/CD
+
+GitHub Actions: `.github/workflows/ci.yml` — Ruff и Pytest на каждый push/PR; `.github/workflows/deploy.yml` — после зелёного CI в `main` деплой на VPS по SSH (`git pull` + `docker compose up -d --build`). Требуются секреты репозитория: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_PROJECT_DIR`.
 
 ## Локальный запуск (без Docker)
 
