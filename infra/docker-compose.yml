@@ -1,0 +1,16 @@
+services:
+  bot:
+    build:
+      context: ../
+      dockerfile: infra/Dockerfile
+    container_name: lyria-bot
+    restart: always
+    env_file:
+      - ../.env
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////data/bot.db
+    volumes:
+      - db_data:/data
+
+volumes:
+  db_data:

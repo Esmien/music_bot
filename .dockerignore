@@ -23,6 +23,6 @@ venv
 
 # Тесты и инфраструктура сборки в рантайме не нужны
 tests/
-Dockerfile
-docker-compose.yaml
+infra/Dockerfile
+infra/docker-compose.yml
 .dockerignore
