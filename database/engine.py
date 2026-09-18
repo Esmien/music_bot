@@ -1,9 +1,9 @@
-"""Подключение к базе данных и инициализация схемы."""
+"""Подключение к базе данных, фабрика сессий и инициализация схемы."""
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import config
-from models import Base
+from .models import Base
 
 engine = create_async_engine(config.DATABASE_URL, echo=False)
 # expire_on_commit=False: объекты остаются пригодны после commit —
@@ -11,7 +11,7 @@ engine = create_async_engine(config.DATABASE_URL, echo=False)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def init_db():
+async def init_db() -> None:
     """Создаёт таблицы по моделям SQLAlchemy, если их ещё нет.
 
     Идемпотентна: существующие таблицы не трогаются,
