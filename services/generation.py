@@ -97,7 +97,7 @@ async def generate_song_real(prompt: str, on_progress=None) -> bytes:
         if on_progress is None:
             return
         try:
-            await on_progress(stage, min(max(fraction, 0.0), 1.0))
+            await on_progress(stage=stage, fraction=min(max(fraction, 0.0), 1.0))
         except Exception:
             log.exception("Ошибка в on_progress")
 
@@ -126,12 +126,12 @@ async def generate_song_real(prompt: str, on_progress=None) -> bytes:
         fraction = 1.0 - math.exp(-elapsed / TYPICAL_GENERATION_SECONDS)
         await report("Получаю аудио…", fraction * 0.95)
 
-    await report("Соединяюсь с сервером…", 0.02)
+    await report(stage="Соединяюсь с сервером…", fraction=0.02)
     async with (
         httpx.AsyncClient(timeout=180.0) as client,
         client.stream(
-            "POST",
-            "https://openrouter.ai/api/v1/chat/completions",
+            method="POST",
+            url="https://openrouter.ai/api/v1/chat/completions",
             headers=headers,
             json=payload,
         ) as resp,
@@ -170,5 +170,5 @@ async def generate_song_real(prompt: str, on_progress=None) -> bytes:
     if not chunks:
         raise RuntimeError("Аудио не пришло в потоке")
 
-    await report("Собираю файл…", 0.97)
+    await report(stage="Собираю файл…", fraction=0.97)
     return base64.b64decode("".join(chunks))

@@ -29,7 +29,7 @@ async def on_error(event: ErrorEvent, bot: Bot):
     Returns:
         Всегда True — ошибка считается обработанной.
     """
-    await notify_owner(bot, f"Необработанная ошибка: {event.update.update_id}", event.exception)
+    await notify_owner(bot=bot, context=f"Необработанная ошибка: {event.update.update_id}", err=event.exception)
     return True
 
 

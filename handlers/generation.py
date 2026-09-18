@@ -69,7 +69,7 @@ async def cmd_generate(message: Message, state: FSMContext):
         return
 
     if (await state.get_data()).get("generating"):
-        await message.answer("⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
+        await message.answer(text="⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
         return
 
     await message.answer(text=_PROMPT_HINT, reply_markup=get_cancel_keyboard(), parse_mode="HTML")
@@ -97,7 +97,7 @@ async def cmd_cancel_generation(message: Message, state: FSMContext):
     if task is not None and not task.done():
         task.cancel()
     await state.clear()
-    await message.answer("❌ Генерация отменена.", reply_markup=get_main_keyboard())
+    await message.answer(text="❌ Генерация отменена.", reply_markup=get_main_keyboard())
 
 
 @router.message(GenerationStates.waiting_for_prompt, F.text)
@@ -117,10 +117,10 @@ async def handle_prompt(message: Message, state: FSMContext):
     prompt = message.text.strip()
 
     if not prompt:
-        await message.answer("Пожалуйста, введите непустой текст.")
+        await message.answer(text="Пожалуйста, введите непустой текст.")
         return
     if len(prompt) > MAX_PROMPT_LEN:
-        await message.answer(f"Слишком длинный текст: {len(prompt)} символов. Максимум — {MAX_PROMPT_LEN}.")
+        await message.answer(text=f"Слишком длинный текст: {len(prompt)} символов. Максимум — {MAX_PROMPT_LEN}.")
         return
 
     if any(marker in prompt for marker in ("Жанр:", "Настроение:", "Голос:")):
@@ -138,7 +138,7 @@ async def handle_prompt(message: Message, state: FSMContext):
 
     await state.update_data(prompt=structured_prompt)
     await state.set_state(GenerationStates.waiting_for_title)
-    await message.answer("🎤 Введите название песни:", reply_markup=get_cancel_keyboard())
+    await message.answer(text="🎤 Введите название песни:", reply_markup=get_cancel_keyboard())
 
 
 @router.message(GenerationStates.waiting_for_title, F.text)
@@ -154,15 +154,15 @@ async def handle_title(message: Message, state: FSMContext):
     """
     title = message.text.strip()
     if not title:
-        await message.answer("Пожалуйста, введите непустое название.")
+        await message.answer(text="Пожалуйста, введите непустое название.")
         return
     if len(title) > MAX_TITLE_LEN:
-        await message.answer(f"Слишком длинное название. Максимум {MAX_TITLE_LEN} символов.")
+        await message.answer(text=f"Слишком длинное название. Максимум {MAX_TITLE_LEN} символов.")
         return
 
     data = await state.get_data()
     if data.get("generating"):
-        await message.answer("⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
+        await message.answer(text="⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
         return
     prompt = data.get("prompt", "")
     # title кладём в FSM — пригодится для retry
@@ -188,13 +188,13 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
     # Кнопка могла остаться в чате после logout — без этой проверки
     # отозванный ключ позволил бы продолжать генерацию.
     if not await is_authorized(callback.from_user.id):
-        await callback.answer("Доступ закрыт. Авторизуйтесь заново: /start", show_alert=True)
+        await callback.answer(text="Доступ закрыт. Авторизуйтесь заново: /start", show_alert=True)
         await state.clear()
         return
 
     data = await state.get_data()
     if data.get("generating"):
-        await callback.answer("Генерация уже идёт.", show_alert=True)
+        await callback.answer(text="Генерация уже идёт.", show_alert=True)
         return
 
     prompt = data.get("prompt", "")
@@ -202,7 +202,7 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
 
     if not prompt:
         # Состояние потерялось (перезапуск бота?) — честно просим начать заново
-        await callback.answer("Начните заново: 🎵 Сгенерировать", show_alert=True)
+        await callback.answer(text="Начните заново: 🎵 Сгенерировать", show_alert=True)
         await state.clear()
         return
 
@@ -211,4 +211,4 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
         await callback.message.delete()
     await callback.answer()
 
-    await generate_and_send(callback.message, state, prompt, title, callback.from_user.id)
+    await generate_and_send(message=callback.message, state=state, prompt=prompt, title=title, user_id=callback.from_user.id)

@@ -30,6 +30,6 @@ async def notify_owner(bot, context: str, err: Exception) -> None:
     text = f"🐞 <b>{html.escape(context)}</b>\n<code>{html.escape(tb)}</code>"
 
     try:
-        await bot.send_message(config.BOT_OWNER_ID, text, parse_mode="HTML")
+        await bot.send_message(chat_id=config.BOT_OWNER_ID, text=text, parse_mode="HTML")
     except Exception:
         log.exception("Failed to notify owner")

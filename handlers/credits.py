@@ -38,7 +38,7 @@ async def cmd_credits(message: Message, state: FSMContext):
     headers = {"Authorization": f"Bearer {config.OPENROUTER_API_KEY}"}
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get("https://openrouter.ai/api/v1/key", headers=headers)
+            resp = await client.get(url="https://openrouter.ai/api/v1/key", headers=headers)
             if resp.status_code != 200:
                 await message.answer(f"❌ Ошибка запроса: {resp.status_code}")
                 return
@@ -74,5 +74,5 @@ async def cmd_credits(message: Message, state: FSMContext):
                 reply_markup=get_main_keyboard(),
             )
     except Exception as e:
-        await notify_owner(message.bot, f"Проверка кредитов упала (user={message.from_user.id})", e)
+        await notify_owner(bot=message.bot, context="Проверка кредитов упала (user={message.from_user.id})", err=e)
         await message.answer("❌ Не получилось проверить остатки. Влад уже в курсе 🙂")

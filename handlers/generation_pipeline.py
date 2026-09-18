@@ -153,7 +153,7 @@ async def _acquire_slot(run: GenerationRun) -> bool:
     """
     async with _generation_lock(run.user_id):
         if (await run.state.get_data()).get("generating"):
-            await run.message.answer("⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
+            await run.message.answer(text="⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
             return False
         run.gen_id = uuid4().hex
         await run.state.update_data(generating=True, gen_id=run.gen_id)
@@ -163,8 +163,8 @@ async def _acquire_slot(run: GenerationRun) -> bool:
 
 async def _start_status(run: GenerationRun) -> Message:
     """Показывает «бот печатает…» и создаёт сообщение-статус с прогрессом."""
-    await run.message.bot.send_chat_action(run.message.chat.id, ChatAction.UPLOAD_DOCUMENT)
-    return await run.message.answer("🎼 Генерирую… Это может занять до 1–2 минут.")
+    await run.message.bot.send_chat_action(chat_id=run.message.chat.id, action=ChatAction.UPLOAD_DOCUMENT)
+    return await run.message.answer(text="🎼 Генерирую… Это может занять до 1–2 минут.")
 
 
 def _make_progress_reporter(status: Message) -> ProgressCallback:
@@ -209,7 +209,7 @@ async def _run_generation(run: GenerationRun, on_progress: ProgressCallback) -> 
             await asyncio.sleep(PROGRESS_EDIT_INTERVAL + 0.1)
         await on_progress("Собираю файл…", 0.97)
         return generation_service.load_mock_audio()
-    return await generation_service.generate_song_real(run.prompt, on_progress)
+    return await generation_service.generate_song_real(prompt=run.prompt, on_progress=on_progress)
 
 
 async def _cleanup_cancelled(run: GenerationRun, status: Message) -> None:
@@ -275,8 +275,8 @@ async def _deliver_result(run: GenerationRun, status: Message, audio_bytes: byte
     if (await run.state.get_data()).get("gen_id") == run.gen_id:
         await run.state.clear()
     safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in run.title)[:80] or "song"
-    file = BufferedInputFile(audio_bytes, filename=f"{safe_title}.mp3")
-    await run.message.answer_audio(file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
+    file = BufferedInputFile(file=audio_bytes, filename=f"{safe_title}.mp3")
+    await run.message.answer_audio(file=file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
     await status.delete()
 
 
