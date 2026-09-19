@@ -62,6 +62,19 @@ def _progress_bar(fraction: float, width: int = 10) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+async def _is_actual_gen(state: FSMContext, gen_id: str) -> bool:
+    """Проверяет, актуальна ли генерация в стейте
+
+    Args:
+        state: состояние FSM пользователя
+        gen_id: id генерации из контекста
+
+    Returns:
+        True, если актуальна
+    """
+    return (await state.get_data()).get("gen_id") == gen_id
+
+
 @dataclass
 class GenerationRun:
     """Контекст одного запуска генерации.
@@ -227,6 +240,9 @@ async def _cleanup_cancelled(run: GenerationRun, status: Message) -> None:
     if (await run.state.get_data()).get("gen_id") == run.gen_id:
         await run.state.update_data(generating=False)
 
+    # Снимаем флаг только если в FSM все еще текущая генерация
+    if await _is_actual_gen(state=gen_context.state, gen_id=gen_context.gen_id):
+        await gen_context.state.update_data(generating=False)
 
 async def _handle_failure(run: GenerationRun, status: Message, error: Exception) -> None:
     """Обрабатывает сбой сервиса: уведомление владельца и кнопка повтора.
@@ -246,8 +262,11 @@ async def _handle_failure(run: GenerationRun, status: Message, error: Exception)
             context=f"Генерация упала (user={run.user_id}, title={run.title!r})",
             err=error,
         )
-    if (await run.state.get_data()).get("gen_id") == run.gen_id:
-        await run.state.update_data(generating=False)
+
+    # Защита только для флага: не глушим генерирующий флаг новой генерации.
+    # Кнопка ретрая вешается всегда — контекст она возьмёт из FSM в момент нажатия.
+    if await _is_actual_gen(state=gen_context.state, gen_id=gen_context.gen_id):
+        await gen_context.state.update_data(generating=False)
     retry_kb = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="retry_generation")]]
     )
@@ -269,9 +288,13 @@ async def _deliver_result(run: GenerationRun, status: Message, audio_bytes: byte
         status: Сообщение-статус с прогрессом.
         audio_bytes: Байты готового аудио.
     """
-    if (await run.state.get_data()).get("gen_id") == run.gen_id:
-        await run.state.clear()
-    safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in run.title)[:80] or "song"
+    if await _is_actual_gen(state=gen_context.state, gen_id=gen_context.gen_id):
+        await gen_context.state.clear()
+
+    # Санитайзинг названия песни, чтобы ТГ не сошел с ума от "левых" символов
+    safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in gen_context.title)[:80] or "song"
+
+    # Сборка песни в файл, отправка пользователю и очистка экрана от прогресс-бара
     file = BufferedInputFile(file=audio_bytes, filename=f"{safe_title}.mp3")
     await run.message.answer_audio(audio=file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
     await status.delete()
