@@ -7,6 +7,9 @@ config.py читает и валидирует их прямо на этапе �
 import importlib
 import os
 
+from aiogram.exceptions import TelegramAPIError
+from aiogram.methods import DeleteMessage
+
 os.environ["BOT_TOKEN"] = "test-token"
 os.environ["OPENROUTER_API_KEY"] = "test-openrouter-key"
 os.environ["BOT_ACCESS_KEY"] = "secret-key"
@@ -129,7 +132,7 @@ def make_message():
 
         async def delete(self):
             if self.fail_delete:
-                raise RuntimeError("delete failed")
+                raise TelegramAPIError(method=DeleteMessage(chat_id=0, message_id=0), message="delete failed")
             self.deleted = True
 
     return FakeMessage
