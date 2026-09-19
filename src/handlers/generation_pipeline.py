@@ -22,8 +22,8 @@ from aiogram.types import (
 )
 
 import config
-from handlers.keyboards import get_main_keyboard
 from handlers.state import active_tasks
+from keyboards.default_keyboards import get_main_keyboard
 from services import generation as generation_service
 from services.generation import ProgressCallback
 from utils.error_notify import notify_owner

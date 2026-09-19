@@ -14,8 +14,8 @@ from aiogram.types import CallbackQuery, Message
 from handlers.auth import _require_auth, is_authorized
 from handlers.generation_fsm import MAX_PROMPT_LEN, MAX_TITLE_LEN, GenerationStates
 from handlers.generation_pipeline import generate_and_send
-from handlers.keyboards import get_cancel_keyboard, get_main_keyboard
 from handlers.state import active_tasks
+from keyboards.default_keyboards import get_cancel_keyboard, get_main_keyboard
 
 router = Router()
 

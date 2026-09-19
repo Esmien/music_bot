@@ -15,8 +15,8 @@ import config
 from database import SessionLocal
 from database.models import User
 from handlers.filters import IsPendingAuth, NotCommand
-from handlers.keyboards import get_main_keyboard
 from handlers.state import active_tasks, pending_auth
+from keyboards.default_keyboards import get_main_keyboard
 from utils.error_notify import notify_owner
 
 log = logging.getLogger(__name__)
