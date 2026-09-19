@@ -2,10 +2,10 @@
 
 import pytest
 
-from src import config
-from src.database.models import User
-from src.handlers import auth as handlers_auth
-from src.handlers.state import pending_auth
+import config
+from database.models import User
+from handlers import auth as handlers_auth
+from handlers.state import pending_auth
 
 pytestmark = pytest.mark.integration
 

@@ -14,11 +14,10 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 import config
 from database import SessionLocal
 from database.models import User
+from handlers.filters import IsPendingAuth, NotCommand
+from handlers.keyboards import get_main_keyboard
+from handlers.state import active_tasks, pending_auth
 from utils.error_notify import notify_owner
-
-from .filters import IsPendingAuth, NotCommand
-from .keyboards import get_main_keyboard
-from .state import active_tasks, pending_auth
 
 log = logging.getLogger(__name__)
 

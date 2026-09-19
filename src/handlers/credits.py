@@ -9,11 +9,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 import config
+from handlers.auth import _require_auth
+from handlers.keyboards import get_main_keyboard
 from utils.error_notify import notify_owner
 from utils.exceptions import APINotSet
-
-from .auth import _require_auth
-from .keyboards import get_main_keyboard
 
 log = logging.getLogger(__name__)
 

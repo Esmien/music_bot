@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.handlers import _generation_lock
+from handlers.generation_pipeline import _generation_lock
 
 pytestmark = pytest.mark.unit
 

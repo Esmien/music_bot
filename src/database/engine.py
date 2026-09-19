@@ -2,9 +2,8 @@
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from .. import config
-
-from .models import Base
+import config
+from database.models import Base
 
 engine = create_async_engine(config.DATABASE_URL, echo=False)
 # expire_on_commit=False: объекты остаются пригодны после commit —

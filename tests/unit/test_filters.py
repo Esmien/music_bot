@@ -3,8 +3,8 @@
 import pytest
 from aiogram.types import Message, User
 
-from src.handlers import IsPendingAuth, NotCommand
-from src.handlers.state import pending_auth
+from handlers.filters import IsPendingAuth, NotCommand
+from handlers.state import pending_auth
 
 pytestmark = pytest.mark.unit
 

@@ -22,12 +22,11 @@ from aiogram.types import (
 )
 
 import config
+from handlers.keyboards import get_main_keyboard
+from handlers.state import active_tasks
 from services import generation as generation_service
 from services.generation import ProgressCallback
 from utils.error_notify import notify_owner
-
-from .keyboards import get_main_keyboard
-from .state import active_tasks
 
 log = logging.getLogger(__name__)
 

@@ -10,11 +10,11 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from .auth import _require_auth, is_authorized
-from .generation_fsm import MAX_PROMPT_LEN, MAX_TITLE_LEN, GenerationStates
-from .generation_pipeline import generate_and_send
-from .keyboards import get_cancel_keyboard, get_main_keyboard
-from .state import active_tasks
+from handlers.auth import _require_auth, is_authorized
+from handlers.generation_fsm import MAX_PROMPT_LEN, MAX_TITLE_LEN, GenerationStates
+from handlers.generation_pipeline import generate_and_send
+from handlers.keyboards import get_cancel_keyboard, get_main_keyboard
+from handlers.state import active_tasks
 
 router = Router()
 
