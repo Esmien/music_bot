@@ -5,7 +5,7 @@ WORKDIR /app
 # Контекст сборки — корень проекта, поэтому ../ больше не нужен
 COPY pyproject.toml poetry.lock ./
 
-RUN pip install --no-cache-dir poetry \
+RUN pip install --no-cache-dir poetry==2.4.1 --only-binary=:all: \
     && poetry config virtualenvs.create false \
     && poetry install --only main --no-root
 
