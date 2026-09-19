@@ -82,7 +82,7 @@ def load_mock_audio() -> bytes:
     b64 = _find_audio_b64(data)
     if b64:
         return base64.b64decode(b64)
-    raise RuntimeError("Аудио не найдено в мок-файле")
+    raise RuntimeError("Audio not found in mock file")
 
 
 async def generate_song_real(prompt: str, on_progress: ProgressCallback | None = None) -> bytes:
@@ -110,7 +110,7 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
         try:
             await on_progress(stage=stage, fraction=min(max(fraction, 0.0), 1.0))
         except Exception:
-            log.exception("Ошибка в on_progress")
+            log.exception("Error in on_progress")
 
     headers = {
         "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
@@ -162,7 +162,7 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
             # Увеличиваем счетчик на размер нового чанка
             total_b64 += len(audio_b64)
             if total_b64 > MAX_AUDIO_B64_LEN:
-                raise RuntimeError("Аудио в потоке превышает допустимый размер")
+                raise RuntimeError("Audio in stream exceeds the allowed size")
 
             chunks.append(audio_b64)
 
@@ -172,7 +172,7 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
             await report(stage="Получаю аудио…", fraction=fraction * 0.95)
 
     if not chunks:
-        raise RuntimeError("Аудио не пришло в потоке")
+        raise RuntimeError("No audio received in stream")
 
     await report(stage="Собираю файл…", fraction=0.97)
     return base64.b64decode("".join(chunks))

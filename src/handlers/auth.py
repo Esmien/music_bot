@@ -18,6 +18,7 @@ from handlers.filters import IsPendingAuth, NotCommand
 from handlers.state import active_tasks, pending_auth
 from keyboards.default_keyboards import get_main_keyboard
 from utils.error_notify import notify_owner
+from utils.exceptions import AccessKeyNotSet
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ def _check_key_with_attempts(key: str, expected: str, uid: int) -> str | None:
     if attempts >= MAX_KEY_ATTEMPTS:
         pending_auth.discard(uid)
         failed_key_attempts.pop(uid, None)
-        log.warning("Исчерпаны попытки ввода ключа (user=%s)", uid)
+        log.warning("Access key attempts exhausted (user=%s)", uid)
         return "❌ Слишком много неверных попыток. Отправьте /start, чтобы начать заново."
 
     return "❌ Неверный ключ доступа."
@@ -224,16 +225,16 @@ async def handle_key(message: Message):
     try:
         await message.delete()
     except TelegramAPIError:
-        log.warning("Не удалось удалить сообщение с ключом (user=%s)", uid)
+        log.warning("Failed to delete message with access key (user=%s)", uid)
 
     # Уведомляем владельца о сбое в настройке и не пускаем дальше (иначе вход открыт для всех)
     expected_key = config.BOT_ACCESS_KEY
     if not expected_key:
-        log.error("BOT_ACCESS_KEY не настроен — авторизация невозможна")
+        log.error("BOT_ACCESS_KEY is not set — authorization is impossible")
         await notify_owner(
             bot=message.bot,
             context="Не настроен ключ входа, необходимо проверить.",
-            err=RuntimeError("BOT_ACCESS_KEY is empty"),
+            err=AccessKeyNotSet("BOT_ACCESS_KEY is empty"),
         )
         await message.answer(text="⚠️ Бот не настроен. Владелец уже уведомлен.")
         return
@@ -269,7 +270,7 @@ async def fallback(message: Message):
         return  # пусть обработает handle_key
 
     if not await is_authorized(uid):
-        await message.answer(text="🔒 Сначала /start и введи ключ доступа.", reply_markup=ReplyKeyboardRemove())
+        await message.answer(text="🔒 Сначала /start и введите ключ доступа.", reply_markup=ReplyKeyboardRemove())
         return
     # Срабатывает для пользователей без стейта (промпт/название)
     await message.answer(text="Не понял. Используйте кнопки внизу.", reply_markup=get_main_keyboard())

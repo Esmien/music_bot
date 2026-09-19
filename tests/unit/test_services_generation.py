@@ -60,7 +60,7 @@ def test_load_mock_audio_without_audio_raises(tmp_path, monkeypatch):
     mock_file.write_text(json.dumps({"nothing": "here"}))
     monkeypatch.setattr(config, "MOCK_FILE", str(mock_file))
 
-    with pytest.raises(RuntimeError, match="не найдено"):
+    with pytest.raises(RuntimeError, match="not found"):
         gen.load_mock_audio()
 
 
@@ -170,8 +170,8 @@ async def test_generate_song_real_reports_progress(patch_openrouter):
     "response, match",
     [
         pytest.param(FakeStreamResponse([], status_code=500), "OpenRouter 500", id="http-500"),
-        pytest.param(FakeStreamResponse(["data: [DONE]"]), "не пришло", id="stream-without-audio"),
-        pytest.param(FakeStreamResponse(["event: end"]), "не пришло", id="empty-stream"),
+        pytest.param(FakeStreamResponse(["data: [DONE]"]), "No audio received", id="stream-without-audio"),
+        pytest.param(FakeStreamResponse(["event: end"]), "No audio received", id="empty-stream"),
     ],
 )
 async def test_generate_song_real_failures(patch_openrouter, response, match):
@@ -186,7 +186,7 @@ async def test_generate_song_real_rejects_oversized_audio(patch_openrouter, monk
     monkeypatch.setattr(gen, "MAX_AUDIO_B64_LEN", 4)
     patch_openrouter(FakeStreamResponse([_audio_chunk(_b64(b"longer-than-four-bytes"))]))
 
-    with pytest.raises(RuntimeError, match="превышает допустимый размер"):
+    with pytest.raises(RuntimeError, match="exceeds the allowed size"):
         await gen.generate_song_real("промпт")
 
 

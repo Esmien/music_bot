@@ -145,7 +145,7 @@ async def handle_prompt(message: Message, state: FSMContext):
     # Отсекаем нетронутый шаблон: все поля пустые
     filled = _EMPTY_FIELD_RE.sub("", prompt)
     if not filled.strip():
-        await message.answer("Шаблон пришёл пустым 🙂 Заполни хотя бы поле «Текст песни».")
+        await message.answer("Шаблон пришёл пустым 🙂 Заполните хотя бы поле «Текст песни».")
         return
 
     if any(marker in prompt for marker in _PROMPT_MARKERS):

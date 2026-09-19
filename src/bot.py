@@ -46,7 +46,7 @@ async def main() -> None:
     log.info("Starting bot (mock_mode=%s)", config.MOCK_MODE)
 
     if not config.BOT_TOKEN:
-        log.error("BOT_TOKEN не задан — запуск невозможен")
+        log.error("BOT_TOKEN is not set — startup is impossible")
         return
 
     await init_db()
