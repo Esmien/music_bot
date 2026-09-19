@@ -5,6 +5,7 @@
 """
 
 import contextlib
+import re
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -50,6 +51,18 @@ _PROMPT_HINT = (
 
 # Копируемый шаблон описания песни
 _PROMPT_TEMPLATE = "Жанр: \n\nНастроение: \n\nИнструменты: \n\nТемп и ритм: \n\nГолос: \n\nТекст песни: \n"
+# Маркеры полей шаблона: детекция формата ввода и отсечение пустого шаблона
+_PROMPT_MARKERS = tuple(
+    line.strip().split(":")[0] + ":" for line in _PROMPT_TEMPLATE.split("\n") if line.strip().endswith(":")
+)  # ("Жанр:", "Настроение:", "Инструменты:", "Темп и ритм:", "Голос:", "Текст песни:")
+_FIELD_NAMES = tuple(marker[:-1] for marker in _PROMPT_MARKERS)  # тут они уже без ":"
+
+# Парсим шаблон на предмет заполненности полей
+_EMPTY_FIELD_RE = re.compile(
+    r"^\s*(?:" + "|".join(map(re.escape, _FIELD_NAMES)) + r")\s*:\s*$",
+    flags=re.MULTILINE,
+)
+_DEFAULT_TITLE = "Lyria's Generated Song"
 
 
 @router.message(F.text == "🎵 Сгенерировать")
@@ -123,7 +136,17 @@ async def handle_prompt(message: Message, state: FSMContext):
         await message.answer(text=f"Слишком длинный текст: {len(prompt)} символов. Максимум — {MAX_PROMPT_LEN}.")
         return
 
-    if any(marker in prompt for marker in ("Жанр:", "Настроение:", "Голос:")):
+    # Отсекаем нетронутый шаблон: все поля пустые
+    filled = _EMPTY_FIELD_RE.sub("", prompt)
+    if not filled.strip():
+        await message.answer("Шаблон пришёл пустым 🙂 Заполни хотя бы поле «Текст песни».")
+        return
+
+    if any(marker in prompt for marker in _PROMPT_MARKERS):
+        # TODO: если поле «Текст песни» пустое —
+        #  уточнить у пользователя перед генерацией
+        #  (модель сочинит текст сама, ~$1 за прогон)
+
         # Пользователь заполнил шаблон — оставляем структуру
         structured_prompt = (
             "Create a song based on the following brief. "
