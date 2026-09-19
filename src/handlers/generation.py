@@ -81,6 +81,7 @@ async def cmd_generate(message: Message, state: FSMContext):
     if not await _require_auth(message):
         return
 
+    # Если стейт "в процессе генерации", то не пускаем пользователя к следующей
     if (await state.get_data()).get("generating"):
         await message.answer(text="⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
         return
@@ -120,6 +121,11 @@ async def handle_prompt(message: Message, state: FSMContext):
     Если пользователь заполнил шаблон (есть маркеры вида "Жанр:"),
     промпт оборачивается в бриф с явным указанием петь по-русски.
     Если пришли просто стихи — используется более мягкая формулировка.
+    Подготовленный промпт сохраняется в FSM, состояние переключается
+    на ожидание названия.
+    Если шаблон заполнен, но поле «Текст песни» пустое, песня уходит
+    в генерацию без лирики — модель сочинит текст сама
+    (TODO: уточняющий вопрос перед генерацией).
     Подготовленный промпт сохраняется в FSM, состояние переключается
     на ожидание названия.
 
@@ -191,6 +197,7 @@ async def handle_title(message: Message, state: FSMContext):
     # title кладём в FSM — пригодится для retry
     await state.update_data(title=title)
 
+    # Все данные собраны, отправляем на генерацию
     await generate_and_send(message=message, state=state, prompt=prompt, title=title, user_id=message.from_user.id)
 
 
@@ -215,6 +222,7 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
+    # Проверка состояния генерации
     data = await state.get_data()
     if data.get("generating"):
         await callback.answer(text="Генерация уже идёт.", show_alert=True)
@@ -234,6 +242,7 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
         await callback.message.delete()
     await callback.answer()
 
+    # Повторно отправляем на генерацию
     await generate_and_send(
         message=callback.message,
         state=state,
