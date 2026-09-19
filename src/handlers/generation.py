@@ -193,7 +193,18 @@ async def handle_title(message: Message, state: FSMContext):
     if data.get("generating"):
         await message.answer(text="⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
         return
-    prompt = data.get("prompt", "")
+
+    prompt = data.get("prompt")
+    if not prompt or not prompt.strip():
+        # Промпт потерялся (перезапуск бота / гонка кнопок / чистка FSM) —
+        # на генерацию с пустой строкой не отправляем
+        await message.answer(
+            text="😔 Описание песни потерялось. Начните заново — отправьте стихи или шаблон.",
+            reply_markup=get_main_keyboard(),
+        )
+        await state.clear()
+        return
+
     # title кладём в FSM — пригодится для retry
     await state.update_data(title=title)
 
@@ -228,11 +239,11 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
         await callback.answer(text="Генерация уже идёт.", show_alert=True)
         return
 
-    prompt = data.get("prompt", "")
-    title = data.get("title", "")
+    prompt = data.get("prompt")
+    title = data.get("title", _DEFAULT_TITLE)
 
-    if not prompt:
-        # Состояние потерялось (перезапуск бота?) — честно просим начать заново
+    if not prompt or not prompt.strip():
+        # Состояние потерялось (перезапуск бота?) — честно просим начать заново, показывая модальное окно
         await callback.answer(text="Начните заново: 🎵 Сгенерировать", show_alert=True)
         await state.clear()
         return
