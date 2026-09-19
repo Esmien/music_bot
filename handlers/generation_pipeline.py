@@ -24,10 +24,10 @@ from aiogram.types import (
 import config
 from services import generation as generation_service
 from services.generation import ProgressCallback
+from utils.error_notify import notify_owner
 
 from .keyboards import get_main_keyboard
 from .state import active_tasks
-from .utils import notify_owner
 
 log = logging.getLogger(__name__)
 

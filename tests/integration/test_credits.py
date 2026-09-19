@@ -87,7 +87,7 @@ async def test_cmd_credits_without_limit(patched_auth_db, clean_auth_state, make
     text = msg.answers[0]
     assert "Всего доступно генераций: Без лимита" in text
     assert "Сгенерировано композиций: 2" in text
-    assert "Пока не кончится бабосик" in text
+    assert "Невозможно посчитать" in text
 
 
 @pytest.mark.parametrize("status_code", [401, 500])
@@ -124,6 +124,6 @@ async def test_cmd_credits_without_api_key(patched_auth_db, clean_auth_state, ma
     msg = make_message(uid=11)
     await handlers_credits.cmd_credits(msg, fake_state())
 
-    assert "Бот не настроен (API)" in msg.answers[0]
+    assert "Бот не настроен" in msg.answers[0]
     assert msg.answers[0]  # ровно одно сообщение: после проверки ключа выходим
     assert len(msg.answers) == 1

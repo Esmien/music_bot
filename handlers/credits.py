@@ -9,10 +9,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 import config
+from utils.error_notify import notify_owner
+from utils.exceptions import APINotSet
 
 from .auth import _require_auth
 from .keyboards import get_main_keyboard
-from .utils import notify_owner
 
 log = logging.getLogger(__name__)
 
@@ -31,8 +32,10 @@ async def cmd_credits(message: Message, state: FSMContext):
     if not await _require_auth(message):
         return
     await state.clear()
+
     if not config.OPENROUTER_API_KEY:
-        await message.answer(text="⚠️ Бот не настроен (API), обратитесь к автору.")
+        await notify_owner(bot=message.bot, context="Не настроен ключ API", err=APINotSet("Provider key not set."))
+        await message.answer(text="⚠️ Бот не настроен, владелец уже уведомлен.")
         return
 
     headers = {"Authorization": f"Bearer {config.OPENROUTER_API_KEY}"}
@@ -64,9 +67,7 @@ async def cmd_credits(message: Message, state: FSMContext):
 
             total_songs = _songs_counter(value=total, placeholder="Без лимита")
             used_songs = _songs_counter(value=used, placeholder="0")
-            remaining_songs = _songs_counter(
-                value=remaining, placeholder="Пока не кончится бабосик или Влад не вспомнит про лимит 😁"
-            )
+            remaining_songs = _songs_counter(value=remaining, placeholder="Невозможно посчитать")
 
             await message.answer(
                 text=f"💳 Баланс песен:\n"
@@ -81,4 +82,4 @@ async def cmd_credits(message: Message, state: FSMContext):
             context=f"Проверка кредитов упала (user={message.from_user.id})",
             err=error,
         )
-        await message.answer(text="❌ Не получилось проверить остатки. Влад уже в курсе 🙂")
+        await message.answer(text="❌ Не получилось проверить остатки. Владелец уведомлен.")

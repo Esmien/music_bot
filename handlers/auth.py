@@ -14,11 +14,11 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 import config
 from database import SessionLocal
 from database.models import User
+from utils.error_notify import notify_owner
 
 from .filters import IsPendingAuth, NotCommand
 from .keyboards import get_main_keyboard
 from .state import active_tasks, pending_auth
-from .utils import notify_owner
 
 log = logging.getLogger(__name__)
 
@@ -236,7 +236,7 @@ async def handle_key(message: Message):
             context="Не настроен ключ входа, необходимо проверить.",
             err=RuntimeError("BOT_ACCESS_KEY is empty"),
         )
-        await message.answer(text="⚠️ Бот не настроен. Владелец уже в курсе.")
+        await message.answer(text="⚠️ Бот не настроен. Владелец уже уведомлен.")
         return
 
     # Либо сообщение о неверном ключе, либо об исчерпании попыток. В любом случае не пускаем
