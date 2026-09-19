@@ -2,7 +2,7 @@
 
 import pytest
 
-from handlers.keyboards import get_cancel_keyboard, get_main_keyboard
+from keyboards.default_keyboards import get_cancel_keyboard, get_main_keyboard
 
 pytestmark = pytest.mark.unit
 

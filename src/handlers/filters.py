@@ -3,7 +3,7 @@
 from aiogram.filters import Filter
 from aiogram.types import Message
 
-from .state import pending_auth
+from handlers.state import pending_auth
 
 
 class IsPendingAuth(Filter):

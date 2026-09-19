@@ -4,7 +4,6 @@
 config.py читает и валидирует их прямо на этапе импорта.
 """
 
-import importlib
 import os
 
 os.environ["BOT_TOKEN"] = "test-token"
@@ -14,14 +13,18 @@ os.environ["SONG_PRICE"] = "0.5"
 os.environ["BOT_OWNER_ID"] = "0"
 os.environ["MOCK_MODE"] = "0"
 
+import importlib
+
 # Импорты проекта — строго после настройки окружения (см. докстринг модуля)
 from types import SimpleNamespace  # noqa: E402
 
 import pytest  # noqa: E402
+from aiogram.exceptions import TelegramAPIError
+from aiogram.methods import DeleteMessage
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
-import database  # noqa: E402
+from database import init_db
 from handlers import auth as handlers_auth  # noqa: E402
 from handlers.auth import failed_key_attempts  # noqa: E402
 from handlers.state import pending_auth  # noqa: E402
@@ -57,7 +60,7 @@ async def db_sessionmaker(db_engine, monkeypatch):
     # на него, а не на атрибут пакета database (который затенён
     # импортом from .engine import engine в database/__init__.py)
     monkeypatch.setattr(database_engine_module, "engine", db_engine)
-    await database.init_db()
+    await init_db()
     return async_sessionmaker(db_engine, expire_on_commit=False)
 
 
@@ -129,7 +132,7 @@ def make_message():
 
         async def delete(self):
             if self.fail_delete:
-                raise RuntimeError("delete failed")
+                raise TelegramAPIError(method=DeleteMessage(chat_id=0, message_id=0), message="delete failed")
             self.deleted = True
 
     return FakeMessage

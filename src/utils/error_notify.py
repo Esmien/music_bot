@@ -19,7 +19,7 @@ async def notify_owner(bot: Bot | None, context: str, err: Exception) -> None:
         context: Краткое описание, где произошла ошибка.
         err: Пойманное исключение.
     """
-    log.exception(context)
+    log.error(context, exc_info=err)
 
     # BOT_OWNER_ID == 0 означает, что владелец не настроен — шлём только в лог
     if bot is None or not config.BOT_OWNER_ID:

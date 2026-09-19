@@ -5,16 +5,17 @@
 """
 
 import contextlib
+import re
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from .auth import _require_auth, is_authorized
-from .generation_fsm import MAX_PROMPT_LEN, MAX_TITLE_LEN, GenerationStates
-from .generation_pipeline import generate_and_send
-from .keyboards import get_cancel_keyboard, get_main_keyboard
-from .state import active_tasks
+from handlers.auth import _require_auth, is_authorized
+from handlers.generation_fsm import MAX_PROMPT_LEN, MAX_TITLE_LEN, GenerationStates
+from handlers.generation_pipeline import generate_and_send
+from handlers.state import active_tasks
+from keyboards.default_keyboards import get_cancel_keyboard, get_main_keyboard
 
 router = Router()
 
@@ -50,6 +51,18 @@ _PROMPT_HINT = (
 
 # Копируемый шаблон описания песни
 _PROMPT_TEMPLATE = "Жанр: \n\nНастроение: \n\nИнструменты: \n\nТемп и ритм: \n\nГолос: \n\nТекст песни: \n"
+# Маркеры полей шаблона: детекция формата ввода и отсечение пустого шаблона
+_PROMPT_MARKERS = tuple(
+    line.strip().split(":")[0] + ":" for line in _PROMPT_TEMPLATE.split("\n") if line.strip().endswith(":")
+)  # ("Жанр:", "Настроение:", "Инструменты:", "Темп и ритм:", "Голос:", "Текст песни:")
+_FIELD_NAMES = tuple(marker[:-1] for marker in _PROMPT_MARKERS)  # тут они уже без ":"
+
+# Парсим шаблон на предмет заполненности полей
+_EMPTY_FIELD_RE = re.compile(
+    r"^\s*(?:" + "|".join(map(re.escape, _FIELD_NAMES)) + r")\s*:\s*$",
+    flags=re.MULTILINE,
+)
+_DEFAULT_TITLE = "Lyria's Generated Song"
 
 
 @router.message(F.text == "🎵 Сгенерировать")
@@ -68,6 +81,7 @@ async def cmd_generate(message: Message, state: FSMContext):
     if not await _require_auth(message):
         return
 
+    # Если стейт "в процессе генерации", то не пускаем пользователя к следующей
     if (await state.get_data()).get("generating"):
         await message.answer(text="⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
         return
@@ -109,6 +123,11 @@ async def handle_prompt(message: Message, state: FSMContext):
     Если пришли просто стихи — используется более мягкая формулировка.
     Подготовленный промпт сохраняется в FSM, состояние переключается
     на ожидание названия.
+    Если шаблон заполнен, но поле «Текст песни» пустое, песня уходит
+    в генерацию без лирики — модель сочинит текст сама
+    (TODO: уточняющий вопрос перед генерацией).
+    Подготовленный промпт сохраняется в FSM, состояние переключается
+    на ожидание названия.
 
     Args:
         message: Входящее сообщение с описанием песни.
@@ -123,7 +142,17 @@ async def handle_prompt(message: Message, state: FSMContext):
         await message.answer(text=f"Слишком длинный текст: {len(prompt)} символов. Максимум — {MAX_PROMPT_LEN}.")
         return
 
-    if any(marker in prompt for marker in ("Жанр:", "Настроение:", "Голос:")):
+    # Отсекаем нетронутый шаблон: все поля пустые
+    filled = _EMPTY_FIELD_RE.sub("", prompt)
+    if not filled.strip():
+        await message.answer("Шаблон пришёл пустым 🙂 Заполните хотя бы поле «Текст песни».")
+        return
+
+    if any(marker in prompt for marker in _PROMPT_MARKERS):
+        # TODO: если поле «Текст песни» пустое —
+        #  уточнить у пользователя перед генерацией
+        #  (модель сочинит текст сама, ~$1 за прогон)
+
         # Пользователь заполнил шаблон — оставляем структуру
         structured_prompt = (
             "Create a song based on the following brief. "
@@ -164,10 +193,22 @@ async def handle_title(message: Message, state: FSMContext):
     if data.get("generating"):
         await message.answer(text="⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
         return
-    prompt = data.get("prompt", "")
+
+    prompt = data.get("prompt")
+    if not prompt or not prompt.strip():
+        # Промпт потерялся (перезапуск бота / гонка кнопок / чистка FSM) —
+        # на генерацию с пустой строкой не отправляем
+        await message.answer(
+            text="😔 Описание песни потерялось. Начните заново — отправьте стихи или шаблон.",
+            reply_markup=get_main_keyboard(),
+        )
+        await state.clear()
+        return
+
     # title кладём в FSM — пригодится для retry
     await state.update_data(title=title)
 
+    # Все данные собраны, отправляем на генерацию
     await generate_and_send(message=message, state=state, prompt=prompt, title=title, user_id=message.from_user.id)
 
 
@@ -192,16 +233,17 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
+    # Проверка состояния генерации
     data = await state.get_data()
     if data.get("generating"):
         await callback.answer(text="Генерация уже идёт.", show_alert=True)
         return
 
-    prompt = data.get("prompt", "")
-    title = data.get("title", "")
+    prompt = data.get("prompt")
+    title = data.get("title", _DEFAULT_TITLE)
 
-    if not prompt:
-        # Состояние потерялось (перезапуск бота?) — честно просим начать заново
+    if not prompt or not prompt.strip():
+        # Состояние потерялось (перезапуск бота?) — честно просим начать заново, показывая модальное окно
         await callback.answer(text="Начните заново: 🎵 Сгенерировать", show_alert=True)
         await state.clear()
         return
@@ -211,6 +253,7 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
         await callback.message.delete()
     await callback.answer()
 
+    # Повторно отправляем на генерацию
     await generate_and_send(
         message=callback.message,
         state=state,

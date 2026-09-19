@@ -9,13 +9,13 @@ RUN pip install --no-cache-dir poetry==2.4.1 --only-binary=:all: \
     && poetry config virtualenvs.create false \
     && poetry install --only main --no-root
 
-# Копируем исходники из корня проекта
-COPY . .
 
 RUN useradd -m botuser \
     && mkdir /data \
     && chown botuser:botuser /data
 
+# Копируем исходники из корня проекта
+COPY src/ .
 # Забираем скрипт из папки infra
 COPY infra/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

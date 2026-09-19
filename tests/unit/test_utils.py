@@ -3,7 +3,7 @@
 import pytest
 
 import config
-from handlers.utils import notify_owner
+from utils.error_notify import notify_owner
 
 pytestmark = pytest.mark.unit
 

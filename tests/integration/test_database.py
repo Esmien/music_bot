@@ -4,8 +4,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-import database
-from database.models import User
+from database import User, init_db
 
 pytestmark = pytest.mark.integration
 
@@ -38,4 +37,4 @@ async def test_init_db_is_idempotent(db_sessionmaker):
 
     Схема уже создана фикстурой db_sessionmaker.
     """
-    await database.init_db()
+    await init_db()

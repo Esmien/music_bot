@@ -6,7 +6,7 @@
 
 from aiogram import Router
 
-from . import auth, credits, generation
+from handlers import auth, credits, generation
 
 router = Router()
 # Порядок важен: aiogram проверяет хендлеры по очереди,

@@ -69,7 +69,7 @@ line-ending = "auto"
 
 [tool.ruff.lint.isort]
 # Группировка импортов, чтобы всё было красиво
-known-first-party = ["bot"] # Основной модуль будет отделен пустой строкой
+known-first-party = ["config", "database", "handlers", "services", "utils"] # Модули проекта отделяются пустой строкой
 
 [tool.pytest.ini_options]
 # Режим "auto" — то самое "always": async-тесты и фикстуры выполняются
@@ -78,8 +78,8 @@ asyncio_mode = "auto"
 # Явный scope цикла событий для фикстур — без него pytest-asyncio
 # сыплет deprecation-предупреждения при каждом запуске
 asyncio_default_fixture_loop_scope = "function"
-# Корень проекта в sys.path: тесты импортируют config, models, handlers напрямую
-pythonpath = ["."]
+# Корень проекта и каталог src в sys.path: тесты импортируют config, models, handlers напрямую
+pythonpath = [".", "src"]
 testpaths = ["tests"]
 markers = [
     "unit: быстрые изолированные тесты (сеть и БД замоканы)",
