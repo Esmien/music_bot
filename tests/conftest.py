@@ -24,10 +24,10 @@ import pytest  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
-import database  # noqa: E402
-from handlers import auth as handlers_auth  # noqa: E402
-from handlers.auth import failed_key_attempts  # noqa: E402
-from handlers.state import pending_auth  # noqa: E402
+from src import database
+from src.handlers import auth as handlers_auth  # noqa: E402
+from src.handlers.auth import failed_key_attempts  # noqa: E402
+from src.handlers.state import pending_auth  # noqa: E402
 
 # import database.engine as ... вернул бы не модуль, а затенённый атрибут
 # пакета database — AsyncEngine (реэкспорт engine в database/__init__.py).

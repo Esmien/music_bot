@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from services import generation as gen
+from src.services import generation as gen
 
 pytestmark = pytest.mark.unit
 
@@ -49,7 +49,7 @@ def test_load_mock_audio_reads_base64(tmp_path, monkeypatch):
     raw = b"mock-mp3-bytes"
     mock_file = tmp_path / "mock.json"
     mock_file.write_text(json.dumps({"outer": {"audio": f"data:audio/mpeg;base64,{_b64(raw)}"}}))
-    monkeypatch.setattr(gen.config, "MOCK_FILE", str(mock_file))
+    monkeypatch.setattr(src.config, "MOCK_FILE", str(mock_file))
 
     assert gen.load_mock_audio() == raw
 
@@ -57,7 +57,7 @@ def test_load_mock_audio_reads_base64(tmp_path, monkeypatch):
 def test_load_mock_audio_without_audio_raises(tmp_path, monkeypatch):
     mock_file = tmp_path / "mock.json"
     mock_file.write_text(json.dumps({"nothing": "here"}))
-    monkeypatch.setattr(gen.config, "MOCK_FILE", str(mock_file))
+    monkeypatch.setattr(src.config, "MOCK_FILE", str(mock_file))
 
     with pytest.raises(RuntimeError, match="не найдено"):
         gen.load_mock_audio()

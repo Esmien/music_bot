@@ -2,7 +2,7 @@
 
 import pytest
 
-from handlers.generation_pipeline import _progress_bar
+from src.handlers import _progress_bar
 
 pytestmark = pytest.mark.unit
 

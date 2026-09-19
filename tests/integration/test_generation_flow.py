@@ -9,13 +9,13 @@ from types import SimpleNamespace
 
 import pytest
 
-import config
-from database.models import User
-from handlers import generation as handlers_generation
-from handlers import generation_pipeline as pipeline
-from handlers.generation import GenerationStates
-from handlers.state import active_tasks as registry
-from services import generation as generation_service
+from src import config
+from src.database.models import User
+from src.handlers import generation as handlers_generation
+from src.handlers import generation_pipeline as pipeline
+from src.handlers.generation import GenerationStates
+from src.handlers.state import active_tasks as registry
+from src.services import generation as generation_service
 
 pytestmark = pytest.mark.integration
 

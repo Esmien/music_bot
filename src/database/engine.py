@@ -2,7 +2,7 @@
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-import config
+from .. import config
 
 from .models import Base
 
