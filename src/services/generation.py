@@ -6,8 +6,7 @@ import logging
 import math
 import re
 import time
-from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 
@@ -15,8 +14,11 @@ import config
 
 log = logging.getLogger(__name__)
 
+
 # Колбек прогресса: `on_progress(stage, fraction)`, fraction в диапазоне 0..1
-ProgressCallback = Callable[[str, float], Awaitable[None]]
+class ProgressCallback(Protocol):
+    async def __call__(self, stage: str, fraction: float) -> None: ...
+
 
 # Типичное время генерации песни — на его основе оцениваем долю прогресса,
 # т.к. поток SSE не сообщает общий размер ответа.
