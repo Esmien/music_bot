@@ -11,6 +11,7 @@ from typing import Any, Protocol
 import httpx
 
 import config
+from utils.stream_parser import _parse_openrouter_sse
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ TYPICAL_GENERATION_SECONDS = 75.0
 # Защита от исчерпания памяти, если сервер шлёт аномально большой поток.
 MAX_AUDIO_B64_LEN = 40 * 1024 * 1024
 
-
+# Ожидаемый формат аудио
 AUDIO_B64_RE = re.compile(r"data:audio/mpeg;base64,([A-Za-z0-9+/=]+)")
 
 
@@ -44,15 +45,18 @@ def _find_audio_b64(node: Any) -> str | None:
     Returns:
         Base64-строка аудио или None, если ничего не найдено.
     """
+    # Base case - если нашли строку, прерываем рекурсию
     if isinstance(node, str):
         match = AUDIO_B64_RE.search(node)
         if match:
             return match.group(1)
+    # Ищем ожидаемую строку в значения словаря
     elif isinstance(node, dict):
         for value in node.values():
             found = _find_audio_b64(value)
             if found:
                 return found
+    # Ищем ожидаемую строку в списке
     elif isinstance(node, list):
         for item in node:
             found = _find_audio_b64(item)
@@ -122,18 +126,16 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
         "audio": {"format": "mp3"},
     }
 
+    # Коллекция чанков BASE64 для дальнейшей склейки
     chunks: list[str] = []
+    # Счетчик размера файла
     total_b64 = 0
+    # Точка отсчета таймера для прогресс-бара
     started = time.monotonic()
 
-    async def stream_progress() -> None:
-        # Асимптота 1 - exp(-t/τ): даже если генерация затянется вдвое против
-        # типичной, индикатор продолжает ползти, а не замирает на 95%
-        elapsed = time.monotonic() - started
-        fraction = 1.0 - math.exp(-elapsed / TYPICAL_GENERATION_SECONDS)
-        await report(stage="Получаю аудио…", fraction=fraction * 0.95)
-
+    # Рисуем заглушку на старте генерации
     await report(stage="Соединяюсь с сервером…", fraction=0.02)
+
     async with (
         httpx.AsyncClient(timeout=180.0) as client,
         client.stream(
@@ -146,33 +148,28 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
         if resp.status_code != 200:
             error_body = (await resp.aread()).decode("utf-8", "ignore")
             raise RuntimeError(f"OpenRouter {resp.status_code}: {error_body[:300]}")
-        async for line in resp.aiter_lines():
-            if not line.startswith("data: "):
-                continue
-            raw_payload = line[6:].strip()
-            if raw_payload == "[DONE]":
-                break
-            try:
-                chunk = json.loads(raw_payload)
-            except json.JSONDecodeError:
-                continue
-            # Пустой choices — легитимный случай для некоторых промежуточных чанков
-            choices = chunk.get("choices") or [{}]
-            delta = choices[0].get("delta", {})
-            audio = delta.get("audio") or {}
-            if audio.get("data"):
-                audio_b64 = audio["data"]
-                # Защита от кумулятивных чанков: если сервер шлёт не дельты,
-                # а полные снимки аудио, каждый следующий чанк начинается
-                # с предыдущего. Тогда заменяем, а не добавляем.
-                if chunks and audio_b64.startswith(chunks[-1]):
-                    total_b64 -= len(chunks[-1])
-                    chunks.pop()
-                total_b64 += len(audio_b64)
-                if total_b64 > MAX_AUDIO_B64_LEN:
-                    raise RuntimeError("Аудио в потоке превышает допустимый размер")
-                chunks.append(audio_b64)
-                await stream_progress()
+
+        # Читаем очищенный поток из парсера
+        async for audio_b64 in _parse_openrouter_sse(resp):
+            # Защита от кумулятивных чанков (склейка строк).
+            # Если новый чанк содержит в себе предыдущий,
+            # то убираем старый, сокращаем счетчик размера
+            # на размер старого чанка
+            if chunks and audio_b64.startswith(chunks[-1]):
+                total_b64 -= len(chunks[-1])
+                chunks.pop()
+
+            # Увеличиваем счетчик на размер нового чанка
+            total_b64 += len(audio_b64)
+            if total_b64 > MAX_AUDIO_B64_LEN:
+                raise RuntimeError("Аудио в потоке превышает допустимый размер")
+
+            chunks.append(audio_b64)
+
+            # Обновляем UI асимптотически от времени
+            elapsed = time.monotonic() - started
+            fraction = 1.0 - math.exp(-elapsed / TYPICAL_GENERATION_SECONDS)
+            await report(stage="Получаю аудио…", fraction=fraction * 0.95)
 
     if not chunks:
         raise RuntimeError("Аудио не пришло в потоке")
