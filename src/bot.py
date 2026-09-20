@@ -11,7 +11,7 @@ from aiogram.types import ErrorEvent
 
 from config import settings
 from handlers import router
-from handlers.state import clear_orphaned_generation_flags, redis_client
+from fsm.evaluation_fsm import clear_orphaned_generation_flags, redis_client
 from utils.error_notify import notify_owner
 
 log = logging.getLogger(__name__)

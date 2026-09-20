@@ -5,7 +5,7 @@ import pytest
 from config import settings
 from database.models import User
 from handlers import auth as handlers_auth
-from handlers.state import add_pending_auth, is_pending_auth
+from fsm.evaluation_fsm import add_pending_auth, is_pending_auth
 
 pytestmark = pytest.mark.integration
 

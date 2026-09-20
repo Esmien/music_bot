@@ -32,7 +32,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from database import init_db
 from handlers import auth as handlers_auth  # noqa: E402
-from handlers import state as handlers_state  # noqa: E402
+from fsm import evaluation_fsm as handlers_state
 from handlers.auth import failed_key_attempts  # noqa: E402
 
 # import database.engine as ... вернул бы не модуль, а затенённый атрибут
