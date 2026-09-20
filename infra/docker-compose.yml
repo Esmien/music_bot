@@ -3,13 +3,13 @@ services:
     build:
       context: ../
       dockerfile: infra/Dockerfile
-    container_name: lyria-bot
+    container_name: ${COMPOSE_PROJECT_NAME}-bot
     restart: always
     env_file:
       - ../.env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+      - REDIS_URL=redis://${REDIS_HOST}:${REDIS_PORT}/0
     depends_on:
       postgres:
         condition: service_healthy
@@ -18,11 +18,10 @@ services:
 
   postgres:
     image: postgres:17-alpine
-    container_name: lyria-postgres
+    container_name: ${COMPOSE_PROJECT_NAME}-postgres
     restart: always
-    # Проброс на хост: локальный alembic и бот подключаются через localhost:5432
-    ports:
-      - "5432:5432"
+    # Порты наружу не пробрасываем: на сервере уже крутится локальный PostgreSQL,
+    # бот и alembic работают только внутри docker-сети (POSTGRES_HOST=postgres)
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -37,11 +36,8 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: lyria-redis
+    container_name: ${COMPOSE_PROJECT_NAME}-redis
     restart: always
-    # Проброс на хост для локального запуска бота
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:

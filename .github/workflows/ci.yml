@@ -8,6 +8,35 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+
+    # Реальный PostgreSQL для проверки миграций (alembic upgrade head)
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ${{ secrets.POSTGRES_USER }} -d ${{ secrets.POSTGRES_DB }}"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # Переменные нужны config.py: он валидирует окружение при импорте,
+    # а env.py миграций собирает из них DATABASE_URL.
+    # Сервис-контейнеры GitHub Actions доступны на 127.0.0.1
+    env:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      SONG_PRICE: ${{ secrets.SONG_PRICE }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,8 +59,8 @@ jobs:
       - name: Ruff format check
         run: poetry run ruff format --check .
 
-      - name: Prepare environment
-        run: cp .env.example .env
+      - name: Run migrations
+        run: poetry run alembic upgrade head
 
       - name: Run tests
         run: poetry run pytest
