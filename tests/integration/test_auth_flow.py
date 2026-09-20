@@ -162,7 +162,7 @@ async def test_require_auth_hints_unauthorized(patched_auth_db, clean_auth_state
     msg = make_message(uid=44)
 
     assert await handlers_auth._require_auth(msg) is False
-    assert "Сначала отправьте ключ доступа." in msg.answers[-1]
+    assert "Требуется ключ доступа. Нажмите /start, чтобы ввести" in msg.answers[-1]
 
 
 async def test_fallback_skips_users_waiting_for_key(patched_auth_db, clean_auth_state, make_message):

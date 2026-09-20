@@ -60,7 +60,7 @@ async def _require_auth(message: Message) -> bool:
 
     # пока пользователь на этапе ввода ключа или не авторизован - не пускаем к кнопкам и требуем ключ
     if await is_pending_auth(uid) or not await is_authorized(uid):
-        await message.answer(text="Сначала отправьте ключ доступа.", reply_markup=ReplyKeyboardRemove())
+        await message.answer(text="Требуется ключ доступа. Нажмите /start, чтобы ввести", reply_markup=ReplyKeyboardRemove())
         return False
     return True
 
