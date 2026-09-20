@@ -31,8 +31,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # no
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from database import init_db
-from handlers import auth as handlers_auth  # noqa: E402
 from fsm import evaluation_fsm as handlers_state
+from handlers import auth as handlers_auth  # noqa: E402
 from handlers.auth import failed_key_attempts  # noqa: E402
 
 # import database.engine as ... вернул бы не модуль, а затенённый атрибут

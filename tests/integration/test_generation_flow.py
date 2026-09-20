@@ -11,10 +11,11 @@ import pytest
 
 from config import settings
 from database.models import User
+from fsm.evaluation_fsm import active_tasks as registry
+from handlers import base_handlers
 from handlers import generation as handlers_generation
 from handlers import generation_pipeline as pipeline
 from handlers.generation import GenerationStates
-from fsm.evaluation_fsm import active_tasks as registry
 from services import generation as generation_service
 
 pytestmark = pytest.mark.integration
@@ -221,12 +222,12 @@ async def test_cancel_generation_kills_running_task(
     task = asyncio.create_task(asyncio.sleep(60))
     registry[57] = task
 
-    await handlers_generation.cmd_cancel_generation(msg, state)
+    await base_handlers.cmd_cancel(msg, state)
 
     with pytest.raises(asyncio.CancelledError):
         await task
     assert state.cleared
-    assert "Генерация отменена" in msg.answers[-1]
+    assert "Действие отменено" in msg.answers[-1]
 
 
 async def test_retry_generation_requires_auth(
@@ -337,7 +338,7 @@ async def test_cancelled_generation_deletes_status_and_unsets_flag(
     прогресса удаляется, флаг generating снимается (gen_id совпадает —
     отмена пришла раньше нового состояния), CancelledError пробрасывается
     дальше, задача снимается с реестра. Задача запускается явно через
-    create_task, чтобы отменить её извне, как это делает cmd_cancel_generation.
+    create_task, чтобы отменить её извне, как это делает base_handlers.cmd_cancel.
     """
     await _make_authorized_user(patched_auth_db, 62)
 

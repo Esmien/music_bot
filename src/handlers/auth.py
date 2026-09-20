@@ -14,8 +14,8 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from config import settings
 from database import SessionLocal
 from database.models import User
-from handlers.filters import IsPendingAuth, NotCommand
 from fsm.evaluation_fsm import active_tasks, add_pending_auth, discard_pending_auth, is_pending_auth
+from handlers.filters import IsPendingAuth, NotCommand
 from keyboards.default_keyboards import get_main_keyboard
 from utils.error_notify import notify_owner
 from utils.exceptions import AccessKeyNotSet

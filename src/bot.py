@@ -10,8 +10,8 @@ from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import ErrorEvent
 
 from config import settings
-from handlers import router
 from fsm.evaluation_fsm import clear_orphaned_generation_flags, redis_client
+from handlers import router
 from utils.error_notify import notify_owner
 
 log = logging.getLogger(__name__)
