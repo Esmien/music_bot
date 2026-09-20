@@ -18,18 +18,18 @@ kanban-plugin: board
 
 ## Testing
 
-- [ ] [[add_sqlalchemy_models]]
 
 
 ## Done
 
-- [ ] [[update_infrastructure]]
-- [ ] [[gen_migrations]]
 
 
 ## Deploy
 
 **Complete**
+- [x] [[gen_migrations]]
+- [x] [[add_sqlalchemy_models]]
+- [x] [[update_infrastructure]]
 
 
 

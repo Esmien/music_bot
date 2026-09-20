@@ -12,6 +12,7 @@ from aiogram.types import ErrorEvent
 from config import settings
 from database import init_db
 from handlers import router
+from handlers.state import clear_orphaned_generation_flags, redis_client
 from utils.error_notify import notify_owner
 
 log = logging.getLogger(__name__)
@@ -52,6 +53,11 @@ async def main() -> None:
 
     await init_db()
 
+    # Задачи генерации рестарт не переживают, а FSM в Redis — да:
+    # чистим осиротевшие флаги generating, иначе пользователь
+    # останется с «Дождитесь окончания текущей генерации» навсегда
+    await clear_orphaned_generation_flags()
+
     bot = Bot(
         token=settings.bot.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
@@ -66,6 +72,7 @@ async def main() -> None:
         await dp.start_polling(bot)
     finally:
         await storage.close()
+        await redis_client.aclose()
         await bot.session.close()
 
 

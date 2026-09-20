@@ -15,7 +15,7 @@ from config import settings
 from database import SessionLocal
 from database.models import User
 from handlers.filters import IsPendingAuth, NotCommand
-from handlers.state import active_tasks, pending_auth
+from handlers.state import active_tasks, add_pending_auth, discard_pending_auth, is_pending_auth
 from keyboards.default_keyboards import get_main_keyboard
 from utils.error_notify import notify_owner
 from utils.exceptions import AccessKeyNotSet
@@ -59,13 +59,13 @@ async def _require_auth(message: Message) -> bool:
     uid = message.from_user.id
 
     # пока пользователь на этапе ввода ключа или не авторизован - не пускаем к кнопкам и требуем ключ
-    if uid in pending_auth or not await is_authorized(uid):
+    if await is_pending_auth(uid) or not await is_authorized(uid):
         await message.answer(text="Сначала отправьте ключ доступа.", reply_markup=ReplyKeyboardRemove())
         return False
     return True
 
 
-def _check_key_with_attempts(key: str, expected: str, uid: int) -> str | None:
+async def _check_key_with_attempts(key: str, expected: str, uid: int) -> str | None:
     """Проверяет ключ и ведёт счётчик неудачных попыток.
 
     При успехе сбрасывает счётчик и возвращает None. При неверном ключе
@@ -88,7 +88,7 @@ def _check_key_with_attempts(key: str, expected: str, uid: int) -> str | None:
     attempts = failed_key_attempts.get(uid, 0) + 1
     failed_key_attempts[uid] = attempts
     if attempts >= MAX_KEY_ATTEMPTS:
-        pending_auth.discard(uid)
+        await discard_pending_auth(uid=uid)
         failed_key_attempts.pop(uid, None)
         log.warning("Access key attempts exhausted (user=%s)", uid)
         return "❌ Слишком много неверных попыток. Отправьте /start, чтобы начать заново."
@@ -151,10 +151,10 @@ async def cmd_start(message: Message, state: FSMContext):
             reply_markup=get_main_keyboard(),
         )
         # убираем из реестра ожидания ключа, не тратим память
-        pending_auth.discard(uid)
+        await discard_pending_auth(uid=uid)
     else:
         # пользователь не залогинен, добавляем в реестр "ожидает ключа"
-        pending_auth.add(uid)
+        await add_pending_auth(uid=uid)
         await message.answer(
             text="👋 Привет! Для использования бота отправьте ключ доступа.", reply_markup=ReplyKeyboardRemove()
         )
@@ -197,8 +197,8 @@ async def cmd_logout(message: Message, state: FSMContext):
     task = active_tasks.get(uid)
     if task and not task.done():
         task.cancel()
-    # убираем из реестра, чтобы не висел в памяти
-    pending_auth.discard(uid)
+    # убираем из реестра ожидающих ключ
+    await discard_pending_auth(uid=uid)
     await state.clear()
 
     log.info("User %s logged out", uid)
@@ -240,14 +240,14 @@ async def handle_key(message: Message):
         return
 
     # Либо сообщение о неверном ключе, либо об исчерпании попыток. В любом случае не пускаем
-    error_text = _check_key_with_attempts(key=message.text.strip(), expected=expected_key, uid=uid)
+    error_text = await _check_key_with_attempts(key=message.text.strip(), expected=expected_key, uid=uid)
     if error_text is not None:
         await message.answer(text=error_text)
         return
 
     # Авторизовываем, убираем из реестра ожидающих
     await _mark_user_authorized(uid=uid)
-    pending_auth.discard(uid)
+    await discard_pending_auth(uid=uid)
     await message.answer(text="✅ Вы успешно авторизованы!", reply_markup=get_main_keyboard())
 
 
@@ -266,7 +266,7 @@ async def fallback(message: Message):
     """
     uid = message.from_user.id
 
-    if uid in pending_auth:
+    if await is_pending_auth(uid):
         return  # пусть обработает handle_key
 
     if not await is_authorized(uid):

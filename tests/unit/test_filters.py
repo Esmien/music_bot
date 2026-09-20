@@ -4,17 +4,15 @@ import pytest
 from aiogram.types import Message, User
 
 from handlers.filters import IsPendingAuth, NotCommand
-from handlers.state import pending_auth
+from handlers.state import add_pending_auth
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def clean_pending_auth():
-    """Чистый pending_auth до и после теста."""
-    pending_auth.clear()
+def clean_pending_auth(fake_redis):
+    """pending_auth пуст: fake_redis из conftest чист при создании."""
     yield
-    pending_auth.clear()
 
 
 @pytest.mark.parametrize(
@@ -48,7 +46,7 @@ async def test_not_command(text, expected):
 async def test_is_pending_auth(pending_uid, checked_uid, expected):
     # pending_uid — кто добавлен в ожидание, checked_uid — чей апдейт проверяем
     if pending_uid is not None:
-        pending_auth.add(pending_uid)
+        await add_pending_auth(pending_uid)
     message = Message.model_construct(from_user=User(id=checked_uid, is_bot=False, first_name="T"))
     assert await IsPendingAuth()(message) is expected
 
