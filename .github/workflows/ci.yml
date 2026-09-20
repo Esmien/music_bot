@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, master, dev]
   pull_request:
-
+    branches: [main, master, dev]
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
@@ -14,13 +14,14 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ci_user
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: ci_test_db
         ports:
           - 5432:5432
+        # Теперь здесь обычный текст, GitHub ругаться не будет
         options: >-
-          --health-cmd "pg_isready -U ${{ secrets.POSTGRES_USER }} -d ${{ secrets.POSTGRES_DB }}"
+          --health-cmd "pg_isready -U ci_user -d ci_test_db"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -30,12 +31,14 @@ jobs:
     # Сервис-контейнеры GitHub Actions доступны на 127.0.0.1
     env:
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      BOT_ACCESS_KEY: ${{ secrets.BOT_ACCESS_KEY }}
       SONG_PRICE: ${{ secrets.SONG_PRICE }}
-      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_USER: ci_user
+      POSTGRES_PASSWORD: ci_password
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
-      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_DB: ci_test_db
 
     steps:
       - name: Checkout
