@@ -10,7 +10,6 @@ from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import ErrorEvent
 
 from config import settings
-from database import init_db
 from handlers import router
 from handlers.state import clear_orphaned_generation_flags, redis_client
 from utils.error_notify import notify_owner
@@ -50,8 +49,6 @@ async def main() -> None:
     if not settings.bot.BOT_TOKEN:
         log.error("BOT_TOKEN is not set — startup is impossible")
         return
-
-    await init_db()
 
     # Задачи генерации рестарт не переживают, а FSM в Redis — да:
     # чистим осиротевшие флаги generating, иначе пользователь
