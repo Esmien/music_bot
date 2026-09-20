@@ -22,8 +22,12 @@ jobs:
             cd ${{ secrets.VPS_PROJECT_DIR }}
             git reset --hard
             git pull origin master
-            git pull --ff-only origin main
             # COMPOSE_FILE и COMPOSE_PROJECT_NAME читаются из .env,
             # поэтому флаги -f/-p не нужны
             docker compose up -d --build
             docker image prune -f
+            # Даём entrypoint применить миграции и поднять бота,
+            # затем проверяем, что миграции дошли до head и контейнер жив
+            sleep 15
+            docker compose exec -T bot alembic current
+            docker compose ps

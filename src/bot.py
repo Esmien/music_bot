@@ -6,9 +6,10 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import ErrorEvent
 
-import config
+from config import settings
 from database import init_db
 from handlers import router
 from utils.error_notify import notify_owner
@@ -43,25 +44,28 @@ async def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
-    log.info("Starting bot (mock_mode=%s)", config.MOCK_MODE)
+    log.info("Starting bot (mock_mode=%s)", settings.generation.MOCK_MODE)
 
-    if not config.BOT_TOKEN:
+    if not settings.bot.BOT_TOKEN:
         log.error("BOT_TOKEN is not set — startup is impossible")
         return
 
     await init_db()
 
     bot = Bot(
-        token=config.BOT_TOKEN,
+        token=settings.bot.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    dp = Dispatcher()
+    # FSM-состояния храним в Redis: данные переживают рестарт контейнера
+    storage = RedisStorage.from_url(settings.redis.REDIS_URL)
+    dp = Dispatcher(storage=storage)
     dp.include_router(router)  # все хендлеры собраны в один роутер пакета handlers
     dp.errors.register(on_error)
 
     try:
         await dp.start_polling(bot)
     finally:
+        await storage.close()
         await bot.session.close()
 
 

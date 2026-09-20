@@ -119,7 +119,7 @@ async def test_cmd_credits_without_api_key(patched_auth_db, clean_auth_state, ma
     Запрос к API не выполняется — уходит ровно одно сообщение.
     """
     await _make_authorized_user(patched_auth_db, tg_id=11)
-    monkeypatch.setattr(handlers_credits.config, "OPENROUTER_API_KEY", "")
+    monkeypatch.setattr(handlers_credits.settings.bot, "OPENROUTER_API_KEY", "")
 
     msg = make_message(uid=11)
     await handlers_credits.cmd_credits(msg, fake_state())

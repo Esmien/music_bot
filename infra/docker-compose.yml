@@ -3,14 +3,49 @@ services:
     build:
       context: ../
       dockerfile: infra/Dockerfile
-    container_name: lyria-bot
+    container_name: ${COMPOSE_PROJECT_NAME}-bot
     restart: always
     env_file:
       - ../.env
     environment:
-      - DATABASE_URL=sqlite+aiosqlite:////data/bot.db
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+      - REDIS_URL=redis://${REDIS_HOST}:${REDIS_PORT}/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: ${COMPOSE_PROJECT_NAME}-postgres
+    restart: always
+    # Порты наружу не пробрасываем: на сервере уже крутится локальный PostgreSQL,
+    # бот и alembic работают только внутри docker-сети (POSTGRES_HOST=postgres)
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
     volumes:
-      - db_data:/data
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME}-redis
+    restart: always
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  db_data:
+  postgres_data:
+  redis_data:

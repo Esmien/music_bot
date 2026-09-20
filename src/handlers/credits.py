@@ -8,7 +8,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-import config
+from config import settings
 from handlers.auth import _require_auth
 from keyboards.default_keyboards import get_main_keyboard
 from utils.error_notify import notify_owner
@@ -32,12 +32,12 @@ async def cmd_credits(message: Message, state: FSMContext):
         return
     await state.clear()
 
-    if not config.OPENROUTER_API_KEY:
+    if not settings.bot.OPENROUTER_API_KEY:
         await notify_owner(bot=message.bot, context="Не настроен ключ API", err=APINotSet("Provider key not set."))
         await message.answer(text="⚠️ Бот не настроен, владелец уже уведомлен.")
         return
 
-    headers = {"Authorization": f"Bearer {config.OPENROUTER_API_KEY}"}
+    headers = {"Authorization": f"Bearer {settings.bot.OPENROUTER_API_KEY}"}
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(url="https://openrouter.ai/api/v1/key", headers=headers)
@@ -60,8 +60,8 @@ async def cmd_credits(message: Message, state: FSMContext):
                 Returns:
                     Целое число песен либо placeholder, если value не число или цена не задана.
                 """
-                if isinstance(value, (int, float)) and config.SONG_PRICE > 0:
-                    return int(value / config.SONG_PRICE)
+                if isinstance(value, (int, float)) and settings.generation.SONG_PRICE > 0:
+                    return int(value / settings.generation.SONG_PRICE)
                 return placeholder
 
             total_songs = _songs_counter(value=total, placeholder="Без лимита")

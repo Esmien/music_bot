@@ -2,10 +2,12 @@
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-import config
+from config import settings
 from database.models import Base
 
-engine = create_async_engine(config.DATABASE_URL, echo=False)
+# Драйвер определяется URL: PostgreSQL (asyncpg) в бою,
+# aiosqlite — в тестах с in-memory БД
+engine = create_async_engine(settings.db.database_url, echo=False)
 # expire_on_commit=False: объекты остаются пригодны после commit —
 # иначе ленивое обращение к атрибутам ломалось бы в async-контексте
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)

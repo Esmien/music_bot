@@ -12,6 +12,11 @@ os.environ["BOT_ACCESS_KEY"] = "secret-key"
 os.environ["SONG_PRICE"] = "0.5"
 os.environ["BOT_OWNER_ID"] = "0"
 os.environ["MOCK_MODE"] = "0"
+os.environ["POSTGRES_USER"] = "test-user"
+os.environ["POSTGRES_PASSWORD"] = "test-password"
+os.environ["POSTGRES_HOST"] = "localhost"
+os.environ["POSTGRES_PORT"] = "5432"
+os.environ["POSTGRES_DB"] = "test-db"
 
 import importlib
 

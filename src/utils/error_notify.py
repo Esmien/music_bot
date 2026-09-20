@@ -6,7 +6,7 @@ import traceback
 
 from aiogram import Bot
 
-import config
+from config import settings
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ async def notify_owner(bot: Bot | None, context: str, err: Exception) -> None:
     log.error(context, exc_info=err)
 
     # BOT_OWNER_ID == 0 означает, что владелец не настроен — шлём только в лог
-    if bot is None or not config.BOT_OWNER_ID:
+    if bot is None or not settings.bot.BOT_OWNER_ID:
         return
 
     # Позиционно: первый аргумент format_exception — positional-only
@@ -33,6 +33,6 @@ async def notify_owner(bot: Bot | None, context: str, err: Exception) -> None:
     text = f"🐞 <b>{html.escape(context)}</b>\n<code>{html.escape(traceback_text)}</code>"
 
     try:
-        await bot.send_message(chat_id=config.BOT_OWNER_ID, text=text, parse_mode="HTML")
+        await bot.send_message(chat_id=settings.bot.BOT_OWNER_ID, text=text, parse_mode="HTML")
     except Exception:
         log.exception("Failed to notify owner")

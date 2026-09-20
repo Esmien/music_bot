@@ -11,7 +11,7 @@ from aiogram.types import Message, ReplyKeyboardRemove
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-import config
+from config import settings
 from database import SessionLocal
 from database.models import User
 from handlers.filters import IsPendingAuth, NotCommand
@@ -228,7 +228,7 @@ async def handle_key(message: Message):
         log.warning("Failed to delete message with access key (user=%s)", uid)
 
     # Уведомляем владельца о сбое в настройке и не пускаем дальше (иначе вход открыт для всех)
-    expected_key = config.BOT_ACCESS_KEY
+    expected_key = settings.bot.BOT_ACCESS_KEY
     if not expected_key:
         log.error("BOT_ACCESS_KEY is not set — authorization is impossible")
         await notify_owner(

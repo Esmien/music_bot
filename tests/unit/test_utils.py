@@ -2,7 +2,7 @@
 
 import pytest
 
-import config
+from config import settings
 from utils.error_notify import notify_owner
 
 pytestmark = pytest.mark.unit
@@ -20,7 +20,7 @@ class FakeBot:
 
 
 async def test_notify_owner_skips_without_owner(monkeypatch):
-    monkeypatch.setattr(config, "BOT_OWNER_ID", 0)
+    monkeypatch.setattr(settings.bot, "BOT_OWNER_ID", 0)
     bot = FakeBot()
 
     await notify_owner(bot, "контекст", RuntimeError("boom"))
@@ -29,7 +29,7 @@ async def test_notify_owner_skips_without_owner(monkeypatch):
 
 
 async def test_notify_owner_sends_truncated_traceback(monkeypatch):
-    monkeypatch.setattr(config, "BOT_OWNER_ID", 123)
+    monkeypatch.setattr(settings.bot, "BOT_OWNER_ID", 123)
     bot = FakeBot()
 
     def deep_error():
@@ -49,7 +49,7 @@ async def test_notify_owner_sends_truncated_traceback(monkeypatch):
 
 
 async def test_notify_owner_swallows_send_failure(monkeypatch):
-    monkeypatch.setattr(config, "BOT_OWNER_ID", 123)
+    monkeypatch.setattr(settings.bot, "BOT_OWNER_ID", 123)
 
     # Не должно всплыть исключение, даже если Telegram недоступен
     await notify_owner(FakeBot(fail=True), "контекст", RuntimeError("boom"))
