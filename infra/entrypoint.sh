@@ -9,8 +9,9 @@ if [ "$(id -u)" = "0" ]; then
     chown botuser:botuser /data
     # exec подменяет shell процессом python: SIGTERM при docker compose stop
     # доходит до бота напрямую, и контейнер останавливается быстро
-    exec su botuser -s /bin/sh -c "python -u bot.py"
+    exec su botuser -s /bin/sh -c "alembic upgrade head && python -u bot.py"
 else
     # Запуск вне Docker или уже от обычного пользователя — права не трогаем
+    alembic upgrade head
     exec python -u bot.py
 fi

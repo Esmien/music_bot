@@ -16,6 +16,9 @@ RUN useradd -m botuser \
 
 # Копируем исходники из корня проекта
 COPY src/ .
+# Миграции Alembic
+COPY alembic.ini ./
+COPY migrations/ migrations/
 # Забираем скрипт из папки infra
 COPY infra/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

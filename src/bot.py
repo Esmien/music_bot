@@ -6,6 +6,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import ErrorEvent
 
 import config
@@ -55,13 +56,16 @@ async def main() -> None:
         token=config.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    dp = Dispatcher()
+    # FSM-состояния храним в Redis: данные переживают рестарт контейнера
+    storage = RedisStorage.from_url(config.REDIS_URL)
+    dp = Dispatcher(storage=storage)
     dp.include_router(router)  # все хендлеры собраны в один роутер пакета handlers
     dp.errors.register(on_error)
 
     try:
         await dp.start_polling(bot)
     finally:
+        await storage.close()
         await bot.session.close()
 
 
