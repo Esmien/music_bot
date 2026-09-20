@@ -6,8 +6,6 @@ kanban-plugin: board
 
 ## Backlog
 
-- [ ] [[add_group_FSM_for_handling_enriched_prompt]]
-- [ ] [[add_keyboards]]
 - [ ] [[add_handlers_for_enrichers_request]]
 - [ ] [[add_connection_to_enricher]]
 
@@ -18,7 +16,8 @@ kanban-plugin: board
 
 ## Testing
 
-
+- [ ] [[add_group_FSM_for_handling_enriched_prompt]]
+- [ ] [[add_keyboards]]
 
 ## Done
 
