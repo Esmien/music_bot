@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import config
+from config import settings
 from database.models import User
 from handlers import generation as handlers_generation
 from handlers import generation_pipeline as pipeline
@@ -306,7 +306,7 @@ async def test_mock_mode_generates_audio(
     «демо-режим» и отправляется аудио из load_mock_audio.
     PROGRESS_EDIT_INTERVAL уменьшен, иначе тест спал бы ~9 секунд.
     """
-    monkeypatch.setattr(config, "MOCK_MODE", True)
+    monkeypatch.setattr(settings.generation, "MOCK_MODE", True)
     # Ускоряем демо-прогресс, иначе тест спит ~9 секунд
     monkeypatch.setattr(pipeline, "PROGRESS_EDIT_INTERVAL", 0.01)
     monkeypatch.setattr(generation_service, "load_mock_audio", lambda: b"mock-audio")

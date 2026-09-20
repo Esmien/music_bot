@@ -2,7 +2,7 @@
 
 import pytest
 
-import config
+from config import settings
 from database.models import User
 from handlers import auth as handlers_auth
 from handlers.state import pending_auth
@@ -105,7 +105,7 @@ async def test_handle_key_without_configured_key(patched_auth_db, clean_auth_sta
     Пользователь получает сообщение о ненастроенном боте, авторизация
     не выдаётся даже с формально верным ключом.
     """
-    monkeypatch.setattr(config, "BOT_ACCESS_KEY", "")
+    monkeypatch.setattr(settings.bot, "BOT_ACCESS_KEY", "")
     msg = make_message(text="secret-key", uid=303)
 
     await handlers_auth.handle_key(msg)

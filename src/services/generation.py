@@ -10,7 +10,7 @@ from typing import Any, Protocol
 
 import httpx
 
-import config
+from config import settings
 from utils.stream_parser import _parse_openrouter_sse
 
 log = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ def load_mock_audio() -> bytes:
     Raises:
         RuntimeError: Если аудио в мок-файле не найдено.
     """
-    with open(config.MOCK_FILE, encoding="utf-8") as f:
+    with open(settings.generation.MOCK_FILE, encoding="utf-8") as f:
         data = json.load(f)
     b64 = _find_audio_b64(data)
     if b64:
@@ -113,13 +113,13 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
             log.exception("Error in on_progress")
 
     headers = {
-        "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {settings.bot.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://t.me",
         "X-Title": "Lyria TG Bot",
     }
     payload = {
-        "model": config.MODEL_ID,
+        "model": settings.bot.MODEL_ID,
         "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
         "stream": True,
         "modalities": ["text", "audio"],

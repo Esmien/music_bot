@@ -1,4 +1,4 @@
-"""Окружение Alembic: связывает миграции с metadata моделей и DATABASE_URL из config."""
+"""Окружение Alembic: связывает миграции с metadata моделей и URL БД из config."""
 
 import asyncio
 import sys
@@ -42,7 +42,7 @@ def run_migrations_offline() -> None:
 
     """
     context.configure(
-        url=config.DATABASE_URL,
+        url=config.settings.db.database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -69,7 +69,7 @@ async def run_async_migrations() -> None:
     connectable = async_engine_from_config(
         alembic_config.get_section(alembic_config.config_ini_section, {}),
         prefix="sqlalchemy.",
-        url=config.DATABASE_URL,
+        url=config.settings.db.database_url,
         poolclass=pool.NullPool,
     )
 

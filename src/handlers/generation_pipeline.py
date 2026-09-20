@@ -21,7 +21,7 @@ from aiogram.types import (
     Message,
 )
 
-import config
+from config import settings
 from handlers.state import active_tasks
 from keyboards.default_keyboards import get_main_keyboard
 from services import generation as generation_service
@@ -240,7 +240,7 @@ async def _run_generation(gen_context: GenerationContext, on_progress: ProgressC
     Returns:
         Байты готового аудио.
     """
-    if config.MOCK_MODE:
+    if settings.generation.MOCK_MODE:
         # Для демо-режима отображаем прогресс с шагом 30%
         for fraction in (0.2, 0.5, 0.8):
             await on_progress(stage="Генерирую (демо-режим)…", fraction=fraction)
