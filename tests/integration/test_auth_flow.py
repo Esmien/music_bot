@@ -5,7 +5,7 @@ import pytest
 from config import settings
 from database.models import User
 from handlers import auth as handlers_auth
-from handlers.state import pending_auth
+from handlers.state import add_pending_auth, is_pending_auth
 
 pytestmark = pytest.mark.integration
 
@@ -95,7 +95,7 @@ async def test_handle_key_blocks_after_max_attempts(patched_auth_db, clean_auth_
     assert "Слишком много неверных попыток" in msg.answers[-1]
     # После блокировки счётчик и статус ожидания должны быть сброшены
     assert 302 not in handlers_auth.failed_key_attempts
-    assert 302 not in pending_auth
+    assert not await is_pending_auth(302)
     assert await handlers_auth.is_authorized(302) is False
 
 
@@ -141,7 +141,7 @@ async def test_cmd_start_greets_authorized(patched_auth_db, clean_auth_state, ma
 
     assert "Используйте кнопки ниже" in msg.answers[-1]
     assert state.cleared
-    assert 42 not in pending_auth
+    assert not await is_pending_auth(42)
 
 
 async def test_cmd_start_puts_unauthorized_into_pending(patched_auth_db, clean_auth_state, make_message, fake_state):
@@ -153,12 +153,12 @@ async def test_cmd_start_puts_unauthorized_into_pending(patched_auth_db, clean_a
     await handlers_auth.cmd_start(msg, fake_state())
 
     assert "отправьте ключ доступа" in msg.answers[-1]
-    assert 43 in pending_auth
+    assert await is_pending_auth(43)
 
 
 async def test_require_auth_hints_unauthorized(patched_auth_db, clean_auth_state, make_message):
     """_require_auth отклоняет ожидающего ключ и подсказывает, что делать."""
-    pending_auth.add(44)
+    await add_pending_auth(44)
     msg = make_message(uid=44)
 
     assert await handlers_auth._require_auth(msg) is False
@@ -167,7 +167,7 @@ async def test_require_auth_hints_unauthorized(patched_auth_db, clean_auth_state
 
 async def test_fallback_skips_users_waiting_for_key(patched_auth_db, clean_auth_state, make_message):
     """Fallback молчит для ожидающих ввод ключа — сообщение уйдёт в handle_key."""
-    pending_auth.add(45)
+    await add_pending_auth(45)
     msg = make_message(text="что-то", uid=45)
 
     await handlers_auth.fallback(msg)

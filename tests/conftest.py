@@ -23,6 +23,7 @@ import importlib
 # Импорты проекта — строго после настройки окружения (см. докстринг модуля)
 from types import SimpleNamespace  # noqa: E402
 
+import fakeredis.aioredis  # noqa: E402
 import pytest  # noqa: E402
 from aiogram.exceptions import TelegramAPIError
 from aiogram.methods import DeleteMessage
@@ -31,8 +32,8 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from database import init_db
 from handlers import auth as handlers_auth  # noqa: E402
+from handlers import state as handlers_state  # noqa: E402
 from handlers.auth import failed_key_attempts  # noqa: E402
-from handlers.state import pending_auth  # noqa: E402
 
 # import database.engine as ... вернул бы не модуль, а затенённый атрибут
 # пакета database — AsyncEngine (реэкспорт engine в database/__init__.py).
@@ -77,12 +78,22 @@ async def patched_auth_db(db_sessionmaker, monkeypatch):
 
 
 @pytest.fixture
-def clean_auth_state():
-    """Пустые pending_auth и failed_key_attempts до и после теста."""
-    pending_auth.clear()
+def fake_redis(monkeypatch):
+    """Подменяет клиент Redis в handlers.state на in-memory fakeredis.
+
+    pending_auth теперь живёт в Redis — реальный сервер в тестах не нужен.
+    Клиент чист при создании, ключи между тестами не перетекают.
+    """
+    client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(handlers_state, "redis_client", client)
+    return client
+
+
+@pytest.fixture
+def clean_auth_state(fake_redis):
+    """Пустой pending_auth (свежий fakeredis) и failed_key_attempts до и после теста."""
     failed_key_attempts.clear()
     yield
-    pending_auth.clear()
     failed_key_attempts.clear()
 
 

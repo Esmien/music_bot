@@ -14,9 +14,11 @@
 
 - **Python 3.12**
 - **aiogram 3** — бот-фреймворк: роутеры, FSM, клавиатуры
-- **SQLAlchemy 2 + aiosqlite** — асинхронная работа с SQLite
+- **SQLAlchemy 2 (async)** — PostgreSQL (asyncpg), SQLite для тестов
+- **Alembic** — миграции БД
+- **Redis** — хранение FSM-состояний
 - **httpx** — запросы к OpenRouter, чтение SSE-потока
-- **python-dotenv** — конфигурация через `.env`
+- **pydantic-settings** — конфигурация через `.env`
 - **Pytest + pytest-asyncio** — юнит- и интеграционные тесты
 - **Poetry** — управление зависимостями (`pyproject.toml` + `poetry.lock`)
 - **Docker + docker compose** — развёртывание
@@ -24,24 +26,30 @@
 ## Структура проекта
 
 ~~~text
-bot.py               # точка входа: Bot, Dispatcher, polling
-config.py            # все настройки из переменных окружения
-database/
-├── engine.py        # async-движок, фабрика сессий, init_db
-└── models.py        # ORM-модели (User)
-handlers/
-├── auth.py          # /start, ввод ключа доступа, /logout, fallback
-├── generation.py    # FSM-сценарий генерации песни
-├── generation_fsm.py       # FSM-состояния и лимиты диалога генерации
-├── generation_pipeline.py  # конвейер генерации: локи, прогресс, отмена, сбои
-├── credits.py       # остаток генераций
-├── keyboards.py     # reply-клавиатуры
-├── filters.py       # кастомные фильтры
-├── state.py         # общее состояние между хендлерами
-└── utils.py         # уведомления владельцу об ошибках
-services/
-└── generation.py    # запрос к OpenRouter (SSE) и мок-режим
-tests/               # юнит- и интеграционные тесты
+src/
+├── bot.py               # точка входа: Bot, Dispatcher, polling
+├── config.py            # конфигурация через pydantic Settings
+├── database/
+│   ├── engine.py        # async-движок, фабрика сессий
+│   └── models.py        # ORM-модели (User, GenerationFeedback)
+├── handlers/
+│   ├── auth.py             # /start, ввод ключа доступа, /logout, fallback
+│   ├── generation.py       # FSM-сценарий генерации песни
+│   ├── generation_fsm.py   # FSM-состояния и лимиты диалога генерации
+│   ├── generation_pipeline.py  # конвейер генерации: локи, прогресс, отмена, сбои
+│   ├── credits.py          # остаток генераций
+│   ├── filters.py          # кастомные фильтры
+│   └── state.py            # Redis-реестры и общее состояние между хендлерами
+├── keyboards/
+│   └── default_keyboards.py    # reply-клавиатуры
+├── services/
+│   └── generation.py    # запрос к OpenRouter (SSE) и мок-режим
+└── utils/
+    ├── error_notify.py  # уведомления владельцу об ошибках
+    ├── exceptions.py    # кастомные исключения
+    └── stream_parser.py # парсер SSE-потока OpenRouter
+migrations/             # миграции Alembic
+tests/                  # юнит- и интеграционные тесты
 pyproject.toml · poetry.lock · infra/Dockerfile · infra/docker-compose.yml · infra/entrypoint.sh · .github/workflows (CI/CD)
 ~~~
 
@@ -55,9 +63,12 @@ pyproject.toml · poetry.lock · infra/Dockerfile · infra/docker-compose.yml ·
 | `OPENROUTER_API_KEY` | ✅ | — | Ключ API OpenRouter |
 | `BOT_ACCESS_KEY` | ✅ | — | Ключ, который пользователь присылает боту для входа |
 | `SONG_PRICE` | ✅ | — | Стоимость одной генерации, $ — для расчёта остатка песен |
+| `COMPOSE_FILE` / `COMPOSE_PROJECT_NAME` | — | — | Путь к docker-compose.yml и имя проекта для compose |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | ✅ | — | Пользователь, пароль и имя БД PostgreSQL |
+| `POSTGRES_HOST` / `POSTGRES_PORT` | ✅ | — | Хост и порт PostgreSQL (в Docker-сети — `postgres:5432`) |
 | `MODEL_ID` | — | `google/lyria-3-pro-preview` | Модель OpenRouter |
 | `BOT_OWNER_ID` | — | `0` | Telegram ID владельца: ему уходят отчёты об ошибках |
-| `DATABASE_URL` | — | `sqlite+aiosqlite:///./bot.db` | Строка подключения к БД (в Docker переопределяется) |
+| `REDIS_URL` | — | `redis://localhost:6379/0` | Строка подключения к Redis (FSM-состояния); в Docker собирается из `REDIS_HOST`/`REDIS_PORT` |
 | `MOCK_MODE` | — | `0` | `1` — демо-режим без вызова API |
 | `MOCK_FILE` | — | — | JSON-мок с аудио в base64 для демо-режима |
 
@@ -81,7 +92,7 @@ docker compose up -d --build
 docker compose logs -f
 ~~~
 
-В логах должна появиться строка `Starting bot`. Таблицы БД создаются автоматически при первом запуске. Остановка: `docker compose down`. База SQLite хранится в именованном томе и переживает пересоздание контейнера.
+В логах должна появиться строка `Starting bot`. Схема БД применяется миграциями Alembic при запуске. Остановка: `docker compose down`. Данные PostgreSQL и Redis хранятся в именованных томах и переживают пересоздание контейнеров.
 
 ## CI/CD
 
@@ -91,7 +102,7 @@ GitHub Actions: `.github/workflows/ci.yml` — Ruff и Pytest на каждый 
 
 ~~~bash
 poetry install
-poetry run python bot.py
+poetry run python src/bot.py
 ~~~
 
 ## Тесты

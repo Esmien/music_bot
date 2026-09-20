@@ -1,5 +1,6 @@
 # Стек:
-Python 3.12, Aiogram 3.x, SQLAlchemy 2.0+ (строго async/await), SQLite, Alembic для миграций
+Python 3.12, Aiogram 3.x, SQLAlchemy 2.0+ (строго async/await), 
+PostgreSQL (asyncpg), SQLite (для тестов), Alembic для миграций, Redis для хранения FSM
 
 # Инфраструктура:
 Docker, Docker compose
@@ -47,7 +48,7 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
 [tool.ruff.lint.isort]
-known-first-party = ["bot"] # Основной модуль будет отделен пустой строкой`
+known-first-party = ["config", "database", "handlers", "services", "utils"] # Основной модуль будет отделен пустой строкой`
 
 # Документация:
 Достаточно подробные докстринги ко всем функциям и классам строго в формате Google (Args, Returns, Raises).

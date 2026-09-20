@@ -3,7 +3,7 @@
 from aiogram.filters import Filter
 from aiogram.types import Message
 
-from handlers.state import pending_auth
+from handlers.state import is_pending_auth
 
 
 class IsPendingAuth(Filter):
@@ -14,7 +14,7 @@ class IsPendingAuth(Filter):
     """
 
     async def __call__(self, message: Message) -> bool:
-        return message.from_user is not None and message.from_user.id in pending_auth
+        return message.from_user is not None and await is_pending_auth(message.from_user.id)
 
 
 class NotCommand(Filter):
