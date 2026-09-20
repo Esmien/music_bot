@@ -9,17 +9,15 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from config import UIConfig
 from fsm.evaluation_fsm import active_tasks
 from keyboards.default_keyboards import get_main_keyboard
 
 router = Router(name="base")
 
-# Тексты кнопок отмены из разных клавиатур сценария
-CANCEL_BUTTON_TEXTS = ("❌ Отмена",)
-
 
 @router.message(Command("cancel"))
-@router.message(F.text.in_(CANCEL_BUTTON_TEXTS))
+@router.message(F.text == UIConfig.CANCEL_BUTTON)
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     """Отмена текущего сценария: сброс FSM и возврат на главный экран.
 

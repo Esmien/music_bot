@@ -11,7 +11,7 @@ from aiogram.types import Message, ReplyKeyboardRemove
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from config import settings
+from config import UIConfig, settings
 from database import SessionLocal
 from database.models import User
 from fsm.evaluation_fsm import active_tasks, add_pending_auth, discard_pending_auth, is_pending_auth
@@ -161,7 +161,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
 
 @router.message(Command("logout"))
-@router.message(F.text == "🚪 Выйти")
+@router.message(F.text == UIConfig.LOGOUT_BUTTON)
 async def cmd_logout(message: Message, state: FSMContext):
     """Выход: снимает авторизацию в БД и очищает состояние ожидания.
 

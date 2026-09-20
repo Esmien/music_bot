@@ -8,7 +8,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from config import settings
+from config import UIConfig, settings
 from handlers.auth import _require_auth
 from keyboards.default_keyboards import get_main_keyboard
 from utils.error_notify import notify_owner
@@ -20,7 +20,7 @@ router = Router()
 
 
 @router.message(Command("credits"))
-@router.message(F.text == "💳 Кредиты")
+@router.message(F.text == UIConfig.CREDITS_BUTTON)
 async def cmd_credits(message: Message, state: FSMContext):
     """Показывает остаток генераций по данным API OpenRouter.
 
