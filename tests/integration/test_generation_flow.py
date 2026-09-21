@@ -9,8 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from config import settings
-from database.models import User
+from core.config import settings
+from core.database import User
 from fsm.evaluation_fsm import active_tasks as registry
 from handlers import base_handlers
 from handlers import generation as handlers_generation

@@ -11,7 +11,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from config import UIConfig
+from core.config import UIConfig
 from fsm.generation_fsm import MAX_PROMPT_LEN, MAX_TITLE_LEN, GenerationStates
 from handlers.auth import _require_auth, is_authorized
 from handlers.generation_pipeline import generate_and_send

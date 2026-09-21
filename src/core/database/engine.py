@@ -2,8 +2,8 @@
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from config import settings
-from database.models import Base
+from core.config import settings
+from core.database.models import Base
 
 # Драйвер определяется URL: PostgreSQL (asyncpg) в бою,
 # aiosqlite — в тестах с in-memory БД

@@ -7,7 +7,7 @@ callback_data построены по схеме "<домен>:<действие
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import UIConfig
+from core.config import UIConfig
 
 # Префиксы callback_data: обогащение промпта и фидбек
 PROMPT_CB_PREFIX = "prompt:"

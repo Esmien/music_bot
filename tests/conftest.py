@@ -30,7 +30,7 @@ from aiogram.methods import DeleteMessage
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
-from database import init_db
+from core.database import init_db
 from fsm import evaluation_fsm as handlers_state
 from handlers import auth as handlers_auth  # noqa: E402
 from handlers.auth import failed_key_attempts  # noqa: E402
@@ -40,7 +40,7 @@ from handlers.auth import failed_key_attempts  # noqa: E402
 # Поэтому модуль достаём через importlib: он отдаёт запись из sys.modules,
 # минуя затенённый атрибут, и db_sessionmaker патчит переменную engine
 # именно в database/engine.py
-database_engine_module = importlib.import_module("database.engine")
+database_engine_module = importlib.import_module("core.database.engine")
 
 
 @pytest.fixture

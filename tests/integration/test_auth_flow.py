@@ -2,8 +2,8 @@
 
 import pytest
 
-from config import settings
-from database.models import User
+from core.config import settings
+from core.database import User
 from fsm.evaluation_fsm import add_pending_auth, is_pending_auth
 from handlers import auth as handlers_auth
 

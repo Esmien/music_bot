@@ -14,16 +14,11 @@ import json
 import logging
 
 from aiogram.fsm.state import State, StatesGroup
-from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from config import settings
+from core.redis import redis_client
 
 log = logging.getLogger(__name__)
-
-# Единый клиент Redis для служебных реестров и чистки FSM.
-# decode_responses: работаем со строками, а не с bytes
-redis_client: Redis = Redis.from_url(settings.redis.REDIS_URL, decode_responses=True)
 
 # Ключ множества пользователей, ожидающих ввода ключа доступа
 PENDING_AUTH_KEY = "bot:pending_auth"

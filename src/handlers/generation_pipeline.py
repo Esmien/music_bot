@@ -21,12 +21,12 @@ from aiogram.types import (
     Message,
 )
 
-from config import settings
+from core.config import settings
+from core.utils.error_notify import notify_owner
 from fsm.evaluation_fsm import active_tasks
 from keyboards.default_keyboards import get_main_keyboard
 from services import generation as generation_service
 from services.generation import ProgressCallback
-from utils.error_notify import notify_owner
 
 log = logging.getLogger(__name__)
 

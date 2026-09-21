@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from config import settings
+from core.config import settings
 from services import generation as gen
 
 pytestmark = pytest.mark.unit

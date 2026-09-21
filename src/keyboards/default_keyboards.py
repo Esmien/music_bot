@@ -10,7 +10,7 @@
 from aiogram.types import ReplyKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
-from config import UIConfig
+from core.config import UIConfig
 
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:

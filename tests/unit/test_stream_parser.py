@@ -1,6 +1,6 @@
 import pytest
 
-from utils.stream_parser import _parse_openrouter_sse
+from core.utils.stream_parser import _parse_openrouter_sse
 
 
 def _audio_chunk(data_b64: str) -> str:

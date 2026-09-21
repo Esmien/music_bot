@@ -11,14 +11,13 @@ from aiogram.types import Message, ReplyKeyboardRemove
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from config import UIConfig, settings
-from database import SessionLocal
-from database.models import User
+from core.config import UIConfig, settings
+from core.database import SessionLocal, User
+from core.utils.error_notify import notify_owner
+from core.utils.exceptions import AccessKeyNotSet
 from fsm.evaluation_fsm import active_tasks, add_pending_auth, discard_pending_auth, is_pending_auth
 from handlers.filters import IsPendingAuth, NotCommand
 from keyboards.default_keyboards import get_main_keyboard
-from utils.error_notify import notify_owner
-from utils.exceptions import AccessKeyNotSet
 
 log = logging.getLogger(__name__)
 

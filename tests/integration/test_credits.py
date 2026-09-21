@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from database.models import User
+from core.database import User
 from handlers import credits as handlers_credits
 
 pytestmark = pytest.mark.integration

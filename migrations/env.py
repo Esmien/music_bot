@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(_PROJECT_ROOT), str(_PROJECT_ROOT / "src")]
 
-import config  # noqa: E402
-from database.models import Base  # noqa: E402
+from core import config
+from core.database import Base  # noqa: E402
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

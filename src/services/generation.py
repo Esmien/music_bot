@@ -10,8 +10,8 @@ from typing import Any, Protocol
 
 import httpx
 
-from config import settings
-from utils.stream_parser import _parse_openrouter_sse
+from core.config import settings
+from core.utils.stream_parser import _parse_openrouter_sse
 
 log = logging.getLogger(__name__)
 

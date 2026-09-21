@@ -8,11 +8,11 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from config import UIConfig, settings
+from core.config import UIConfig, settings
+from core.utils.error_notify import notify_owner
+from core.utils.exceptions import APINotSet
 from handlers.auth import _require_auth
 from keyboards.default_keyboards import get_main_keyboard
-from utils.error_notify import notify_owner
-from utils.exceptions import APINotSet
 
 log = logging.getLogger(__name__)
 

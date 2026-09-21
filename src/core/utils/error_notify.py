@@ -6,7 +6,7 @@ import traceback
 
 from aiogram import Bot
 
-from config import settings
+from core.config import settings
 
 log = logging.getLogger(__name__)
 
