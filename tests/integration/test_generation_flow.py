@@ -1,7 +1,8 @@
 """Интеграционные тесты процесса генерации: FSM, прогресс, сбой, отмена.
 
-Сервис генерации замокан на уровне generation_service.generate_song_real,
-поэтому тесты идут через реальные хендлеры, но без сети.
+Сервис генерации замокан на уровне services.pipeline.generate_song_real
+(место использования — патчим там, где вызывается), поэтому тесты идут
+через реальные хендлеры, но без сети.
 """
 
 import asyncio
@@ -11,12 +12,12 @@ import pytest
 
 from core.config import settings
 from core.database import User
-from fsm.evaluation_fsm import active_tasks as registry
+from core.task_registry import active_tasks as registry
 from handlers import base_handlers
 from handlers import generation as handlers_generation
 from handlers import generation_pipeline as pipeline
 from handlers.generation import GenerationStates
-from services import generation as generation_service
+from services import pipeline as service_pipeline
 
 pytestmark = pytest.mark.integration
 
@@ -54,7 +55,7 @@ async def _make_authorized_user(sessionmaker, tg_id: int) -> None:
 
 
 def _install_generation(monkeypatch, impl):
-    monkeypatch.setattr(generation_service, "generate_song_real", impl)
+    monkeypatch.setattr(service_pipeline, "generate_song_real", impl)
 
 
 async def test_cmd_generate_sends_hint_and_sets_state(
@@ -309,8 +310,8 @@ async def test_mock_mode_generates_audio(
     """
     monkeypatch.setattr(settings.generation, "MOCK_MODE", True)
     # Ускоряем демо-прогресс, иначе тест спит ~9 секунд
-    monkeypatch.setattr(pipeline, "PROGRESS_EDIT_INTERVAL", 0.01)
-    monkeypatch.setattr(generation_service, "load_mock_audio", lambda: b"mock-audio")
+    monkeypatch.setattr(service_pipeline, "PROGRESS_EDIT_INTERVAL", 0.01)
+    monkeypatch.setattr(service_pipeline, "load_mock_audio", lambda: b"mock-audio")
 
     async def unexpected_generate(prompt, on_progress=None):
         raise AssertionError("в mock-режиме generate_song_real не вызывается")
@@ -345,7 +346,7 @@ async def test_cancelled_generation_deletes_status_and_unsets_flag(
     async def hanging_generate(prompt, on_progress=None):
         await asyncio.sleep(60)
 
-    monkeypatch.setattr(generation_service, "generate_song_real", hanging_generate)
+    monkeypatch.setattr(service_pipeline, "generate_song_real", hanging_generate)
 
     state = fake_state()
     await state.update_data(prompt="промпт")

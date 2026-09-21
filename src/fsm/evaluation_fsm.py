@@ -4,12 +4,11 @@
 на одни и те же данные, не импортируя друг друга.
 
 pending_auth хранится в Redis: как и FSM-состояния, реестр ожидающих
-ключ переживает рестарт контейнера. active_tasks остаётся в памяти —
-asyncio.Task не сериализуется, а задачи при рестарте теряются в любом
-случае; осиротевшие флаги generating вычищаются на старте бота.
+ключ переживает рестарт контейнера. Реестр живых задач генерации
+active_tasks переехал в core/task_registry.py; осиротевшие флаги
+generating вычищаются на старте бота.
 """
 
-import asyncio
 import json
 import logging
 
@@ -116,10 +115,3 @@ class FeedbackStates(StatesGroup):
 
     waiting_evaluation = State()
     waiting_feedback = State()
-
-
-# Живые задачи генерации по user_id: позволяют честно погасить генерацию
-# из cmd_cancel_generation и cmd_logout. Сам asyncio.Task в FSM-данные не
-# положишь (не сериализуется), поэтому реестр живёт здесь; при перезапуске
-# процесса задачи теряются, а их след в FSM чистит clear_orphaned_generation_flags.
-active_tasks: dict[int, asyncio.Task] = {}
