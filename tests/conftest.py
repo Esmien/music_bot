@@ -117,7 +117,7 @@ def make_message():
     class FakeMessage:
         def __init__(self, text=None, uid=1):
             self.text = text
-            self.from_user = SimpleNamespace(id=uid)
+            self.from_user = SimpleNamespace(id=uid, username=f"user_{uid}")
             self.chat = SimpleNamespace(id=uid)
             self.bot = FakeBot()
             self.answers = []

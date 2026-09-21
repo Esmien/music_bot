@@ -1,9 +1,8 @@
-"""Движок генерации песни: запуск, прогресс, отмена и обработка сбоев.
+"""Хендлеровый слой конвейера генерации: FSM, статусы, отмена и сбои.
 
-Вынесено из хендлеров, чтобы те занимались только FSM-диалогом.
-Модуль не знает о роутере: он умеет «сгенерировать и
-отправить» одну песню, честно обработать отмену и сбой и не дать
-одному пользователю запустить две генерации параллельно.
+«Железная» логика запуска (пер-пользовательские локи, троттлинг
+прогресса, демо/реальный режим) живет в services/pipeline.py; здесь —
+только работа с Telegram, FSM-состоянием и реестром active_tasks.
 """
 
 import asyncio
@@ -21,45 +20,13 @@ from aiogram.types import (
     Message,
 )
 
-from core.config import settings
+from core.task_registry import active_tasks
 from core.utils.error_notify import notify_owner
-from fsm.evaluation_fsm import active_tasks
 from keyboards.default_keyboards import get_main_keyboard
-from services import generation as generation_service
 from services.generation import ProgressCallback
+from services.pipeline import make_throttled_progress, run_generation, user_generation_lock
 
 log = logging.getLogger(__name__)
-
-# Минимальный интервал между правками сообщения прогресса (лимиты Telegram)
-PROGRESS_EDIT_INTERVAL = 3.0
-
-# Пер-пользовательские локи: превращают проверку-и-установку флага generating
-# в атомарную — иначе два параллельных апдейта оба пройдут проверку.
-_generation_locks: dict[int, asyncio.Lock] = {}
-
-
-def _generation_lock(user_id: int) -> asyncio.Lock:
-    """Возвращает лок генерации для пользователя, создавая при необходимости."""
-    lock = _generation_locks.get(user_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _generation_locks[user_id] = lock
-    return lock
-
-
-def _progress_bar(fraction: float, width: int = 10) -> str:
-    """Строит текстовый индикатор прогресса вида `████░░░░░░`.
-
-    Args:
-        fraction: Доля выполнения, 0..1.
-        width: Ширина полосы в символах.
-
-    Returns:
-        Строка с заполненными и пустыми блоками.
-    """
-    # round, а не int: при fraction=0.5 полоса выглядит наполовину заполненной
-    filled = round(fraction * width)
-    return "█" * filled + "░" * (width - filled)
 
 
 async def _is_actual_gen(state: FSMContext, gen_id: str) -> bool:
@@ -119,6 +86,13 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
         title: Название трека (используется в имени файла).
         user_id: Telegram user_id пользователя.
     """
+    # current_task() возвращает Optional[Task]; в корутине он фактически не None,
+    # но type-checker требует явной проверки. Явный raise вместо assert:
+    # под python -O assert вырезается, а это боевой инвариант
+    task = asyncio.current_task()
+    if task is None:
+        raise RuntimeError("generate_and_send must run inside an asyncio Task")
+
     # Собираем весь контекст генерации в кучу
     gen_context = GenerationContext(
         message=message,
@@ -126,7 +100,7 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
         prompt=prompt,
         title=title,
         user_id=user_id,
-        task=asyncio.current_task(),
+        task=task,
     )
     try:
         # Слот занят другой генерацией - не запускаем новую
@@ -138,7 +112,7 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
         on_progress = _make_progress_reporter(status=status)
 
         try:
-            audio_bytes = await _run_generation(gen_context=gen_context, on_progress=on_progress)
+            audio_bytes = await run_generation(prompt=gen_context.prompt, on_progress=on_progress)
         except asyncio.CancelledError:
             await _cleanup_cancelled(gen_context=gen_context, status=status)
             raise
@@ -165,7 +139,7 @@ async def _acquire_slot(gen_context: GenerationContext) -> bool:
     Returns:
         True, если слот занят и генерацию можно запускать.
     """
-    async with _generation_lock(user_id=gen_context.user_id):
+    async with user_generation_lock(user_id=gen_context.user_id):
         # Проверка, занят ли слот. Если занят, не даем запустить новую
         if (await gen_context.state.get_data()).get("generating"):
             await gen_context.message.answer(text="⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
@@ -192,67 +166,29 @@ async def _start_status(gen_context: GenerationContext) -> Message:
 
 
 def _make_progress_reporter(status: Message) -> ProgressCallback:
-    """Возвращает корутину on_progress, троттлящую правки статуса.
+    """Возвращает колбэк on_progress, троттлящий правки статуса.
 
-    Правки идут не чаще PROGRESS_EDIT_INTERVAL (лимиты Telegram);
-    отрицательный старт гарантирует, что первый вызов не отсеется.
+    Троттлинг и сборку текста делает services.pipeline; здесь —
+    только «отрисовка» через edit_text конкретного сообщения.
 
     Args:
         status: Сообщение-статус, которое редактируется по мере прогресса.
-    """
-    loop = asyncio.get_running_loop()
-    last_edit = -PROGRESS_EDIT_INTERVAL
 
-    async def on_progress(stage: str, fraction: float) -> None:
-        """Коллбэк для отрисовки прогресс-бара
+    Returns:
+        Колбэк on_progress(stage, fraction) для сервиса генерации.
+    """
+
+    async def report(text: str) -> None:
+        """Отрисовывает новый текст статуса, глотая сбои правки.
 
         Args:
-            stage: название этапа сборки
-            fraction: оценочная доля прогресса (0...1) для отображения в процентах
+            text: Готовый текст статуса с прогресс-баром.
         """
-        nonlocal last_edit
-
-        # Троттлим: правки статуса не чаще PROGRESS_EDIT_INTERVAL (лимиты Telegram)
-        now = loop.time()
-        if now - last_edit < PROGRESS_EDIT_INTERVAL:
-            return
-
-        last_edit = now
-
-        # Песня еще не пришла, формируем новый блок
-        text = f"🎼 {stage}\n{_progress_bar(fraction)} {round(fraction * 100)}%"
-
-        # Отрисовываем изменение
         with contextlib.suppress(Exception):
             # Позиционно: заглушки edit_text в тестах объявлены как (new_text, **kwargs)
             await status.edit_text(text)
 
-    return on_progress
-
-
-async def _run_generation(gen_context: GenerationContext, on_progress: ProgressCallback) -> bytes:
-    """Запускает генерацию: демо-ветка в MOCK_MODE или реальный сервис.
-
-    Args:
-        gen_context: Контекст запуска генерации.
-        on_progress: Корутин-колбек `on_progress(stage, fraction)`.
-
-    Returns:
-        Байты готового аудио.
-    """
-    if settings.generation.MOCK_MODE:
-        # Для демо-режима отображаем прогресс с шагом 30%
-        for fraction in (0.2, 0.5, 0.8):
-            await on_progress(stage="Генерирую (демо-режим)…", fraction=fraction)
-            # Спим дольше интервала правки, иначе демо-прогресс не виден
-            await asyncio.sleep(PROGRESS_EDIT_INTERVAL + 0.1)
-
-        # Имитируем сборку и отдаем аудио из mock-файла
-        await on_progress(stage="Собираю файл…", fraction=0.97)
-        return generation_service.load_mock_audio()
-
-    # Отдаем реально сгенерированный файл, если генерация шла через API
-    return await generation_service.generate_song_real(prompt=gen_context.prompt, on_progress=on_progress)
+    return make_throttled_progress(report=report)
 
 
 async def _cleanup_cancelled(gen_context: GenerationContext, status: Message) -> None:
@@ -334,7 +270,11 @@ async def _deliver_result(gen_context: GenerationContext, status: Message, audio
     # Сборка песни в файл, отправка пользователю и очистка экрана от прогресс-бара
     file = BufferedInputFile(file=audio_bytes, filename=f"{safe_title}.mp3")
     await gen_context.message.answer_audio(audio=file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
-    await status.delete()
+
+    # Поведенческая симметрия с _cleanup_cancelled: сбой удаления статуса
+    # не должен ронять задачу уже после отправки аудио
+    with contextlib.suppress(Exception):
+        await status.delete()
 
 
 def _release_slot(gen_context: GenerationContext) -> None:

@@ -64,6 +64,32 @@ def test_load_mock_audio_without_audio_raises(tmp_path, monkeypatch):
         gen.load_mock_audio()
 
 
+def test_load_mock_audio_without_file_raises(monkeypatch):
+    """Пустой MOCK_FILE даёт понятную ошибку, а не FileNotFoundError."""
+    monkeypatch.setattr(settings.generation, "MOCK_FILE", "")
+
+    with pytest.raises(RuntimeError, match="MOCK_FILE is not set"):
+        gen.load_mock_audio()
+
+
+def test_load_mock_audio_missing_file_raises(tmp_path, monkeypatch):
+    """Несуществующий мок-файл даёт понятную ошибку, а не сырой FileNotFoundError."""
+    monkeypatch.setattr(settings.generation, "MOCK_FILE", str(tmp_path / "missing.json"))
+
+    with pytest.raises(RuntimeError, match="Cannot read mock file"):
+        gen.load_mock_audio()
+
+
+def test_load_mock_audio_invalid_json_raises(tmp_path, monkeypatch):
+    """Битый JSON в мок-файле даёт понятную ошибку, а не сырой JSONDecodeError."""
+    mock_file = tmp_path / "broken.json"
+    mock_file.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(settings.generation, "MOCK_FILE", str(mock_file))
+
+    with pytest.raises(RuntimeError, match="is not valid JSON"):
+        gen.load_mock_audio()
+
+
 # --- generate_song_real ---
 
 
@@ -129,7 +155,32 @@ def patch_openrouter(monkeypatch):
             # Второй чанк начинается с первого: сервер шлёт снимки, а не дельты
             [_audio_chunk(_b64(b"ABC")), _audio_chunk(_b64(b"ABCDEF"))],
             b"ABCDEF",
-            id="cumulative-chunks-are-replaced",
+            id="cumulative-chunks-yield-increment",
+        ),
+        pytest.param(
+            # Первый чанк обрезан посреди base64-группы (3 символа, не кратны 4):
+            # декодировать его нельзя, буфер pending_b64 копится до следующего чанка
+            [_audio_chunk(_b64(b"ABCDEF")[:3]), _audio_chunk(_b64(b"ABCDEF")[3:])],
+            b"ABCDEF",
+            id="incomplete-chunk-accumulates",
+        ),
+        pytest.param(
+            # Буфер накапливается через два чанка подряд (по 2 символа),
+            # валидная группа собирается только на третьем
+            [
+                _audio_chunk(_b64(b"ABCDEF")[:2]),
+                _audio_chunk(_b64(b"ABCDEF")[2:4]),
+                _audio_chunk(_b64(b"ABCDEF")[4:]),
+            ],
+            b"ABCDEF",
+            id="pending-spans-multiple-chunks",
+        ),
+        pytest.param(
+            # Снимки с неполными приращениями: первый снимок (3 символа) не кратен 4
+            # и не должен быть декодирован по частям, второй полностью его заменяет
+            [_audio_chunk(_b64(b"ABCDEF")[:3]), _audio_chunk(_b64(b"ABCDEF"))],
+            b"ABCDEF",
+            id="cumulative-chunks-with-pending",
         ),
         pytest.param(
             [
