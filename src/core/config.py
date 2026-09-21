@@ -23,6 +23,13 @@ class BotConfig(BaseModelConfig):
     BOT_OWNER_ID: int = 0
 
 
+class EnrichPromptConfig(BaseModelConfig):
+    """Настройки модели обогащения пользовательского промпта."""
+    ENRICH_URL: str
+    ENRICH_TOKEN: str
+    ENRICH_MODEL: str
+
+
 class GenerationConfig(BaseModelConfig):
     """Настройки генерации песен.
 

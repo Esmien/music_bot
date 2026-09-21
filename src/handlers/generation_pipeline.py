@@ -20,8 +20,8 @@ from aiogram.types import (
     Message,
 )
 
-from fsm.registries.task_registry import active_tasks
 from core.utils.error_notify import notify_owner
+from fsm.registries.task_registry import active_tasks
 from keyboards.default_keyboards import get_main_keyboard
 from services.generation import ProgressCallback
 from services.pipeline import make_throttled_progress, run_generation, user_generation_lock
