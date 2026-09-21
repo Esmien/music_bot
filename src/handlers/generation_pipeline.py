@@ -20,7 +20,7 @@ from aiogram.types import (
     Message,
 )
 
-from core.task_registry import active_tasks
+from fsm.registries.task_registry import active_tasks
 from core.utils.error_notify import notify_owner
 from keyboards.default_keyboards import get_main_keyboard
 from services.generation import ProgressCallback

@@ -6,8 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from core.config import settings
 from core.database import User
-from fsm import evaluation_fsm
-from fsm.evaluation_fsm import add_pending_auth, is_pending_auth
+from fsm.registries.auth_registry import add_pending_auth, is_pending_auth
 from handlers import auth as handlers_auth
 
 pytestmark = pytest.mark.integration
@@ -321,7 +320,7 @@ async def test_cmd_logout_cancels_active_generation(patched_auth_db, make_messag
     с ожидания ключа, FSM очищается, is_authorized=False в БД.
     """
     await _make_user(patched_auth_db, tg_id=23, is_authorized=True)
-    await evaluation_fsm.add_pending_auth(uid=23)
+    await add_pending_auth(uid=23)
 
     class FakeTask:
         def __init__(self):
@@ -343,7 +342,7 @@ async def test_cmd_logout_cancels_active_generation(patched_auth_db, make_messag
     assert task.cancel_calls == 1
     assert "Вы вышли" in msg.answers[0]
     assert state.cleared is True
-    assert not await evaluation_fsm.is_pending_auth(uid=23)
+    assert not await is_pending_auth(uid=23)
 
     db_user = await _get_user(patched_auth_db, tg_id=23)
     assert db_user is not None

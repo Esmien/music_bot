@@ -13,10 +13,10 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from core.config import UIConfig, settings
 from core.database import SessionLocal, User
-from core.task_registry import active_tasks
 from core.utils.error_notify import notify_owner
 from core.utils.exceptions import AccessKeyNotSet
-from fsm.evaluation_fsm import add_pending_auth, discard_pending_auth, is_pending_auth
+from fsm.registries.auth_registry import add_pending_auth, discard_pending_auth, is_pending_auth
+from fsm.registries.task_registry import active_tasks
 from handlers.filters import IsPendingAuth, NotCommand
 from keyboards.default_keyboards import get_main_keyboard
 

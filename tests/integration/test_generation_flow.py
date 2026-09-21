@@ -12,7 +12,7 @@ import pytest
 
 from core.config import settings
 from core.database import User
-from core.task_registry import active_tasks as registry
+from fsm.registries.task_registry import active_tasks as registry
 from handlers import base_handlers
 from handlers import generation as handlers_generation
 from handlers import generation_pipeline as pipeline
