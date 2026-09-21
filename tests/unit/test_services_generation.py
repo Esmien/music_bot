@@ -64,6 +64,14 @@ def test_load_mock_audio_without_audio_raises(tmp_path, monkeypatch):
         gen.load_mock_audio()
 
 
+def test_load_mock_audio_without_file_raises(monkeypatch):
+    """Пустой MOCK_FILE даёт понятную ошибку, а не FileNotFoundError."""
+    monkeypatch.setattr(settings.generation, "MOCK_FILE", "")
+
+    with pytest.raises(RuntimeError, match="MOCK_FILE is not set"):
+        gen.load_mock_audio()
+
+
 # --- generate_song_real ---
 
 

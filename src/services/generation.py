@@ -1,6 +1,7 @@
 """Генерация песни через OpenRouter: SSE-поток, сборка base64-аудио, прогресс."""
 
 import base64
+import io
 import json
 import logging
 import math
@@ -69,16 +70,26 @@ def load_mock_audio() -> bytes:
     """Читает аудио из мок-файла, указанного в config.MOCK_FILE.
 
     Мок-файл — JSON, внутри которого рекурсивно ищется base64-строка
-    с аудио в формате data-URI.
+    с аудио в формате data-URI. Мок нужен только для отладки, поэтому
+    проблемы с ним не проверяются на старте, а отдаются вызывающей
+    стороне как понятная ошибка в рантайме.
 
     Returns:
         Байты mp3-файла из мока.
 
     Raises:
-        RuntimeError: Если аудио в мок-файле не найдено.
+        RuntimeError: Если мок-файл не задан, не читается, не является
+            JSON или аудио в нём не найдено.
     """
-    with open(settings.generation.MOCK_FILE, encoding="utf-8") as f:
-        data = json.load(f)
+    if not settings.generation.MOCK_FILE:
+        raise RuntimeError("MOCK_MODE is enabled but MOCK_FILE is not set")
+    try:
+        with open(settings.generation.MOCK_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+    except OSError as error:
+        raise RuntimeError(f"Cannot read mock file {settings.generation.MOCK_FILE!r}") from error
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"Mock file {settings.generation.MOCK_FILE!r} is not valid JSON") from error
     b64 = _find_audio_b64(data)
     if b64:
         return base64.b64decode(b64)
@@ -88,8 +99,10 @@ def load_mock_audio() -> bytes:
 async def generate_song_real(prompt: str, on_progress: ProgressCallback | None = None) -> bytes:
     """Генерирует песню через OpenRouter, читая ответ как SSE-поток.
 
-    Аудио приходит кусками в base64 внутри delta-чанков, поэтому
-    собираем их в список и декодируем в конце.
+    Аудио приходит кусками в base64 внутри delta-чанков. Чтобы не держать
+    в памяти весь поток целиком, декодируем base64 порциями по мере
+    поступления чанков и пишем готовые байты в io.BytesIO: в памяти
+    остаются только недекодированный «хвост» (< 4 символа) и само аудио.
 
     Args:
         prompt: Промпт для модели (описание песни / текст).
@@ -126,8 +139,12 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
         "audio": {"format": "mp3"},
     }
 
-    # Коллекция чанков BASE64 для дальнейшей склейки
-    chunks: list[str] = []
+    # Готовые байты аудио
+    decoded_audio = io.BytesIO()
+    # Недекодированный хвост base64 (ждёт дополнения до группы из 4 символов)
+    pending_b64 = ""
+    # Последний сырой чанк — нужен для детекта кумулятивных снимков
+    last_chunk = ""
     # Счетчик размера файла
     total_b64 = 0
     # Точка отсчета таймера для прогресс-бара
@@ -150,29 +167,38 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
             raise RuntimeError(f"OpenRouter {resp.status_code}: {error_body[:300]}")
 
         # Читаем очищенный поток из парсера
-        async for audio_b64 in _parse_openrouter_sse(resp):
-            # Защита от кумулятивных чанков (склейка строк).
-            # Если новый чанк содержит в себе предыдущий,
-            # то убираем старый, сокращаем счетчик размера
-            # на размер старого чанка
-            if chunks and audio_b64.startswith(chunks[-1]):
-                total_b64 -= len(chunks[-1])
-                chunks.pop()
+        async for raw_chunk in _parse_openrouter_sse(resp):
+            if last_chunk and raw_chunk.startswith(last_chunk):
+                # Сервер шлёт снимки, а не дельты: новый чанк содержит
+                # предыдущий. В decoded_audio уже лежат декодированные байты
+                # префикса, поэтому декодируем только приращение.
+                pending_b64 += raw_chunk[len(last_chunk) :]
+                total_b64 += len(raw_chunk) - len(last_chunk)
+            else:
+                pending_b64 += raw_chunk
+                total_b64 += len(raw_chunk)
 
-            # Увеличиваем счетчик на размер нового чанка
-            total_b64 += len(audio_b64)
             if total_b64 > MAX_AUDIO_B64_LEN:
                 raise RuntimeError("Audio in stream exceeds the allowed size")
 
-            chunks.append(audio_b64)
+            # base64 декодируется группами по 4 символа: готовую часть
+            # сразу пишем в BytesIO, хвост ждёт следующих чанков
+            aligned_len = len(pending_b64) - len(pending_b64) % 4
+            if aligned_len:
+                decoded_audio.write(base64.b64decode(pending_b64[:aligned_len]))
+                pending_b64 = pending_b64[aligned_len:]
+
+            last_chunk = raw_chunk
 
             # Обновляем UI асимптотически от времени
             elapsed = time.monotonic() - started
             fraction = 1.0 - math.exp(-elapsed / TYPICAL_GENERATION_SECONDS)
             await report(stage="Получаю аудио…", fraction=fraction * 0.95)
 
-    if not chunks:
+    if not last_chunk:
         raise RuntimeError("No audio received in stream")
 
     await report(stage="Собираю файл…", fraction=0.97)
-    return base64.b64decode("".join(chunks))
+    if pending_b64:
+        decoded_audio.write(base64.b64decode(pending_b64))
+    return decoded_audio.getvalue()
