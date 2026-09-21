@@ -9,8 +9,8 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from config import UIConfig
-from fsm.evaluation_fsm import active_tasks
+from core.config import UIConfig
+from core.task_registry import active_tasks
 from keyboards.default_keyboards import get_main_keyboard
 
 router = Router(name="base")

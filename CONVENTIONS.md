@@ -48,7 +48,7 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
 [tool.ruff.lint.isort]
-known-first-party = ["config", "database", "handlers", "services", "utils"] # Основной модуль будет отделен пустой строкой`
+known-first-party = ["core", "fsm", "handlers", "keyboards", "services"] # Модули проекта отделяются пустой строкой`
 
 # Документация:
 Достаточно подробные докстринги ко всем функциям и классам строго в формате Google (Args, Returns, Raises).

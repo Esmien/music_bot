@@ -1,7 +1,8 @@
 """Интеграционные тесты процесса генерации: FSM, прогресс, сбой, отмена.
 
-Сервис генерации замокан на уровне generation_service.generate_song_real,
-поэтому тесты идут через реальные хендлеры, но без сети.
+Сервис генерации замокан на уровне services.pipeline.generate_song_real
+(место использования — патчим там, где вызывается), поэтому тесты идут
+через реальные хендлеры, но без сети.
 """
 
 import asyncio
@@ -9,14 +10,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from config import settings
-from database.models import User
-from fsm.evaluation_fsm import active_tasks as registry
+from core.config import settings
+from core.database import User
+from core.task_registry import active_tasks as registry
 from handlers import base_handlers
 from handlers import generation as handlers_generation
 from handlers import generation_pipeline as pipeline
 from handlers.generation import GenerationStates
-from services import generation as generation_service
+from services import pipeline as service_pipeline
 
 pytestmark = pytest.mark.integration
 
@@ -54,7 +55,7 @@ async def _make_authorized_user(sessionmaker, tg_id: int) -> None:
 
 
 def _install_generation(monkeypatch, impl):
-    monkeypatch.setattr(generation_service, "generate_song_real", impl)
+    monkeypatch.setattr(service_pipeline, "generate_song_real", impl)
 
 
 async def test_cmd_generate_sends_hint_and_sets_state(
@@ -94,6 +95,24 @@ async def test_cmd_generate_blocked_while_generating(
 
     assert "Дождитесь окончания" in msg.answers[-1]
     assert state.state is None  # состояние не переключилось
+
+
+async def test_cmd_generate_requires_auth(
+    patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state
+):
+    """Неавторизованный пользователь не попадает в диалог генерации (строка 82).
+
+    _require_auth отсекает запрос до проверки флага generating:
+    подсказка и шаблон не отправляются, FSM-состояние не переключается.
+    """
+    # Пользователя 70 в БД нет — доступ не выдан
+    msg = make_message(uid=70)
+    state = fake_state()
+
+    await handlers_generation.cmd_generate(msg, state)
+
+    assert not any("Опишите песню" in a for a in msg.answers)
+    assert state.state is None
 
 
 async def test_handle_prompt_with_template_wraps_in_brief(patched_auth_db, clean_auth_state, make_message, fake_state):
@@ -141,6 +160,38 @@ async def test_handle_prompt_rejects_too_long(patched_auth_db, clean_auth_state,
     await handlers_generation.handle_prompt(msg, state)
 
     assert "Слишком длинный" in msg.answers[-1]
+    assert state.state is None
+
+
+async def test_handle_prompt_rejects_blank_text(patched_auth_db, clean_auth_state, make_message, fake_state):
+    """Описание из одних пробелов отклоняется (строки 117–118).
+
+    После strip остаётся пустая строка: пользователю предлагается
+    ввести непустой текст, FSM-состояние не меняется.
+    """
+    msg = make_message(text="   ", uid=71)
+    state = fake_state()
+
+    await handlers_generation.handle_prompt(msg, state)
+
+    assert "непустой текст" in msg.answers[-1]
+    assert state.state is None
+
+
+async def test_handle_prompt_rejects_untouched_template(patched_auth_db, clean_auth_state, make_message, fake_state):
+    """Нетронутый шаблон (все поля пустые) отклоняется (строки 126–127).
+
+    Регулярка _EMPTY_FIELD_RE вычищает пустые поля шаблона — остаётся
+    пустая строка, пользователю предлагается заполнить хотя бы
+    поле «Текст песни», FSM-состояние не меняется.
+    """
+    template = "Жанр: \n\nНастроение: \n\nИнструменты: \n\nТемп и ритм: \n\nГолос: \n\nТекст песни: \n"
+    msg = make_message(text=template, uid=72)
+    state = fake_state()
+
+    await handlers_generation.handle_prompt(msg, state)
+
+    assert "Шаблон пришёл пустым" in msg.answers[-1]
     assert state.state is None
 
 
@@ -309,8 +360,8 @@ async def test_mock_mode_generates_audio(
     """
     monkeypatch.setattr(settings.generation, "MOCK_MODE", True)
     # Ускоряем демо-прогресс, иначе тест спит ~9 секунд
-    monkeypatch.setattr(pipeline, "PROGRESS_EDIT_INTERVAL", 0.01)
-    monkeypatch.setattr(generation_service, "load_mock_audio", lambda: b"mock-audio")
+    monkeypatch.setattr(service_pipeline, "PROGRESS_EDIT_INTERVAL", 0.01)
+    monkeypatch.setattr(service_pipeline, "load_mock_audio", lambda: b"mock-audio")
 
     async def unexpected_generate(prompt, on_progress=None):
         raise AssertionError("в mock-режиме generate_song_real не вызывается")
@@ -345,7 +396,7 @@ async def test_cancelled_generation_deletes_status_and_unsets_flag(
     async def hanging_generate(prompt, on_progress=None):
         await asyncio.sleep(60)
 
-    monkeypatch.setattr(generation_service, "generate_song_real", hanging_generate)
+    monkeypatch.setattr(service_pipeline, "generate_song_real", hanging_generate)
 
     state = fake_state()
     await state.update_data(prompt="промпт")
@@ -455,6 +506,25 @@ async def test_handle_title_blocked_while_generating(
     assert "Дождитесь окончания" in msg.answers[-1]
     # title не сохранился и генерация не запускалась
     assert "title" not in (await state.get_data())
+
+
+async def test_handle_title_missing_prompt_suggests_restart(
+    patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state
+):
+    """Генерация без сохранённого промпта не запускается (строки 179–184).
+
+    Если промпт потерялся из FSM (перезапуск бота, гонка кнопок, чистка),
+    пользователь получает предложение начать заново, FSM очищается,
+    генерация не запускается.
+    """
+    state = fake_state()  # промпта нет
+    msg = make_message(text="Название", uid=73)
+
+    await handlers_generation.handle_title(msg, state)
+
+    assert "Описание песни потерялось" in msg.answers[-1]
+    assert state.cleared
+    assert len(msg.audios) == 0
 
 
 async def test_retry_generation_blocked_while_generating(

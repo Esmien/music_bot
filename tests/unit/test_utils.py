@@ -2,8 +2,8 @@
 
 import pytest
 
-from config import settings
-from utils.error_notify import notify_owner
+from core.config import settings
+from core.utils.error_notify import notify_owner
 
 pytestmark = pytest.mark.unit
 

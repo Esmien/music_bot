@@ -16,8 +16,7 @@ kanban-plugin: board
 
 ## Testing
 
-- [ ] [[add_group_FSM_for_handling_enriched_prompt]]
-- [ ] [[add_keyboards]]
+
 
 ## Done
 
@@ -26,8 +25,10 @@ kanban-plugin: board
 ## Deploy
 
 **Complete**
+- [x] [[add_group_FSM_for_handling_enriched_prompt]]
 - [x] [[gen_migrations]]
 - [x] [[add_sqlalchemy_models]]
+- [x] [[add_keyboards]]
 - [x] [[update_infrastructure]]
 
 

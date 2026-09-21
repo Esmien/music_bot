@@ -4,26 +4,20 @@
 на одни и те же данные, не импортируя друг друга.
 
 pending_auth хранится в Redis: как и FSM-состояния, реестр ожидающих
-ключ переживает рестарт контейнера. active_tasks остаётся в памяти —
-asyncio.Task не сериализуется, а задачи при рестарте теряются в любом
-случае; осиротевшие флаги generating вычищаются на старте бота.
+ключ переживает рестарт контейнера. Реестр живых задач генерации
+active_tasks переехал в core/task_registry.py; осиротевшие флаги
+generating вычищаются на старте бота.
 """
 
-import asyncio
 import json
 import logging
 
 from aiogram.fsm.state import State, StatesGroup
-from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from config import settings
+from core.redis import redis_client
 
 log = logging.getLogger(__name__)
-
-# Единый клиент Redis для служебных реестров и чистки FSM.
-# decode_responses: работаем со строками, а не с bytes
-redis_client: Redis = Redis.from_url(settings.redis.REDIS_URL, decode_responses=True)
 
 # Ключ множества пользователей, ожидающих ввода ключа доступа
 PENDING_AUTH_KEY = "bot:pending_auth"
@@ -70,6 +64,11 @@ async def clear_orphaned_generation_flags() -> int:
     окончания текущей генерации». Вызывается на старте, когда active_tasks
     ещё пуст, поэтому любой выставленный флаг считается осиротевшим.
     Данные FSM RedisStorage хранит как JSON в hash-поле data.
+
+    Инвариант: префикс fsm: зарезервирован за RedisStorage, под ним
+    лежат только FSM-записи с JSON в поле data. Если складывать туда
+    свои ключи в другом формате, scan_iter попытается распарсить их
+    как JSON и пропустит с предупреждением в логе.
 
     Returns:
         Количество очищенных FSM-записей.
@@ -121,10 +120,3 @@ class FeedbackStates(StatesGroup):
 
     waiting_evaluation = State()
     waiting_feedback = State()
-
-
-# Живые задачи генерации по user_id: позволяют честно погасить генерацию
-# из cmd_cancel_generation и cmd_logout. Сам asyncio.Task в FSM-данные не
-# положишь (не сериализуется), поэтому реестр живёт здесь; при перезапуске
-# процесса задачи теряются, а их след в FSM чистит clear_orphaned_generation_flags.
-active_tasks: dict[int, asyncio.Task] = {}
