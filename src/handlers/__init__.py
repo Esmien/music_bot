@@ -6,11 +6,13 @@
 
 from aiogram import Router
 
-from handlers import auth, credits, generation
+from handlers import auth, base_handlers, credits, generation
 
 router = Router()
-# Порядок важен: aiogram проверяет хендлеры по очереди,
-# поэтому catch-all fallback из auth должен быть последним.
+# Порядок важен: aiogram проверяет хендлеры по очереди.
+# base_handlers первым — универсальная отмена не должна перехватываться
+# сценарными хендлерами, а catch-all fallback из auth — последним.
+router.include_router(base_handlers.router)
 router.include_router(generation.router)
 router.include_router(credits.router)
 router.include_router(auth.router)

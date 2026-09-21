@@ -11,11 +11,11 @@ from aiogram.types import Message, ReplyKeyboardRemove
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from config import settings
+from config import UIConfig, settings
 from database import SessionLocal
 from database.models import User
+from fsm.evaluation_fsm import active_tasks, add_pending_auth, discard_pending_auth, is_pending_auth
 from handlers.filters import IsPendingAuth, NotCommand
-from handlers.state import active_tasks, add_pending_auth, discard_pending_auth, is_pending_auth
 from keyboards.default_keyboards import get_main_keyboard
 from utils.error_notify import notify_owner
 from utils.exceptions import AccessKeyNotSet
@@ -60,7 +60,9 @@ async def _require_auth(message: Message) -> bool:
 
     # пока пользователь на этапе ввода ключа или не авторизован - не пускаем к кнопкам и требуем ключ
     if await is_pending_auth(uid) or not await is_authorized(uid):
-        await message.answer(text="Сначала отправьте ключ доступа.", reply_markup=ReplyKeyboardRemove())
+        await message.answer(
+            text="Требуется ключ доступа. Нажмите /start, чтобы ввести", reply_markup=ReplyKeyboardRemove()
+        )
         return False
     return True
 
@@ -161,7 +163,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
 
 @router.message(Command("logout"))
-@router.message(F.text == "🚪 Выйти")
+@router.message(F.text == UIConfig.LOGOUT_BUTTON)
 async def cmd_logout(message: Message, state: FSMContext):
     """Выход: снимает авторизацию в БД и очищает состояние ожидания.
 

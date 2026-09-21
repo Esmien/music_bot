@@ -22,7 +22,7 @@ from aiogram.types import (
 )
 
 from config import settings
-from handlers.state import active_tasks
+from fsm.evaluation_fsm import active_tasks
 from keyboards.default_keyboards import get_main_keyboard
 from services import generation as generation_service
 from services.generation import ProgressCallback

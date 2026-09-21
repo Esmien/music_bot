@@ -59,6 +59,42 @@ class RedisConfig(BaseModelConfig):
     REDIS_URL: str = "redis://localhost:6379/0"
 
 
+class UIConfig:
+    """Тексты кнопок интерфейса: единая панель управления.
+
+    Единственный источник истины для текстов кнопок: клавиатуры
+    собирают их отсюда, хендлеры фильтруют по этим же константам —
+    текст и его «ловушка» не разъезжаются при правках.
+    Не pydantic-настройки: тексты не приходят из окружения, а меняются в коде.
+
+    Attributes:
+        GENERATE_BUTTON: Кнопка запуска генерации.
+        CREDITS_BUTTON: Кнопка проверки кредитов.
+        LOGOUT_BUTTON: Кнопка выхода.
+        CANCEL_BUTTON: Кнопка отмены текущей операции.
+        PROMPT_APPROVE_BUTTON: Кнопка аппрува сгенерированного промпта.
+        PROMPT_EDIT_BUTTON: Кнопка правки сгенерированного промпта.
+        PROMPT_CANCEL_BUTTON: Кнопка отмены сценария обогащения.
+        EVALUATION_LIKE_BUTTON: Кнопка «нравится» при оценке генерации.
+        EVALUATION_DISLIKE_BUTTON: Кнопка «не нравится» при оценке генерации.
+        FEEDBACK_SEND_BUTTON: Кнопка отправки фидбека.
+        FEEDBACK_FINISH_BUTTON: Кнопка завершения сценария фидбека.
+    """
+
+    GENERATE_BUTTON = "🎵 Сгенерировать"
+    CREDITS_BUTTON = "💳 Кредиты"
+    LOGOUT_BUTTON = "🚪 Выйти"
+    CANCEL_BUTTON = "❌ Отмена"
+
+    PROMPT_APPROVE_BUTTON = "✅ Подтвердить"
+    PROMPT_EDIT_BUTTON = "✏️ Изменить"
+    PROMPT_CANCEL_BUTTON = "❌ Отменить"
+    EVALUATION_LIKE_BUTTON = "👍"
+    EVALUATION_DISLIKE_BUTTON = "👎"
+    FEEDBACK_SEND_BUTTON = "📝 Отправить фидбек"
+    FEEDBACK_FINISH_BUTTON = "✅ Завершить"
+
+
 class Settings(BaseModelConfig):
     bot: BotConfig = BotConfig()
     generation: GenerationConfig = GenerationConfig()

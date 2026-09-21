@@ -3,8 +3,8 @@
 import pytest
 from aiogram.types import Message, User
 
+from fsm.evaluation_fsm import add_pending_auth
 from handlers.filters import IsPendingAuth, NotCommand
-from handlers.state import add_pending_auth
 
 pytestmark = pytest.mark.unit
 

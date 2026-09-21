@@ -11,10 +11,10 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from config import UIConfig
+from fsm.generation_fsm import MAX_PROMPT_LEN, MAX_TITLE_LEN, GenerationStates
 from handlers.auth import _require_auth, is_authorized
-from handlers.generation_fsm import MAX_PROMPT_LEN, MAX_TITLE_LEN, GenerationStates
 from handlers.generation_pipeline import generate_and_send
-from handlers.state import active_tasks
 from keyboards.default_keyboards import get_cancel_keyboard, get_main_keyboard
 
 router = Router()
@@ -65,7 +65,7 @@ _EMPTY_FIELD_RE = re.compile(
 _DEFAULT_TITLE = "Lyria's Generated Song"
 
 
-@router.message(F.text == "🎵 Сгенерировать")
+@router.message(F.text == UIConfig.GENERATE_BUTTON)
 async def cmd_generate(message: Message, state: FSMContext):
     """Старт генерации: показывает подсказку и запрашивает описание песни.
 
@@ -90,28 +90,6 @@ async def cmd_generate(message: Message, state: FSMContext):
     await message.answer(text=f"<code>{_PROMPT_TEMPLATE}</code>", parse_mode="HTML")
 
     await state.set_state(GenerationStates.waiting_for_prompt)
-
-
-@router.message(GenerationStates.waiting_for_prompt, F.text == "❌ Отмена")
-@router.message(GenerationStates.waiting_for_title, F.text == "❌ Отмена")
-async def cmd_cancel_generation(message: Message, state: FSMContext):
-    """Отмена генерации по кнопке «❌ Отмена».
-
-    Гасит живую задачу генерации из active_tasks (та удалит сообщение
-    прогресса и завершится как отменённая), сбрасывает FSM и возвращает
-    основную клавиатуру.
-
-    Args:
-        message: Входящее сообщение с кнопкой «❌ Отмена».
-        state: FSM-контекст текущего пользователя.
-    """
-    # Гасим живую задачу генерации, если она есть: иначе она продолжит крутиться
-    # и позже «внезапно» пришлёт песню или «😔 Не получилось» поверх отмены.
-    task = active_tasks.get(message.from_user.id)
-    if task is not None and not task.done():
-        task.cancel()
-    await state.clear()
-    await message.answer(text="❌ Генерация отменена.", reply_markup=get_main_keyboard())
 
 
 @router.message(GenerationStates.waiting_for_prompt, F.text)
