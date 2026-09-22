@@ -14,9 +14,9 @@ from core.config import settings
 from core.database import User
 from fsm.registries.task_registry import active_tasks as registry
 from handlers import base_handlers
-from handlers import generation as handlers_generation
+from handlers import generation_handlers as handlers_generation
 from handlers import generation_pipeline as pipeline
-from handlers.generation import GenerationStates
+from handlers.generation_handlers import GenerationStates
 from services import pipeline as service_pipeline
 
 pytestmark = pytest.mark.integration
