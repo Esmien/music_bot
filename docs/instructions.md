@@ -1,19 +1,55 @@
-1. Дублирование логики чтения SSE
-У вас есть core/utils/stream_parser.py::_parse_openrouter_sse и тот же парсинг дублирован в тестах (tests/unit/test_stream_parser.py). Но главное — в services/generation.py вы уже используете _parse_openrouter_sse, при этом в test_services_generation.py тестируете generate_song_real через тот же FakeStreamResponse. То есть один и тот же парсер покрыт дважды. Мелочь, но можно убрать test_stream_parser.py или наоборот — не дублировать SSE-обвязку.
+СТРУКТУРА JSON:
+{
+  "genre_and_style": "string",
+  "mood": "string",
+  "instrumentation": ["string", "string"],
+  "tempo_bpm": 0,
+  "vocal_style": "string",
+  "language": "string",
+  "lyrics": "string",
+  "song_structure": ["string", "string"]
+}
 
-2. clear_orphaned_generation_flags сканирует весь Redis
-При большом количестве пользователей это тяжёлый старт. Плюс есть тонкость: если у пользователя лежит не FSM-ключ, а что-то ещё с префиксом fsm:, парсер попытается делать json.loads. На практике с RedisStorage префикс fsm: зарезервирован, но стоит хотя бы задокументировать инвариант.
+ДЕТАЛИЗАЦИЯ ПОЛЕЙ:
 
-4. MAX_AUDIO_B64_LEN = 40 MB — большой лимит
-40 МБ base64 ≈ 30 МБ mp3. Держать такое в памяти + склеивать строки через "".join(chunks) — пиковая нагрузка ~90 МБ на генерацию. Для одиночного бота ок, для нескольких параллельных генераций может быть больно. Можно сделать io.BytesIO и b64decode порциями.
+genre_and_style: основной жанр и стилистические особенности
+(например, "cinematic orchestral fantasy", "lo-fi hip hop with jazz influences").
 
-14. Моки load_mock_audio бьют по файловой системе
+mood: эмоциональная окраска (например, "melancholy, nostalgic",
+"euphoric", "tense and suspenseful").
 
-Если MOCK_FILE пустой ("") и MOCK_MODE=1 — упадёт с FileNotFoundError, а не с понятной ошибкой. Стоит проверить на старте, что MOCK_MODE и MOCK_FILE согласованы.
+instrumentation: массив названий основных инструментов на английском
+(например, ["grand piano", "synth pad", "upright bass", "brushed drums"]).
 
-15. _parse_openrouter_sse пропускает data: через line[6:]
-Хардкод длины префикса. Если OpenRouter пришлёт data: без пробела или с несколькими пробелами — сломается. Лучше line.split(":", 1)[1].strip().
+tempo_bpm: приблизительный темп в BPM, целое число. Если пользователь
+не указал — оцени сам из жанра и настроения (slow ballad ≈ 70,
+mid-tempo pop ≈ 100, dance ≈ 128).
 
-16. Комментарий в credits.py про «Пока не кончится бабосик»
-Видимо, наследие теста (test_cmd_credits_without_limit ожидает «Невозможно посчитать», но комментарий в тесте говорит про «бабосик»). Стоит привести в порядок.
+vocal_style: характер вокала на английском (например, "smooth male
+baritone", "breathy female soprano", "energetic rap").
 
+language: язык вокала. По умолчанию "Russian", если пользователь
+явно не указал другой.
+
+lyrics: текст песни. Правила:
+  - Если пользователь дал готовые стихи — вставь их без изменений.
+  - Если пользователь дал только тему — сгенерируй полноценный
+    текст: минимум два куплета и припев, при необходимости — бридж
+    и аутро. Структура должна совпадать с полем song_structure.
+  - Пиши текст в обычной русской орфографии. Не расставляй знаки
+    ударения. Букву "ё" ставь только там, где она однозначно нужна
+    ("всё", "дождём", "бьётся"). Сомневаешься — не ставь.
+  - Перед выводом проверь текст на грамматическую правильность:
+    согласование родов, падежей, чисел.
+  - Секции размечай тегами на новой строке: [Verse 1], [Chorus],
+    [Bridge], [Outro].
+
+song_structure: массив описательных тегов на английском. Каждый тег —
+это инструкция по аранжировке для соответствующей секции, а не просто
+метка. Google рекомендует описывать, что происходит в секции:
+  [
+    "[Intro] Soft lo-fi beat, vinyl crackle, no vocals.",
+    "[Verse 1] Warm Rhodes piano, gentle male vocal.",
+    "[Chorus] Full band, upbeat drums, soaring synth leads.",
+    "[Outro] Fade with piano and rain ambience."
+  ]

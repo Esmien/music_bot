@@ -17,6 +17,9 @@ os.environ["POSTGRES_PASSWORD"] = "test-password"
 os.environ["POSTGRES_HOST"] = "localhost"
 os.environ["POSTGRES_PORT"] = "5432"
 os.environ["POSTGRES_DB"] = "test-db"
+os.environ["ENRICH_URL"] = "https://enricher.test/api/v1/chat/completions"
+os.environ["ENRICH_TOKEN"] = "test-enrich-token"
+os.environ["ENRICH_MODEL"] = "test-enrich-model"
 
 import importlib
 
@@ -31,7 +34,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # no
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from core.database import init_db
-from fsm import evaluation_fsm as handlers_state
+from fsm.registries import auth_registry as handlers_state
 from handlers import auth as handlers_auth  # noqa: E402
 from handlers.auth import failed_key_attempts  # noqa: E402
 
@@ -128,11 +131,13 @@ def make_message():
 
         async def answer(self, text, **kwargs):
             self.answers.append(text)
-            sent = SimpleNamespace(text=text, edits=[], deleted=False)
+            # bot нужен хендлерам для notify_owner (как у реального aiogram.Message)
+            sent = SimpleNamespace(text=text, edits=[], deleted=False, bot=self.bot)
 
-            async def edit_text(new_text, **kw):
-                sent.text = new_text
-                sent.edits.append(new_text)
+            # Хендлеры зовут edit_text(text=...) именованным аргументом
+            async def edit_text(text, **kw):
+                sent.text = text
+                sent.edits.append(text)
                 return sent
 
             async def delete():

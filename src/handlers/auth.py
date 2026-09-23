@@ -13,10 +13,10 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from core.config import UIConfig, settings
 from core.database import SessionLocal, User
-from core.task_registry import active_tasks
 from core.utils.error_notify import notify_owner
 from core.utils.exceptions import AccessKeyNotSet
-from fsm.evaluation_fsm import add_pending_auth, discard_pending_auth, is_pending_auth
+from fsm.registries.auth_registry import add_pending_auth, discard_pending_auth, is_pending_auth
+from fsm.registries.task_registry import active_tasks
 from handlers.filters import IsPendingAuth, NotCommand
 from keyboards.default_keyboards import get_main_keyboard
 
@@ -40,8 +40,7 @@ async def is_authorized(uid: int) -> bool:
         True, если пользователь найден и is_authorized=True.
     """
     async with SessionLocal() as session:
-        result = await session.execute(select(User).where(User.tg_id == uid))
-        db_user = result.scalar_one_or_none()
+        db_user = await session.get(User, uid)
 
         return bool(db_user and db_user.is_authorized)
 
@@ -110,8 +109,8 @@ async def _mark_user_authorized(uid: int) -> None:
         uid: Telegram user_id.
     """
     async with SessionLocal() as session:
-        result = await session.execute(select(User).where(User.tg_id == uid))
-        db_user = result.scalar_one_or_none()
+        db_user = await session.get(User, uid)
+
         if db_user:
             db_user.is_authorized = True
         else:

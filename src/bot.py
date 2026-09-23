@@ -12,7 +12,7 @@ from aiogram.types import ErrorEvent
 from core.config import settings
 from core.redis import redis_client
 from core.utils.error_notify import notify_owner
-from fsm.evaluation_fsm import clear_orphaned_generation_flags
+from fsm.generation_flags import clear_orphaned_generation_flags
 from handlers import router
 
 log = logging.getLogger(__name__)

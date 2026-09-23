@@ -12,11 +12,12 @@ import pytest
 
 from core.config import settings
 from core.database import User
-from core.task_registry import active_tasks as registry
+from fsm.enricher_fsm import PromptEnricherStates
+from fsm.registries.task_registry import active_tasks as registry
 from handlers import base_handlers
-from handlers import generation as handlers_generation
+from handlers import enricher_handlers as handlers_enricher
+from handlers import generation_handlers as handlers_generation
 from handlers import generation_pipeline as pipeline
-from handlers.generation import GenerationStates
 from services import pipeline as service_pipeline
 
 pytestmark = pytest.mark.integration
@@ -65,7 +66,8 @@ async def test_cmd_generate_sends_hint_and_sets_state(
 
     Проверяем, что авторизованному пользователю уходят оба сообщения —
     расширенная подсказка и копируемый шаблон с маркерами «Жанр:» —
-    и что FSM переключается в waiting_for_prompt.
+    и что FSM переключается в waiting_for_idea (дальше диалог ведёт
+    сценарий обогащения).
     """
     await _make_authorized_user(patched_auth_db, 50)
     msg = make_message(uid=50)
@@ -75,7 +77,7 @@ async def test_cmd_generate_sends_hint_and_sets_state(
 
     assert any("Опишите песню" in a for a in msg.answers)
     assert any("Жанр:" in a for a in msg.answers)  # копируемый шаблон
-    assert state.state is GenerationStates.waiting_for_prompt
+    assert state.state is PromptEnricherStates.waiting_for_idea
 
 
 async def test_cmd_generate_blocked_while_generating(
@@ -115,55 +117,46 @@ async def test_cmd_generate_requires_auth(
     assert state.state is None
 
 
-async def test_handle_prompt_with_template_wraps_in_brief(patched_auth_db, clean_auth_state, make_message, fake_state):
+def test_build_generation_prompt_with_template_wraps_in_brief():
     """Заполненный шаблон оборачивается в бриф для модели.
 
-    Если в тексте есть маркеры вида «Жанр:», промпт сохраняется в FSM
-    с обёрткой «brief» и явным указанием петь по-русски; состояние
-    переключается на ожидание названия.
+    Если в тексте есть маркеры вида «Жанр:», промпт получает обёртку
+    «brief» и явное указание петь по-русски.
     """
-    msg = make_message(text="Жанр: рок\nТекст песни: раз-два", uid=52)
-    state = fake_state()
+    prompt = handlers_enricher._build_generation_prompt("Жанр: рок\nТекст песни: раз-два")
 
-    await handlers_generation.handle_prompt(msg, state)
-
-    data = await state.get_data()
-    assert "brief" in data["prompt"]
-    assert state.state is GenerationStates.waiting_for_title
-    assert "название песни" in msg.answers[-1]
+    assert "brief" in prompt
+    assert "sing in Russian" in prompt
 
 
-async def test_handle_prompt_plain_lyrics(patched_auth_db, clean_auth_state, make_message, fake_state):
+def test_build_generation_prompt_plain_lyrics():
     """Простые стихи без маркеров шаблона идут с формулировкой «these lyrics».
 
     Мягкая обёртка не пугает модель словом «brief», когда пользователь
     прислал только текст песни.
     """
-    msg = make_message(text="Просто стихи про кота", uid=53)
-    state = fake_state()
+    prompt = handlers_enricher._build_generation_prompt("Просто стихи про кота")
 
-    await handlers_generation.handle_prompt(msg, state)
-
-    data = await state.get_data()
-    assert "these lyrics" in data["prompt"]
+    assert "these lyrics" in prompt
+    assert "brief" not in prompt
 
 
-async def test_handle_prompt_rejects_too_long(patched_auth_db, clean_auth_state, make_message, fake_state):
+async def test_handle_idea_rejects_too_long(patched_auth_db, clean_auth_state, make_message, fake_state):
     """Слишком длинное описание песни отклоняется.
 
     Текст длиннее MAX_PROMPT_LEN не сохраняется в FSM, состояние
     остаётся прежним, пользователю сообщается лимит.
     """
-    msg = make_message(text="а" * (handlers_generation.MAX_PROMPT_LEN + 1), uid=54)
+    msg = make_message(text="а" * (handlers_enricher.MAX_PROMPT_LEN + 1), uid=54)
     state = fake_state()
 
-    await handlers_generation.handle_prompt(msg, state)
+    await handlers_enricher.handle_idea(msg, state)
 
     assert "Слишком длинный" in msg.answers[-1]
     assert state.state is None
 
 
-async def test_handle_prompt_rejects_blank_text(patched_auth_db, clean_auth_state, make_message, fake_state):
+async def test_handle_idea_rejects_blank_text(patched_auth_db, clean_auth_state, make_message, fake_state):
     """Описание из одних пробелов отклоняется (строки 117–118).
 
     После strip остаётся пустая строка: пользователю предлагается
@@ -172,13 +165,13 @@ async def test_handle_prompt_rejects_blank_text(patched_auth_db, clean_auth_stat
     msg = make_message(text="   ", uid=71)
     state = fake_state()
 
-    await handlers_generation.handle_prompt(msg, state)
+    await handlers_enricher.handle_idea(msg, state)
 
     assert "непустой текст" in msg.answers[-1]
     assert state.state is None
 
 
-async def test_handle_prompt_rejects_untouched_template(patched_auth_db, clean_auth_state, make_message, fake_state):
+async def test_handle_idea_rejects_untouched_template(patched_auth_db, clean_auth_state, make_message, fake_state):
     """Нетронутый шаблон (все поля пустые) отклоняется (строки 126–127).
 
     Регулярка _EMPTY_FIELD_RE вычищает пустые поля шаблона — остаётся
@@ -189,7 +182,7 @@ async def test_handle_prompt_rejects_untouched_template(patched_auth_db, clean_a
     msg = make_message(text=template, uid=72)
     state = fake_state()
 
-    await handlers_generation.handle_prompt(msg, state)
+    await handlers_enricher.handle_idea(msg, state)
 
     assert "Шаблон пришёл пустым" in msg.answers[-1]
     assert state.state is None
