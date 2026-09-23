@@ -29,10 +29,6 @@ class ProgressCallback(Protocol):
     async def __call__(self, stage: str, fraction: float) -> None: ...
 
 
-# Типичное время генерации песни — на его основе оцениваем долю прогресса,
-# т.к. поток SSE не сообщает общий размер ответа.
-TYPICAL_GENERATION_SECONDS = 75.0
-
 # Максимальный размер аудио в base64-символах (~30 МБ после декодирования).
 # Защита от исчерпания памяти, если сервер шлёт аномально большой поток.
 MAX_AUDIO_B64_LEN = 40 * 1024 * 1024
@@ -201,7 +197,7 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
 
             # Обновляем UI асимптотически от времени
             elapsed = time.monotonic() - started
-            fraction = 1.0 - math.exp(-elapsed / TYPICAL_GENERATION_SECONDS)
+            fraction = 1.0 - math.exp(-elapsed / settings.generation.TYPICAL_GENERATION_SECONDS)
             await report(stage="Получаю аудио…", fraction=fraction * 0.95)
 
     if not last_chunk:

@@ -49,6 +49,7 @@ class GenerationConfig(BaseModelConfig):
     SONG_PRICE: float
     MOCK_MODE: bool = False
     MOCK_FILE: str = ""
+    TYPICAL_GENERATION_SECONDS: float = 30.0
 
 
 class DatabaseConfig(BaseModelConfig):
@@ -87,7 +88,11 @@ class RedisConfig(BaseModelConfig):
 
     REDIS_HOST: str
     REDIS_PORT: int
-    REDIS_VAULT: str
+    REDIS_VAULT: str = "0"
+
+    @property
+    def redis_host(self) -> str:
+        return "localhost" if self.DEV_MODE else self.REDIS_HOST
 
     @computed_field
     @property
@@ -96,7 +101,7 @@ class RedisConfig(BaseModelConfig):
             scheme="redis",
             username=None,
             password=None,
-            host=self.REDIS_HOST,
+            host=self.redis_host,
             port=self.REDIS_PORT,
             path=f"/{self.REDIS_VAULT}" if not self.REDIS_VAULT.startswith("/") else self.REDIS_VAULT,
         )
