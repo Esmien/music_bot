@@ -9,10 +9,11 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import ErrorEvent
 
-from config import settings
-from fsm.evaluation_fsm import clear_orphaned_generation_flags, redis_client
+from core.config import settings
+from core.redis import redis_client
+from core.utils.error_notify import notify_owner
+from fsm.generation_flags import clear_orphaned_generation_flags
 from handlers import router
-from utils.error_notify import notify_owner
 
 log = logging.getLogger(__name__)
 

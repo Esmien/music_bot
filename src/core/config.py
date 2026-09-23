@@ -23,6 +23,19 @@ class BotConfig(BaseModelConfig):
     BOT_OWNER_ID: int = 0
 
 
+class EnrichPromptConfig(BaseModelConfig):
+    """Настройки модели обогащения пользовательского промпта.
+
+    Пустые значения допустимы: обогатитель опционален. При незаданных
+    настройках enrich_prompt сигнализирует ValueError, а хендлер
+    предлагает продолжить сценарий с исходным описанием песни.
+    """
+
+    ENRICH_URL: str = ""
+    ENRICH_TOKEN: str = ""
+    ENRICH_MODEL: str = ""
+
+
 class GenerationConfig(BaseModelConfig):
     """Настройки генерации песен.
 
@@ -75,6 +88,8 @@ class UIConfig:
         PROMPT_APPROVE_BUTTON: Кнопка аппрува сгенерированного промпта.
         PROMPT_EDIT_BUTTON: Кнопка правки сгенерированного промпта.
         PROMPT_CANCEL_BUTTON: Кнопка отмены сценария обогащения.
+        PROMPT_RETRY_BUTTON: Кнопка повтора обогащения после сбоя.
+        PROMPT_FALLBACK_BUTTON: Кнопка продолжения сценария без обогащения.
         EVALUATION_LIKE_BUTTON: Кнопка «нравится» при оценке генерации.
         EVALUATION_DISLIKE_BUTTON: Кнопка «не нравится» при оценке генерации.
         FEEDBACK_SEND_BUTTON: Кнопка отправки фидбека.
@@ -89,6 +104,8 @@ class UIConfig:
     PROMPT_APPROVE_BUTTON = "✅ Подтвердить"
     PROMPT_EDIT_BUTTON = "✏️ Изменить"
     PROMPT_CANCEL_BUTTON = "❌ Отменить"
+    PROMPT_RETRY_BUTTON = "🔄 Попробовать снова"
+    PROMPT_FALLBACK_BUTTON = "⏭ Без обогащения"
     EVALUATION_LIKE_BUTTON = "👍"
     EVALUATION_DISLIKE_BUTTON = "👎"
     FEEDBACK_SEND_BUTTON = "📝 Отправить фидбек"
@@ -100,6 +117,7 @@ class Settings(BaseModelConfig):
     generation: GenerationConfig = GenerationConfig()
     db: DatabaseConfig = DatabaseConfig()
     redis: RedisConfig = RedisConfig()
+    enrich: EnrichPromptConfig = EnrichPromptConfig()
 
 
 settings = Settings()

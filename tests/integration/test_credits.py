@@ -3,8 +3,8 @@
 import httpx
 import pytest
 
-from database.models import User
-from handlers import credits as handlers_credits
+from core.database import User
+from handlers import credits_handlers as handlers_credits
 
 pytestmark = pytest.mark.integration
 
@@ -76,7 +76,8 @@ async def test_cmd_credits_without_limit(patched_auth_db, clean_auth_state, make
     """API без поля limit считается безлимитным.
 
     Если OpenRouter не вернул limit, total показывается как
-    «Без лимита», а остаток — как «Пока не кончится бабосик».
+    «Без лимита», а остаток посчитать нельзя — пользователь видит
+    заглушку «Невозможно посчитать».
     """
     await _make_authorized_user(patched_auth_db, tg_id=8)
     patch_key_info(FakeKeyInfoResponse(data={"usage": 1.0}))

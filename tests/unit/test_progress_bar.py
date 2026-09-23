@@ -1,8 +1,8 @@
-"""Юнит-тесты текстового индикатора прогресса из хендлера генерации."""
+"""Юнит-тесты текстового индикатора прогресса из сервисного конвейера."""
 
 import pytest
 
-from handlers.generation_pipeline import _progress_bar
+from services.pipeline import _progress_bar
 
 pytestmark = pytest.mark.unit
 

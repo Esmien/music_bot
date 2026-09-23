@@ -1,10 +1,13 @@
 """Интеграционные тесты авторизации: хендлеры против реальной тестовой БД."""
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import settings
-from database.models import User
-from fsm.evaluation_fsm import add_pending_auth, is_pending_auth
+from core.config import settings
+from core.database import User
+from fsm.registries.auth_registry import add_pending_auth, is_pending_auth
 from handlers import auth as handlers_auth
 
 pytestmark = pytest.mark.integration
@@ -210,3 +213,172 @@ async def test_handle_key_survives_delete_failure(patched_auth_db, clean_auth_st
     assert not msg.deleted
     assert any("успешно авторизованы" in answer for answer in msg.answers)
     assert await handlers_auth.is_authorized(48)
+
+
+async def _make_user(sessionmaker, tg_id: int, is_authorized: bool) -> None:
+    """Создаёт пользователя с заданным статусом авторизации.
+
+    Args:
+        sessionmaker: Фабрика сессий тестовой БД.
+        tg_id: Telegram user_id.
+        is_authorized: Значение флага is_authorized.
+    """
+    async with sessionmaker() as session:
+        session.add(User(tg_id=tg_id, is_authorized=is_authorized))
+        await session.commit()
+
+
+async def _get_user(sessionmaker, tg_id: int) -> User | None:
+    """Читает пользователя из тестовой БД.
+
+    Args:
+        sessionmaker: Фабрика сессий тестовой БД.
+        tg_id: Telegram user_id.
+
+    Returns:
+        Найденный User или None.
+    """
+    async with sessionmaker() as session:
+        result = await session.execute(select(User).where(User.tg_id == tg_id))
+        return result.scalar_one_or_none()
+
+
+async def test_mark_user_authorized_recovers_after_integrity_error(patched_auth_db, monkeypatch):
+    """Гонка вставок: первый session.get не видит пользователя, flush падает с IntegrityError.
+
+    Пользователь уже есть в БД (например, ранее выходил), но первый session.get
+    его «не находит» — имитация параллельной вставки того же tg_id.
+    После IntegrityError на flush функция откатывается, перечитывает запись
+    через select и проставляет ей is_authorized=True.
+    """
+    await _make_user(patched_auth_db, tg_id=21, is_authorized=False)
+
+    real_select = handlers_auth.select
+    select_calls = {"count": 0}
+
+    def fake_select(*entities, **kwargs):
+        select_calls["count"] += 1
+        return real_select(*entities, **kwargs)
+
+    monkeypatch.setattr(handlers_auth, "select", fake_select)
+
+    # Первый session.get «не видит» пользователя — имитация гонки вставок
+    real_get = AsyncSession.get
+    get_calls = {"count": 0}
+
+    async def fake_get(self, entity, *args, **kwargs):
+        get_calls["count"] += 1
+        if get_calls["count"] == 1:
+            return None
+        return await real_get(self, entity, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, "get", fake_get)
+
+    await handlers_auth._mark_user_authorized(uid=21)
+
+    # select вызван один раз — перечитывание после IntegrityError на flush
+    assert select_calls["count"] == 1
+    db_user = await _get_user(patched_auth_db, tg_id=21)
+    assert db_user is not None
+    assert db_user.is_authorized is True
+
+
+async def test_cmd_logout_db_error_notifies_owner(patched_auth_db, make_message, fake_state, monkeypatch):
+    """Сбой БД при logout: пользователь остаётся авторизован, владелец уведомлён.
+
+    SessionLocal бросает SQLAlchemyError — срабатывает ветка except:
+    сообщение «Не удалось выйти», вызов notify_owner, ранний выход
+    без очистки FSM и без снятия авторизации.
+    """
+    await _make_user(patched_auth_db, tg_id=22, is_authorized=True)
+
+    def _failing_session_factory():
+        raise SQLAlchemyError("database is down")
+
+    monkeypatch.setattr(handlers_auth, "SessionLocal", _failing_session_factory)
+
+    notify_calls = []
+
+    async def fake_notify_owner(bot, context, err):
+        notify_calls.append((bot, context, err))
+
+    monkeypatch.setattr(handlers_auth, "notify_owner", fake_notify_owner)
+
+    msg = make_message(uid=22)
+    state = fake_state()
+    await handlers_auth.cmd_logout(msg, state)
+
+    assert "Не удалось выйти" in msg.answers[0]
+    assert len(notify_calls) == 1
+    bot, context, err = notify_calls[0]
+    assert bot is msg.bot
+    assert "22" in context
+    assert isinstance(err, SQLAlchemyError)
+
+    # ранний выход: FSM не очищен, авторизация в БД не снята
+    assert state.cleared is False
+    db_user = await _get_user(patched_auth_db, tg_id=22)
+    assert db_user is not None
+    assert db_user.is_authorized is True
+
+
+async def test_cmd_logout_cancels_active_generation(patched_auth_db, make_message, fake_state, fake_redis, monkeypatch):
+    """Logout гасит живую генерацию и полностью разавторизовывает пользователя.
+
+    Активная задача из active_tasks отменяется, пользователь снимается
+    с ожидания ключа, FSM очищается, is_authorized=False в БД.
+    """
+    await _make_user(patched_auth_db, tg_id=23, is_authorized=True)
+    await add_pending_auth(uid=23)
+
+    class FakeTask:
+        def __init__(self):
+            self.cancel_calls = 0
+
+        def done(self):
+            return False
+
+        def cancel(self):
+            self.cancel_calls += 1
+
+    task = FakeTask()
+    monkeypatch.setattr(handlers_auth, "active_tasks", {23: task})
+
+    msg = make_message(uid=23)
+    state = fake_state()
+    await handlers_auth.cmd_logout(msg, state)
+
+    assert task.cancel_calls == 1
+    assert "Вы вышли" in msg.answers[0]
+    assert state.cleared is True
+    assert not await is_pending_auth(uid=23)
+
+    db_user = await _get_user(patched_auth_db, tg_id=23)
+    assert db_user is not None
+    assert db_user.is_authorized is False
+
+
+async def test_cmd_logout_skips_cancel_for_finished_task(
+    patched_auth_db, make_message, fake_state, fake_redis, monkeypatch
+):
+    """Завершённая задача генерации не отменяется повторно."""
+    await _make_user(patched_auth_db, tg_id=24, is_authorized=True)
+
+    class FakeTask:
+        def __init__(self):
+            self.cancel_calls = 0
+
+        def done(self):
+            return True
+
+        def cancel(self):
+            self.cancel_calls += 1
+
+    task = FakeTask()
+    monkeypatch.setattr(handlers_auth, "active_tasks", {24: task})
+
+    msg = make_message(uid=24)
+    await handlers_auth.cmd_logout(msg, fake_state())
+
+    assert task.cancel_calls == 0
+    assert "Вы вышли" in msg.answers[0]

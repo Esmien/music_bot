@@ -7,19 +7,16 @@ callback_data построены по схеме "<домен>:<действие
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import UIConfig
+from core.config import UIConfig
 
 # Префиксы callback_data: обогащение промпта и фидбек
 PROMPT_CB_PREFIX = "prompt:"
-FEEDBACK_CB_PREFIX = "fb:"
 
 CB_PROMPT_APPROVE = f"{PROMPT_CB_PREFIX}approve"
 CB_PROMPT_EDIT = f"{PROMPT_CB_PREFIX}edit"
 CB_PROMPT_CANCEL = f"{PROMPT_CB_PREFIX}cancel"
-CB_FEEDBACK_LIKE = f"{FEEDBACK_CB_PREFIX}like"
-CB_FEEDBACK_DISLIKE = f"{FEEDBACK_CB_PREFIX}dislike"
-CB_FEEDBACK_SEND = f"{FEEDBACK_CB_PREFIX}send"
-CB_FEEDBACK_FINISH = f"{FEEDBACK_CB_PREFIX}finish"
+CB_PROMPT_RETRY = f"{PROMPT_CB_PREFIX}retry"
+CB_PROMPT_FALLBACK = f"{PROMPT_CB_PREFIX}fallback"
 
 
 def get_prompt_approval_keyboard() -> InlineKeyboardMarkup:
@@ -36,27 +33,15 @@ def get_prompt_approval_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_evaluation_keyboard() -> InlineKeyboardMarkup:
-    """Собирает клавиатуру оценки результата генерации.
+def get_enrich_failed_keyboard() -> InlineKeyboardMarkup:
+    """Собирает клавиатуру на случай сбоя обогащения.
 
     Returns:
-        Инлайн-клавиатура с кнопками «нравится» и «не нравится».
+        Инлайн-клавиатура с кнопками повтора обогащения и продолжения
+        сценария без обогащения (с исходным описанием).
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text=UIConfig.EVALUATION_LIKE_BUTTON, callback_data=CB_FEEDBACK_LIKE)
-    builder.button(text=UIConfig.EVALUATION_DISLIKE_BUTTON, callback_data=CB_FEEDBACK_DISLIKE)
+    builder.button(text=UIConfig.PROMPT_RETRY_BUTTON, callback_data=CB_PROMPT_RETRY)
+    builder.button(text=UIConfig.PROMPT_FALLBACK_BUTTON, callback_data=CB_PROMPT_FALLBACK)
     builder.adjust(2)
-    return builder.as_markup()
-
-
-def get_feedback_keyboard() -> InlineKeyboardMarkup:
-    """Собирает клавиатуру завершения сценария фидбека.
-
-    Returns:
-        Инлайн-клавиатура с кнопками отправки фидбека и завершения.
-    """
-    builder = InlineKeyboardBuilder()
-    builder.button(text=UIConfig.FEEDBACK_SEND_BUTTON, callback_data=CB_FEEDBACK_SEND)
-    builder.button(text=UIConfig.FEEDBACK_FINISH_BUTTON, callback_data=CB_FEEDBACK_FINISH)
-    builder.adjust(1)
     return builder.as_markup()

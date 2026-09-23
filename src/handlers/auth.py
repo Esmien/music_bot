@@ -11,14 +11,14 @@ from aiogram.types import Message, ReplyKeyboardRemove
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from config import UIConfig, settings
-from database import SessionLocal
-from database.models import User
-from fsm.evaluation_fsm import active_tasks, add_pending_auth, discard_pending_auth, is_pending_auth
+from core.config import UIConfig, settings
+from core.database import SessionLocal, User
+from core.utils.error_notify import notify_owner
+from core.utils.exceptions import AccessKeyNotSet
+from fsm.registries.auth_registry import add_pending_auth, discard_pending_auth, is_pending_auth
+from fsm.registries.task_registry import active_tasks
 from handlers.filters import IsPendingAuth, NotCommand
 from keyboards.default_keyboards import get_main_keyboard
-from utils.error_notify import notify_owner
-from utils.exceptions import AccessKeyNotSet
 
 log = logging.getLogger(__name__)
 
@@ -40,8 +40,7 @@ async def is_authorized(uid: int) -> bool:
         True, если пользователь найден и is_authorized=True.
     """
     async with SessionLocal() as session:
-        result = await session.execute(select(User).where(User.tg_id == uid))
-        db_user = result.scalar_one_or_none()
+        db_user = await session.get(User, uid)
 
         return bool(db_user and db_user.is_authorized)
 
@@ -110,8 +109,8 @@ async def _mark_user_authorized(uid: int) -> None:
         uid: Telegram user_id.
     """
     async with SessionLocal() as session:
-        result = await session.execute(select(User).where(User.tg_id == uid))
-        db_user = result.scalar_one_or_none()
+        db_user = await session.get(User, uid)
+
         if db_user:
             db_user.is_authorized = True
         else:
