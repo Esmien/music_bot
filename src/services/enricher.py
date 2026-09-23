@@ -9,13 +9,11 @@
 import logging
 
 import httpx
-from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from core.database.engine import SessionLocal
-from core.database.models import GenerationFeedback, User
+from core.database.models import GenerationFeedback
 
 logger = logging.getLogger(__name__)
 
@@ -90,38 +88,18 @@ async def save_enriched_prompt(tg_id: int, initial_prompt: str, enriched_prompt:
     """
     try:
         async with SessionLocal() as session:
-            internal_user_id = await _resolve_internal_user_id(session=session, tg_id=tg_id)
-            if internal_user_id is None:
-                logger.error("Cannot save enriched prompt: user tg_id=%s is not found", tg_id)
-                raise ValueError(f"User with tg_id={tg_id} is not found in database")
-            # is_liked=False — заглушка обязательного поля, обновится хендлерами оценки
             session.add(
                 GenerationFeedback(
-                    user_id=internal_user_id,
+                    user_id=tg_id,
                     initial_prompt=initial_prompt,
                     enriched_prompt=enriched_prompt,
-                    is_liked=False,
+                    is_liked=None,
                 )
             )
             await session.commit()
     except SQLAlchemyError as exc:
         logger.error("Failed to save enriched prompt: %s", exc)
         raise
-
-
-async def _resolve_internal_user_id(session: AsyncSession, tg_id: int) -> int | None:
-    """Резолвит Telegram user_id в первичный ключ пользователя users.id.
-
-    Args:
-        session: Активная сессия БД.
-        tg_id: Telegram user_id.
-
-    Returns:
-        Внутренний id пользователя либо None, если не найден.
-    """
-    result = await session.execute(select(User).where(User.tg_id == tg_id))
-    db_user = result.scalar_one_or_none()
-    return db_user.id if db_user else None
 
 
 def _extract_message_content(data: dict) -> str | None:

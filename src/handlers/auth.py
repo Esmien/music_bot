@@ -40,8 +40,7 @@ async def is_authorized(uid: int) -> bool:
         True, если пользователь найден и is_authorized=True.
     """
     async with SessionLocal() as session:
-        result = await session.execute(select(User).where(User.tg_id == uid))
-        db_user = result.scalar_one_or_none()
+        db_user = await session.get(User, uid)
 
         return bool(db_user and db_user.is_authorized)
 
@@ -110,8 +109,8 @@ async def _mark_user_authorized(uid: int) -> None:
         uid: Telegram user_id.
     """
     async with SessionLocal() as session:
-        result = await session.execute(select(User).where(User.tg_id == uid))
-        db_user = result.scalar_one_or_none()
+        db_user = await session.get(User, uid)
+
         if db_user:
             db_user.is_authorized = True
         else:
