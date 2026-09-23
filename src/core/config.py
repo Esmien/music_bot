@@ -126,6 +126,11 @@ class UIConfig:
         EVALUATION_DISLIKE_BUTTON: Кнопка «не нравится» при оценке генерации.
         FEEDBACK_SEND_BUTTON: Кнопка отправки фидбека.
         FEEDBACK_FINISH_BUTTON: Кнопка завершения сценария фидбека.
+        FEEDBACK_CHOICE_TEXT: Текст просьбы выбрать действие после оценки.
+        EVALUATION_PROMPT_TEXT: Текст просьбы оценить сгенерированную композицию.
+        FEEDBACK_PROMPT_TEXT: Текст просьбы написать отзыв.
+        FEEDBACK_RECEIVED_TEXT: Текст подтверждения приёма отзыва в FSM.
+        FEEDBACK_THANKS_TEXT: Текст благодарности после сохранения оценки/отзыва.
     """
 
     GENERATE_BUTTON = "🎵 Сгенерировать"
@@ -142,10 +147,16 @@ class UIConfig:
     EVALUATION_LIKE_BUTTON = "👍"
     EVALUATION_DISLIKE_BUTTON = "👎"
     FEEDBACK_SEND_BUTTON = "📝 Отправить фидбек"
-    FEEDBACK_FINISH_BUTTON = "✅ Завершить"
+    FEEDBACK_FINISH_BUTTON = "✅ Завершить без отзыва"
+    FEEDBACK_CHOICE_TEXT = "👇 Выберите действие кнопками ниже."
+    EVALUATION_PROMPT_TEXT = "🎧 Оцените сгенерированную композицию"
+    FEEDBACK_PROMPT_TEXT = "✍️ Напишите, что понравилось или нет"
+    FEEDBACK_RECEIVED_TEXT = "💬 Отзыв принят. Нажмите «✅ Завершить без отзыва», чтобы сохранить."
+    FEEDBACK_THANKS_TEXT = "✅ Спасибо, ваша оценка принята!"
 
 
 class Settings(BaseModelConfig):
+    MIN_FEEDBACK_TEXT: int = 20
     bot: BotConfig = BotConfig()
     generation: GenerationConfig = GenerationConfig()
     db: DatabaseConfig = DatabaseConfig()
