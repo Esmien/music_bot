@@ -65,7 +65,7 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     # FSM-состояния храним в Redis: данные переживают рестарт контейнера
-    storage = RedisStorage.from_url(settings.redis.REDIS_URL)
+    storage = RedisStorage.from_url(settings.redis.redis_url)
     dp = Dispatcher(storage=storage)
     dp.include_router(router)  # все хендлеры собраны в один роутер пакета handlers
     dp.errors.register(on_error)

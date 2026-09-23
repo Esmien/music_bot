@@ -3,11 +3,13 @@
 Все настройки собираются здесь в одном месте — остальные модули
 импортируют только этот файл, ничего не читая из окружения напрямую.
 """
-
+from pydantic import computed_field
+from pydantic_core import MultiHostUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class BaseModelConfig(BaseSettings):
+    DEV_MODE: bool = False
     # Подхватываем .env из корня проекта при локальном запуске;
     # в Docker переменные приходят через environment/docker-compose
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -62,14 +64,42 @@ class DatabaseConfig(BaseModelConfig):
     POSTGRES_DB: str
 
     @property
+    def postgres_host(self) -> str:
+        return "localhost" if self.DEV_MODE else self.POSTGRES_HOST
+
+    @computed_field
+    @property
     def database_url(self) -> str:
-        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        url = MultiHostUrl.build(
+            scheme="postgresql+asyncpg",
+            username=self.POSTGRES_USER,
+            password=self.POSTGRES_PASSWORD,
+            host=self.postgres_host,
+            port=self.POSTGRES_PORT,
+            path=self.POSTGRES_DB,
+        )
+        return str(url)
 
 
 class RedisConfig(BaseModelConfig):
     """Redis: хранение FSM-состояний (переживают рестарт контейнера)."""
 
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_HOST: str
+    REDIS_PORT: int
+    REDIS_VAULT: str
+
+    @computed_field
+    @property
+    def redis_url(self) -> str:
+        url = MultiHostUrl.build(
+            scheme="redis",
+            username=None,
+            password=None,
+            host=self.REDIS_HOST,
+            port=self.REDIS_PORT,
+            path=f"/{self.REDIS_VAULT}" if not self.REDIS_VAULT.startswith("/") else self.REDIS_VAULT,
+        )
+        return str(url)
 
 
 class UIConfig:
