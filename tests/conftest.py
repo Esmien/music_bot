@@ -128,11 +128,13 @@ def make_message():
 
         async def answer(self, text, **kwargs):
             self.answers.append(text)
-            sent = SimpleNamespace(text=text, edits=[], deleted=False)
+            # bot нужен хендлерам для notify_owner (как у реального aiogram.Message)
+            sent = SimpleNamespace(text=text, edits=[], deleted=False, bot=self.bot)
 
-            async def edit_text(new_text, **kw):
-                sent.text = new_text
-                sent.edits.append(new_text)
+            # Хендлеры зовут edit_text(text=...) именованным аргументом
+            async def edit_text(text, **kw):
+                sent.text = text
+                sent.edits.append(text)
                 return sent
 
             async def delete():
