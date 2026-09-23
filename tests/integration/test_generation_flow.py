@@ -13,7 +13,8 @@ import pytest
 from core.config import settings
 from core.database import User
 from fsm.enricher_fsm import PromptEnricherStates
-from fsm.registries.task_registry import active_tasks as registry
+from fsm.registries import task_registry
+from fsm.registries.task_registry import _active_tasks as registry
 from handlers import base_handlers
 from handlers import enricher_handlers as handlers_enricher
 from handlers import generation_handlers as handlers_generation
@@ -24,8 +25,13 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def clean_generation_registry():
-    """Пустой реестр активных задач генерации до и после теста."""
+def clean_generation_registry(fake_redis, monkeypatch):
+    """Пустой реестр активных задач генерации до и после теста.
+
+    task_registry теперь тоже ходит в Redis — подменяем его клиент
+    на тот же fakeredis, что и в auth_registry.
+    """
+    monkeypatch.setattr(task_registry, "redis_client", fake_redis)
     registry.clear()
     yield
     registry.clear()

@@ -13,6 +13,7 @@ from core.config import settings
 from core.redis import redis_client
 from core.utils.error_notify import notify_owner
 from fsm.generation_flags import clear_orphaned_generation_flags
+from fsm.registries.task_registry import clear_active_tasks
 from handlers import router
 
 log = logging.getLogger(__name__)
@@ -55,6 +56,9 @@ async def main() -> None:
     # чистим осиротевшие флаги generating, иначе пользователь
     # останется с «Дождитесь окончания текущей генерации» навсегда
     await clear_orphaned_generation_flags()
+    # Реестр активных задач хранит uid в Redis: после рестарта записи
+    # неактуальны, сами задачи в памяти процесса не выжили
+    await clear_active_tasks()
 
     bot = Bot(
         token=settings.bot.BOT_TOKEN,

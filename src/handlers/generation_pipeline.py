@@ -21,7 +21,7 @@ from aiogram.types import (
 )
 
 from core.utils.error_notify import notify_owner
-from fsm.registries.task_registry import active_tasks
+from fsm.registries.task_registry import register_active_task, unregister_active_task
 from keyboards.default_keyboards import get_main_keyboard
 from services.generation import ProgressCallback
 from services.pipeline import make_throttled_progress, run_generation, user_generation_lock
@@ -121,7 +121,7 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
             return
         await _deliver_result(gen_context=gen_context, status=status, audio_bytes=audio_bytes)
     finally:
-        _release_slot(gen_context=gen_context)
+        await _release_slot(gen_context=gen_context)
 
 
 async def _acquire_slot(gen_context: GenerationContext) -> bool:
@@ -151,8 +151,8 @@ async def _acquire_slot(gen_context: GenerationContext) -> bool:
         # Устанавливаем в FSM пользователя
         # статус "генерируется" и маркер самой генерации, занимая слот
         await gen_context.state.update_data(generating=True, gen_id=gen_context.gen_id)
-        # Регистрируем в реестре текущих задач
-        active_tasks[gen_context.user_id] = gen_context.task
+        # Регистрируем в едином реестре текущих задач
+        await register_active_task(uid=gen_context.user_id, task=gen_context.task)
         return True
 
 
@@ -277,8 +277,8 @@ async def _deliver_result(gen_context: GenerationContext, status: Message, audio
         await status.delete()
 
 
-def _release_slot(gen_context: GenerationContext) -> None:
-    """Снимает регистрацию задачи в active_tasks.
+async def _release_slot(gen_context: GenerationContext) -> None:
+    """Снимает регистрацию задачи в едином реестре активных генераций.
 
     Убираем только свою запись: за время генерации могла начаться новая
     (другая задача) — её запись не трогаем.
@@ -286,5 +286,4 @@ def _release_slot(gen_context: GenerationContext) -> None:
     Args:
         gen_context: Контекст запуска генерации.
     """
-    if active_tasks.get(gen_context.user_id) is gen_context.task:
-        active_tasks.pop(gen_context.user_id, None)
+    await unregister_active_task(uid=gen_context.user_id, task=gen_context.task)

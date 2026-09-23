@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from core.config import UIConfig
-from fsm.registries.task_registry import active_tasks
+from fsm.registries.task_registry import get_active_task
 from keyboards.default_keyboards import get_main_keyboard
 
 router = Router(name="base")
@@ -29,7 +29,7 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
         message: Сообщение с командой /cancel или кнопкой «❌ Отмена».
         state: FSM-контекст текущего пользователя.
     """
-    task = active_tasks.get(message.from_user.id)
+    task = get_active_task(uid=message.from_user.id)
     if task is not None and not task.done():
         task.cancel()
     await state.clear()

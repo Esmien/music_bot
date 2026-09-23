@@ -15,8 +15,14 @@ from core.config import UIConfig, settings
 from core.database import SessionLocal, User
 from core.utils.error_notify import notify_owner
 from core.utils.exceptions import AccessKeyNotSet
-from fsm.registries.auth_registry import add_pending_auth, discard_pending_auth, is_pending_auth
-from fsm.registries.task_registry import active_tasks
+from fsm.registries.auth_registry import (
+    add_pending_auth,
+    discard_pending_auth,
+    is_pending_auth,
+    register_failed_key_attempt,
+    reset_failed_key_attempts,
+)
+from fsm.registries.task_registry import get_active_task
 from handlers.filters import IsPendingAuth, NotCommand
 from keyboards.default_keyboards import get_main_keyboard
 
@@ -25,9 +31,8 @@ log = logging.getLogger(__name__)
 router = Router()
 
 # Защита от перебора ключа доступа: счётчик неудачных попыток на пользователя.
-# Как и pending_auth, живёт в памяти и сбрасывается при перезапуске
+# Как и pending_auth, живёт в Redis и переживает перезапуск (см. auth_registry)
 MAX_KEY_ATTEMPTS = 5
-failed_key_attempts: dict[int, int] = {}
 
 
 async def is_authorized(uid: int) -> bool:
@@ -83,14 +88,13 @@ async def _check_key_with_attempts(key: str, expected: str, uid: int) -> str | N
     """
     # Позиционно: compare_digest — C-функция, именованные аргументы не принимает
     if secrets.compare_digest(key.encode("utf-8"), expected.encode("utf-8")):
-        failed_key_attempts.pop(uid, None)
+        await reset_failed_key_attempts(uid=uid)
         return None
 
-    attempts = failed_key_attempts.get(uid, 0) + 1
-    failed_key_attempts[uid] = attempts
+    attempts = await register_failed_key_attempt(uid=uid)
     if attempts >= MAX_KEY_ATTEMPTS:
         await discard_pending_auth(uid=uid)
-        failed_key_attempts.pop(uid, None)
+        await reset_failed_key_attempts(uid=uid)
         log.warning("Access key attempts exhausted (user=%s)", uid)
         return "❌ Слишком много неверных попыток. Отправьте /start, чтобы начать заново."
 
@@ -195,7 +199,7 @@ async def cmd_logout(message: Message, state: FSMContext):
 
     # Гасим живую генерацию, если она есть: иначе после logout пользователю
     # всё равно прилетит песня.
-    task = active_tasks.get(uid)
+    task = get_active_task(uid)
     if task and not task.done():
         task.cancel()
     # убираем из реестра ожидающих ключ
