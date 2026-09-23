@@ -24,10 +24,11 @@ async def clear_orphaned_generation_flags() -> int:
     нет: без чистки пользователь навсегда оставался бы с «Дождитесь
     окончания текущей генерации». Вызывается на старте, когда active_tasks
     ещё пуст, поэтому любой выставленный флаг считается осиротевшим.
-    Данные FSM RedisStorage хранит как JSON в hash-поле data.
+    RedisStorage aiogram 3 хранит данные FSM как строковый ключ с JSON
+    (не как hash), поэтому чтение и запись идут через get/set.
 
     Инвариант: префикс fsm: зарезервирован за RedisStorage, под ним
-    лежат только FSM-записи с JSON в поле data. Если складывать туда
+    лежат только FSM-записи с JSON в значении ключа. Если складывать туда
     свои ключи в другом формате, scan_iter попытается распарсить их
     как JSON и пропустит с предупреждением в логе.
 
@@ -37,7 +38,7 @@ async def clear_orphaned_generation_flags() -> int:
     cleaned = 0
     try:
         async for key in redis_client.scan_iter(match=_FSM_KEY_MATCH):
-            raw = await redis_client.hget(key, "data")
+            raw = await redis_client.get(key)
             if raw is None:
                 continue
             try:
@@ -49,7 +50,7 @@ async def clear_orphaned_generation_flags() -> int:
                 continue
             data.pop("generating", None)
             data.pop("gen_id", None)
-            await redis_client.hset(key, "data", json.dumps(data))
+            await redis_client.set(key, json.dumps(data))
             cleaned += 1
             log.info("Cleared orphaned generation flag (key=%s)", key)
     except RedisError:
