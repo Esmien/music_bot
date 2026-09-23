@@ -3,6 +3,7 @@
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from core.database import User
@@ -243,12 +244,12 @@ async def _get_user(sessionmaker, tg_id: int) -> User | None:
 
 
 async def test_mark_user_authorized_recovers_after_integrity_error(patched_auth_db, monkeypatch):
-    """Гонка вставок: первый select не видит пользователя, flush падает с IntegrityError.
+    """Гонка вставок: первый session.get не видит пользователя, flush падает с IntegrityError.
 
-    Пользователь уже есть в БД (например, ранее выходил), но первый select
+    Пользователь уже есть в БД (например, ранее выходил), но первый session.get
     его «не находит» — имитация параллельной вставки того же tg_id.
     После IntegrityError на flush функция откатывается, перечитывает запись
-    и проставляет ей is_authorized=True.
+    через select и проставляет ей is_authorized=True.
     """
     await _make_user(patched_auth_db, tg_id=21, is_authorized=False)
 
@@ -257,18 +258,26 @@ async def test_mark_user_authorized_recovers_after_integrity_error(patched_auth_
 
     def fake_select(*entities, **kwargs):
         select_calls["count"] += 1
-        stmt = real_select(*entities, **kwargs)
-        if select_calls["count"] == 1:
-            # первый select выполняется «до» параллельной вставки и не видит пользователя
-            stmt = stmt.where(entities[0].tg_id == -1)
-        return stmt
+        return real_select(*entities, **kwargs)
 
     monkeypatch.setattr(handlers_auth, "select", fake_select)
 
+    # Первый session.get «не видит» пользователя — имитация гонки вставок
+    real_get = AsyncSession.get
+    get_calls = {"count": 0}
+
+    async def fake_get(self, entity, *args, **kwargs):
+        get_calls["count"] += 1
+        if get_calls["count"] == 1:
+            return None
+        return await real_get(self, entity, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, "get", fake_get)
+
     await handlers_auth._mark_user_authorized(uid=21)
 
-    # второй select — перечитывание после rollback
-    assert select_calls["count"] == 2
+    # select вызван один раз — перечитывание после IntegrityError на flush
+    assert select_calls["count"] == 1
     db_user = await _get_user(patched_auth_db, tg_id=21)
     assert db_user is not None
     assert db_user.is_authorized is True
