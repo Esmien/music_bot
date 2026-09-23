@@ -233,7 +233,6 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
 
     await state.update_data(enriched_prompt=result)
     log.info("Enrichment succeeded (user=%s, edits=%s)", uid, bool(edits_text))
-    await _save_feedback_best_effort(status=status, uid=uid, initial_prompt=prompt, enriched_prompt=result)
 
     # У бота по умолчанию parse_mode=HTML: ответ модели экранируем,
     # чтобы символы разметки в нём не ломали сообщение
@@ -316,12 +315,21 @@ async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
     if not await _ensure_callback_authorized(callback=callback, state=state):
         return
 
-    enriched = (await state.get_data()).get("enriched_prompt")
+    data = await state.get_data()
+    enriched = data.get("enriched_prompt")
     if not enriched:
         # Сессия потерялась (перезапуск бота / чистка FSM) — просим начать заново
         await callback.answer(text="Начните заново: 🎵 Сгенерировать", show_alert=True)
         await state.clear()
         return
+
+    # Фидбек пишем до финализации: в data["prompt"] ещё исходная идея пользователя
+    await _save_feedback_best_effort(
+        status=callback.message,
+        uid=callback.from_user.id,
+        initial_prompt=data.get("prompt"),
+        enriched_prompt=enriched,
+    )
 
     await state.update_data(prompt=_build_generation_prompt(text=enriched))
     await callback.answer()
@@ -461,6 +469,13 @@ async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     # Последний удачный вариант обогащения приоритетнее сырого текста
     final_text = data.get("enriched_prompt") or prompt
+    # Фидбек пишем до финализации: в data["prompt"] ещё исходная идея пользователя
+    await _save_feedback_best_effort(
+        status=callback.message,
+        uid=callback.from_user.id,
+        initial_prompt=prompt,
+        enriched_prompt=final_text,
+    )
     await state.update_data(prompt=_build_generation_prompt(text=final_text))
     log.info("Enrichment fallback used (user=%s)", callback.from_user.id)
     with contextlib.suppress(Exception):
