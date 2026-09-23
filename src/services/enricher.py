@@ -15,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from core.config import settings
 from core.database.engine import SessionLocal
 from core.database.models import GenerationFeedback
+from core.utils.exceptions import EnricherNotConfiguredError
 from services.enricher_validator import parse_enricher_json, validate_enriched_prompt
 
 logger = logging.getLogger(__name__)
@@ -59,10 +60,10 @@ async def enrich_prompt(prompt: str, history: list[dict[str, str]] | None = None
         None возвращается только при сетевом сбое или пустом ответе.
 
     Raises:
-        ValueError: Если не сконфигурирован URL или модель обогатителя.
+        EnricherNotConfiguredError: Если не сконфигурирован URL или модель обогатителя.
     """
     if not settings.enrich.ENRICH_URL or not settings.enrich.ENRICH_MODEL:
-        raise ValueError("Enricher URL or model is not configured")
+        raise EnricherNotConfiguredError("Enricher URL or model is not configured")
 
     messages: list[dict[str, str]] = list(history) if history else []
     messages.append({"role": "user", "content": prompt})

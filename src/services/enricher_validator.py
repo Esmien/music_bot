@@ -12,6 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from core.utils.exceptions import EnricherResponseInvalidError
+
 logger = logging.getLogger(__name__)
 
 _YO_TRANSLATION = str.maketrans("ёЁ", "еЕ")
@@ -99,7 +101,7 @@ def parse_enricher_json(raw: str) -> dict:
 
     Raises:
         json.JSONDecodeError: Если текст не является корректным JSON.
-        ValueError: Если JSON не является объектом.
+        EnricherResponseInvalidError: Если JSON не является объектом.
     """
     text = raw.strip()
     if text.startswith("```"):
@@ -111,7 +113,7 @@ def parse_enricher_json(raw: str) -> dict:
             text = text[:closing_index]
     data = json.loads(text)
     if not isinstance(data, dict):
-        raise ValueError("Enricher JSON payload is not an object")
+        raise EnricherResponseInvalidError("Enricher JSON payload is not an object")
     return data
 
 

@@ -12,6 +12,13 @@ from typing import Any, Protocol
 import httpx
 
 from core.config import settings
+from core.utils.exceptions import (
+    GenerationAPIError,
+    GenerationAudioMissingError,
+    GenerationConfigurationError,
+    GenerationFileError,
+    GenerationStreamError,
+)
 from core.utils.stream_parser import _parse_openrouter_sse
 
 log = logging.getLogger(__name__)
@@ -78,22 +85,23 @@ def load_mock_audio() -> bytes:
         Байты mp3-файла из мока.
 
     Raises:
-        RuntimeError: Если мок-файл не задан, не читается, не является
-            JSON или аудио в нём не найдено.
+        GenerationConfigurationError: Если MOCK_MODE включён, но MOCK_FILE не задан.
+        GenerationFileError: Если mock-файл не читается или не является JSON.
+        GenerationAudioMissingError: Если аудио в mock-файле не найдено.
     """
     if not settings.generation.MOCK_FILE:
-        raise RuntimeError("MOCK_MODE is enabled but MOCK_FILE is not set")
+        raise GenerationConfigurationError("MOCK_MODE is enabled but MOCK_FILE is not set")
     try:
         with open(settings.generation.MOCK_FILE, encoding="utf-8") as f:
             data = json.load(f)
     except OSError as error:
-        raise RuntimeError(f"Cannot read mock file {settings.generation.MOCK_FILE!r}") from error
+        raise GenerationFileError(f"Cannot read mock file {settings.generation.MOCK_FILE!r}") from error
     except json.JSONDecodeError as error:
-        raise RuntimeError(f"Mock file {settings.generation.MOCK_FILE!r} is not valid JSON") from error
+        raise GenerationFileError(f"Mock file {settings.generation.MOCK_FILE!r} is not valid JSON") from error
     b64 = _find_audio_b64(data)
     if b64:
         return base64.b64decode(b64)
-    raise RuntimeError("Audio not found in mock file")
+    raise GenerationAudioMissingError("Audio not found in mock file")
 
 
 async def generate_song_real(prompt: str, on_progress: ProgressCallback | None = None) -> bytes:
@@ -113,8 +121,9 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
         Байты готового mp3-файла.
 
     Raises:
-        RuntimeError: Если сервер вернул не-200, аудио не пришло в потоке,
-            или поток превысил MAX_AUDIO_B64_LEN.
+        GenerationAPIError: Если сервер вернул не-200.
+        GenerationStreamError: Если поток превысил MAX_AUDIO_B64_LEN.
+        GenerationAudioMissingError: Если аудио не пришло в потоке.
     """
 
     async def report(stage: str, fraction: float) -> None:
@@ -164,7 +173,7 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
     ):
         if resp.status_code != 200:
             error_body = (await resp.aread()).decode("utf-8", "ignore")
-            raise RuntimeError(f"OpenRouter {resp.status_code}: {error_body[:300]}")
+            raise GenerationAPIError(f"OpenRouter {resp.status_code}: {error_body[:300]}")
 
         # Читаем очищенный поток из парсера
         async for raw_chunk in _parse_openrouter_sse(resp):
@@ -179,7 +188,7 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
                 total_b64 += len(raw_chunk)
 
             if total_b64 > MAX_AUDIO_B64_LEN:
-                raise RuntimeError("Audio in stream exceeds the allowed size")
+                raise GenerationStreamError("Audio in stream exceeds the allowed size")
 
             # base64 декодируется группами по 4 символа: готовую часть
             # сразу пишем в BytesIO, хвост ждёт следующих чанков
@@ -196,7 +205,7 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
             await report(stage="Получаю аудио…", fraction=fraction * 0.95)
 
     if not last_chunk:
-        raise RuntimeError("No audio received in stream")
+        raise GenerationAudioMissingError("No audio received in stream")
 
     await report(stage="Собираю файл…", fraction=0.97)
     if pending_b64:
