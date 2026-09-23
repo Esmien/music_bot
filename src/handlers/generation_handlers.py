@@ -21,11 +21,9 @@ from handlers.auth import _require_auth, is_authorized
 from handlers.enricher_handlers import PROMPT_HINT, PROMPT_TEMPLATE
 from handlers.generation_pipeline import generate_and_send
 from keyboards.default_keyboards import get_cancel_keyboard, get_main_keyboard
+from keyboards.enricher_keyboards import CB_TITLE_LEAVE_AS_IS
 
 router = Router()
-
-# Название по умолчанию для повтора, если title потерялся из FSM
-_DEFAULT_TITLE = "Lyria's Generated Song"
 
 
 @router.message(F.text == UIConfig.GENERATE_BUTTON)
@@ -92,7 +90,7 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
         return
 
     prompt = data.get("prompt")
-    title = data.get("title", _DEFAULT_TITLE)
+    title = data.get("title", UIConfig.DEFAULT_TITLE)
 
     if not prompt or not prompt.strip():
         # Состояние потерялось (перезапуск бота?) — честно просим начать заново, показывая модальное окно
@@ -157,3 +155,42 @@ async def handle_title(message: Message, state: FSMContext):
 
     # Все данные собраны, отправляем на генерацию
     await generate_and_send(message=message, state=state, prompt=prompt, title=title, user_id=message.from_user.id)
+
+
+@router.callback_query(GenerationStates.waiting_for_title, F.data == CB_TITLE_LEAVE_AS_IS)
+async def handle_title_leave_as_is(callback: CallbackQuery, state: FSMContext):
+    """Использует название по умолчанию, если пользователь не хочет придумывать.
+
+    Args:
+        callback: Нажатие на кнопку «Оставить как есть».
+        state: FSM-контекст текущего пользователя.
+    """
+    if not await is_authorized(callback.from_user.id):
+        await callback.answer(text="Доступ закрыт. Авторизуйтесь заново: /start", show_alert=True)
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    if data.get("generating"):
+        await callback.answer(text="Генерация уже идёт.", show_alert=True)
+        return
+
+    prompt = data.get("prompt")
+    if not prompt or not prompt.strip():
+        await callback.answer(text="Начните заново: 🎵 Сгенерировать", show_alert=True)
+        await state.clear()
+        return
+
+    title = UIConfig.DEFAULT_TITLE
+    await state.update_data(title=title)
+    await callback.answer()
+    with contextlib.suppress(Exception):
+        await callback.message.delete()
+
+    await generate_and_send(
+        message=callback.message,
+        state=state,
+        prompt=prompt,
+        title=title,
+        user_id=callback.from_user.id,
+    )

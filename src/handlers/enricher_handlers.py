@@ -19,6 +19,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.exc import SQLAlchemyError
 
+from core.config import UIConfig
 from core.utils.error_notify import notify_owner
 from fsm.enricher_fsm import PromptEnricherStates
 from fsm.generation_fsm import MAX_PROMPT_LEN, GenerationStates
@@ -32,6 +33,7 @@ from keyboards.enricher_keyboards import (
     CB_PROMPT_RETRY,
     get_enrich_failed_keyboard,
     get_prompt_approval_keyboard,
+    get_title_keyboard,
 )
 from services.enricher import enrich_prompt, format_enriched_prompt, save_enriched_prompt
 
@@ -343,7 +345,10 @@ async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
     with contextlib.suppress(Exception):
         await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(GenerationStates.waiting_for_title)
-    await callback.message.answer(text="🎤 Введите название песни:", reply_markup=get_cancel_keyboard())
+    await callback.message.answer(
+        text=(f"🎤 Введите название песни или нажмите «Оставить как есть»:\n({UIConfig.DEFAULT_TITLE})"),
+        reply_markup=get_title_keyboard(),
+    )
 
 
 @router.callback_query(PromptEnricherStates.waiting_for_approval, F.data == CB_PROMPT_EDIT)
@@ -488,10 +493,16 @@ async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
     with contextlib.suppress(Exception):
         await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(GenerationStates.waiting_for_title)
-    await callback.message.answer(text="🎤 Введите название песни:", reply_markup=get_cancel_keyboard())
+    await callback.message.answer(
+        text=(f"🎤 Введите название песни или нажмите «Оставить как есть»:\n({UIConfig.DEFAULT_TITLE})"),
+        reply_markup=get_title_keyboard(),
+    )
 
 
-@router.callback_query(PromptEnricherStates.waiting_for_approval, F.data == CB_PROMPT_CANCEL)
+@router.callback_query(
+    StateFilter(PromptEnricherStates.waiting_for_approval, GenerationStates.waiting_for_title),
+    F.data == CB_PROMPT_CANCEL,
+)
 async def handle_prompt_cancel(callback: CallbackQuery, state: FSMContext):
     """Отменяет сценарий обогащения и возвращает в главное меню.
 

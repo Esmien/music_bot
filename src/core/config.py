@@ -3,6 +3,7 @@
 Все настройки собираются здесь в одном месте — остальные модули
 импортируют только этот файл, ничего не читая из окружения напрямую.
 """
+
 from pydantic import computed_field
 from pydantic_core import MultiHostUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -120,6 +121,7 @@ class UIConfig:
         PROMPT_CANCEL_BUTTON: Кнопка отмены сценария обогащения.
         PROMPT_RETRY_BUTTON: Кнопка повтора обогащения после сбоя.
         PROMPT_FALLBACK_BUTTON: Кнопка продолжения сценария без обогащения.
+        DEFAULT_TITLE: Название песни по умолчанию.
         EVALUATION_LIKE_BUTTON: Кнопка «нравится» при оценке генерации.
         EVALUATION_DISLIKE_BUTTON: Кнопка «не нравится» при оценке генерации.
         FEEDBACK_SEND_BUTTON: Кнопка отправки фидбека.
@@ -136,6 +138,7 @@ class UIConfig:
     PROMPT_CANCEL_BUTTON = "❌ Отменить"
     PROMPT_RETRY_BUTTON = "🔄 Попробовать снова"
     PROMPT_FALLBACK_BUTTON = "⏭ Без обогащения"
+    DEFAULT_TITLE = "Lyria's_Generated_song"
     EVALUATION_LIKE_BUTTON = "👍"
     EVALUATION_DISLIKE_BUTTON = "👎"
     FEEDBACK_SEND_BUTTON = "📝 Отправить фидбек"
