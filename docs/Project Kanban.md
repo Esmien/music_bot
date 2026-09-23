@@ -6,23 +6,23 @@ kanban-plugin: board
 
 ## Backlog
 
-- [ ] [[add_handlers_for_enricher]]
 - [ ] [[add_evaluation_service]]
 - [ ] [[add_evaluation_handlers]]
 
 
 ## In progress
 
-- [ ] [[add_fsm_for_enricher]]
 
 
 ## Testing
 
-- [ ] [[add_connection_to_enricher]]
 
 
 ## Done
 
+- [ ] [[add_connection_to_enricher]]
+- [ ] [[add_fsm_for_enricher]]
+- [ ] [[add_handlers_for_enricher]]
 
 
 ## Deploy
