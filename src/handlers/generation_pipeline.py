@@ -21,11 +21,13 @@ from aiogram.types import (
 )
 from sqlalchemy import select
 
+from core.config import UIConfig
 from core.database import SessionLocal
 from core.database.models import GenerationFeedback
 from core.utils.error_notify import notify_owner
+from fsm.evaluation_fsm import FeedbackStates
 from fsm.registries.task_registry import register_active_task, unregister_active_task
-from keyboards.default_keyboards import get_main_keyboard
+from keyboards.evaluation_keyboards import get_evaluation_keyboard
 from services.generation import ProgressCallback
 from services.pipeline import make_throttled_progress, run_generation, user_generation_lock
 
@@ -254,25 +256,33 @@ async def _handle_failure(gen_context: GenerationContext, status: Message, error
 
 
 async def _deliver_result(gen_context: GenerationContext, status: Message, audio_bytes: bytes) -> None:
-    """Отправляет готовое аудио, сохраняет название и чистит состояние после успеха.
+    """Отправляет готовое аудио, переводит в оценку и сохраняет название.
 
-    Состояние чистим, только если это всё ещё актуальная генерация:
-    иначе «поздний» успех после «❌ Отмена» затрёт состояние новой сессии.
+    Состояние переводим в ожидание оценки только если это всё ещё актуальная
+    генерация: иначе «поздний» успех после «❌ Отмена» затрёт состояние новой
+    сессии. Флаг generating снимаем вместе с переходом в сценарий фидбека.
 
     Args:
         gen_context: Контекст запуска генерации.
         status: Сообщение-статус с прогрессом.
         audio_bytes: Байты готового аудио.
     """
-    if await _is_actual_gen(state=gen_context.state, gen_id=gen_context.gen_id):
-        await gen_context.state.clear()
+    is_actual = await _is_actual_gen(state=gen_context.state, gen_id=gen_context.gen_id)
 
     # Санитайзинг названия песни, чтобы ТГ не сошел с ума от "левых" символов
     safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in gen_context.title)[:80] or "song"
 
-    # Сборка песни в файл, отправка пользователю и очистка экрана от прогресс-бара
+    # Сборка песни в файл и отправка пользователю.
     file = BufferedInputFile(file=audio_bytes, filename=f"{safe_title}.mp3")
-    await gen_context.message.answer_audio(audio=file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
+    await gen_context.message.answer_audio(audio=file, caption="🎵 Готово!")
+
+    if is_actual:
+        await gen_context.state.update_data(generating=False)
+        await gen_context.state.set_state(FeedbackStates.waiting_evaluation)
+        await gen_context.message.answer(
+            text=UIConfig.EVALUATION_PROMPT_TEXT,
+            reply_markup=get_evaluation_keyboard(),
+        )
 
     # Фиксируем название готовой песни — нужно для приветствия «С возвращением».
     await _persist_generated_title(gen_context=gen_context)
