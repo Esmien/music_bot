@@ -33,7 +33,7 @@ from keyboards.enricher_keyboards import (
     get_enrich_failed_keyboard,
     get_prompt_approval_keyboard,
 )
-from services.enricher import enrich_prompt, save_enriched_prompt
+from services.enricher import enrich_prompt, format_enriched_prompt, save_enriched_prompt
 
 log = logging.getLogger(__name__)
 
@@ -175,6 +175,11 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
     («❌ Отмена», /start), результат тихо отбрасывается, чтобы не
     воскрешать сценарий поверх нового состояния.
 
+    В FSM под ключом enriched_prompt хранится сырой JSON-ответ обогатителя
+    (он нужен для истории правок, фидбека и промпта генерации), а
+    пользователю показывается отформатированная версия через
+    format_enriched_prompt.
+
     Args:
         status: Сообщение-лоадер, которое редактируется по завершении.
         state: FSM-контекст текущего пользователя.
@@ -233,13 +238,16 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
     await state.update_data(enriched_prompt=result)
     log.info("Enrichment succeeded (user=%s, edits=%s)", uid, bool(edits_text))
 
+    # Пользователю показываем отформатированный текст, в FSM остаётся сырой JSON
+    display_text = format_enriched_prompt(raw=result)
+
     # У бота по умолчанию parse_mode=HTML: ответ модели экранируем,
     # чтобы символы разметки в нём не ломали сообщение
     with contextlib.suppress(Exception):
         await status.edit_text(
             text=(
                 "🪄 <b>Я подготовил описание песни:</b>\n\n"
-                f"<blockquote expandable>{html.escape(result)}</blockquote>\n\n"
+                f"<blockquote expandable>{html.escape(display_text)}</blockquote>\n\n"
                 "Подтвердите или пришлите правки."
             ),
             reply_markup=get_prompt_approval_keyboard(),

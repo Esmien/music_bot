@@ -6,6 +6,7 @@
 текст (при повторном обогащении с правками — вместе с историей диалога).
 """
 
+import json
 import logging
 
 import httpx
@@ -18,6 +19,19 @@ from core.database.models import GenerationFeedback
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT_SECONDS = 120.0
+
+# Порядок и заголовки секций при форматировании JSON-ответа обогатителя
+# для показа пользователю (контракт ответа — см. docs/instructions.md)
+_ENRICHED_FIELD_TITLES: tuple[tuple[str, str], ...] = (
+    ("genre_and_style", "🎵 Жанр и стиль"),
+    ("mood", "🎭 Настроение"),
+    ("instrumentation", "🎻 Инструменты"),
+    ("tempo_bpm", "⏱ Темп"),
+    ("vocal_style", "🎤 Вокал"),
+    ("language", "🌐 Язык"),
+    ("lyrics", "📝 Текст песни"),
+    ("song_structure", "🎼 Структура"),
+)
 
 
 async def enrich_prompt(prompt: str, history: list[dict[str, str]] | None = None) -> str | None:
@@ -35,7 +49,8 @@ async def enrich_prompt(prompt: str, history: list[dict[str, str]] | None = None
             видела исходную идею и свой прошлый ответ.
 
     Returns:
-        Обогащённый промпт либо None, если запрос не удался или ответ пуст.
+        Обогащённый промпт (сырой JSON-ответ обогатителя) либо None,
+        если запрос не удался или ответ пуст.
 
     Raises:
         ValueError: Если не сконфигурирован URL или модель обогатителя.
@@ -66,6 +81,44 @@ async def enrich_prompt(prompt: str, history: list[dict[str, str]] | None = None
         logger.error("Enricher returned empty or unexpected response body")
         return None
     return enriched
+
+
+def format_enriched_prompt(raw: str) -> str:
+    """Превращает сырой JSON-ответ обогатителя в человекочитаемый текст.
+
+    Разбирает контракт из docs/instructions.md и собирает текст с
+    заголовками секций: списки склеиваются запятыми (структура песни —
+    построчно), темп дополняется «BPM». Если ответ не парсится как JSON
+    (модель ответила вольным текстом), возвращается исходный текст —
+    форматирование не должно ломать сценарий.
+
+    Args:
+        raw: Сырой ответ обогатителя (JSON-строка или вольный текст).
+
+    Returns:
+        Отформатированный текст для показа пользователю.
+    """
+    try:
+        data = _parse_enricher_json(raw=raw)
+    except (ValueError, json.JSONDecodeError) as error:
+        logger.warning("Enricher response is not valid JSON, showing raw text: %s", error)
+        return raw.strip()
+
+    sections: list[str] = []
+    for field, title in _ENRICHED_FIELD_TITLES:
+        value = data.get(field)
+        if value is None or value == "" or value == []:
+            continue
+        if field == "tempo_bpm":
+            body = f"{value} BPM"
+        elif isinstance(value, list):
+            # Структура песни — построчно (теги секций), остальные списки — через запятую
+            body = "\n".join(str(item) for item in value) if field == "song_structure" else ", ".join(map(str, value))
+        else:
+            body = str(value).strip()
+        sections.append(f"{title}:\n{body}")
+
+    return "\n\n".join(sections) if sections else raw.strip()
 
 
 async def save_enriched_prompt(tg_id: int, initial_prompt: str, enriched_prompt: str) -> None:
@@ -121,3 +174,33 @@ def _extract_message_content(data: dict) -> str | None:
     if not isinstance(content, str) or not content.strip():
         return None
     return content
+
+
+def _parse_enricher_json(raw: str) -> dict:
+    """Разбирает сырой ответ обогатителя в словарь.
+
+    Снимает markdown-ограждение кода (```json ... ```), которым модель
+    может обернуть JSON, и проверяет, что результат — объект.
+
+    Args:
+        raw: Сырой ответ обогатителя.
+
+    Returns:
+        Разобранный JSON-объект с полями промпта.
+
+    Raises:
+        json.JSONDecodeError: Если текст не является корректным JSON.
+        ValueError: Если JSON не является объектом.
+    """
+    text = raw.strip()
+    if text.startswith("```"):
+        # Срезаем открывающую строку ограждения (``` или ```json)
+        newline_index = text.find("\n")
+        text = text[newline_index + 1 :] if newline_index != -1 else text.lstrip("`")
+        closing_index = text.rfind("```")
+        if closing_index != -1:
+            text = text[:closing_index]
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("Enricher JSON payload is not an object")
+    return data
