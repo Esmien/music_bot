@@ -19,7 +19,10 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from sqlalchemy import select
 
+from core.database import SessionLocal
+from core.database.models import GenerationFeedback
 from core.utils.error_notify import notify_owner
 from fsm.registries.task_registry import register_active_task, unregister_active_task
 from keyboards.default_keyboards import get_main_keyboard
@@ -251,7 +254,7 @@ async def _handle_failure(gen_context: GenerationContext, status: Message, error
 
 
 async def _deliver_result(gen_context: GenerationContext, status: Message, audio_bytes: bytes) -> None:
-    """Отправляет готовое аудио и чистит состояние после успеха.
+    """Отправляет готовое аудио, сохраняет название и чистит состояние после успеха.
 
     Состояние чистим, только если это всё ещё актуальная генерация:
     иначе «поздний» успех после «❌ Отмена» затрёт состояние новой сессии.
@@ -271,10 +274,50 @@ async def _deliver_result(gen_context: GenerationContext, status: Message, audio
     file = BufferedInputFile(file=audio_bytes, filename=f"{safe_title}.mp3")
     await gen_context.message.answer_audio(audio=file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
 
+    # Фиксируем название готовой песни — нужно для приветствия «С возвращением».
+    await _persist_generated_title(gen_context=gen_context)
+
     # Поведенческая симметрия с _cleanup_cancelled: сбой удаления статуса
     # не должен ронять задачу уже после отправки аудио
     with contextlib.suppress(Exception):
         await status.delete()
+
+
+async def _persist_generated_title(gen_context: GenerationContext) -> None:
+    """Сохраняет название готовой песни в запись фидбека пользователя.
+
+    Обновляет последнюю запись `GenerationFeedback`; если записи ещё нет,
+    создаёт минимальную. Нужно для персонализированного приветствия на
+    /start. Сбой БД не должен ронять задачу уже после отправки аудио.
+
+    Args:
+        gen_context: Контекст запуска генерации.
+    """
+    try:
+        async with SessionLocal() as session:
+            result = await session.execute(
+                select(GenerationFeedback)
+                .where(GenerationFeedback.user_id == gen_context.user_id)
+                .order_by(GenerationFeedback.id.desc())
+                .limit(1)
+            )
+            feedback = result.scalar_one_or_none()
+            if feedback is not None:
+                feedback.title = gen_context.title
+            else:
+                # DEVIATION: записи фидбека нет — создаём минимальную, чтобы
+                # «С возвращением» работал и в сценариях без сохранения промпта.
+                session.add(
+                    GenerationFeedback(
+                        user_id=gen_context.user_id,
+                        initial_prompt=gen_context.prompt,
+                        enriched_prompt=gen_context.prompt,
+                        title=gen_context.title,
+                    )
+                )
+            await session.commit()
+    except Exception:
+        log.error("Failed to persist generated title (user=%s)", gen_context.user_id, exc_info=True)
 
 
 async def _release_slot(gen_context: GenerationContext) -> None:
