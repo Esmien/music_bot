@@ -15,6 +15,8 @@ PROMPT_CB_PREFIX = "prompt:"
 CB_PROMPT_APPROVE = f"{PROMPT_CB_PREFIX}approve"
 CB_PROMPT_EDIT = f"{PROMPT_CB_PREFIX}edit"
 CB_PROMPT_CANCEL = f"{PROMPT_CB_PREFIX}cancel"
+CB_PROMPT_RETRY = f"{PROMPT_CB_PREFIX}retry"
+CB_PROMPT_FALLBACK = f"{PROMPT_CB_PREFIX}fallback"
 
 
 def get_prompt_approval_keyboard() -> InlineKeyboardMarkup:
@@ -27,5 +29,19 @@ def get_prompt_approval_keyboard() -> InlineKeyboardMarkup:
     builder.button(text=UIConfig.PROMPT_APPROVE_BUTTON, callback_data=CB_PROMPT_APPROVE)
     builder.button(text=UIConfig.PROMPT_EDIT_BUTTON, callback_data=CB_PROMPT_EDIT)
     builder.button(text=UIConfig.PROMPT_CANCEL_BUTTON, callback_data=CB_PROMPT_CANCEL)
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def get_enrich_failed_keyboard() -> InlineKeyboardMarkup:
+    """Собирает клавиатуру на случай сбоя обогащения.
+
+    Returns:
+        Инлайн-клавиатура с кнопками повтора обогащения и продолжения
+        сценария без обогащения (с исходным описанием).
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text=UIConfig.PROMPT_RETRY_BUTTON, callback_data=CB_PROMPT_RETRY)
+    builder.button(text=UIConfig.PROMPT_FALLBACK_BUTTON, callback_data=CB_PROMPT_FALLBACK)
     builder.adjust(2)
     return builder.as_markup()

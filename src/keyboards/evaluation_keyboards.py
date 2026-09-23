@@ -3,7 +3,6 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from core.config import UIConfig
 
-
 FEEDBACK_CB_PREFIX = "fb:"
 
 CB_FEEDBACK_LIKE = f"{FEEDBACK_CB_PREFIX}like"

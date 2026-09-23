@@ -19,8 +19,9 @@
 ├── .github/                # GitHub Actions
 ├── src/                    # Исходный код бота
 │   ├── core/               # Инфраструктурное ядро: конфигурация и общие подключения
-│   │   ├── config.py       #   pydantic Settings: константы, флаги; единственная точка
-│   │   │                   #   чтения окружения, UIConfig с текстами кнопок
+│   │   ├── config.py       #   pydantic Settings: сгруппированные конфиги (BotConfig,
+│   │   │                   #   GenerationConfig, DatabaseConfig, RedisConfig), UIConfig
+│   │   │                   #   с текстами кнопок; единственная точка чтения окружения
 │   │   ├── redis.py        #   единый async-клиент Redis для FSM-хранилища и реестров
 │   │   ├── database/       #   модули для работы с БД (модели, подключения, фабрики)
 │   │   │   ├── engine.py   #     async-движок, фабрика сессий SessionLocal, init_db()
@@ -35,20 +36,26 @@
 │   │   ├── credits.py             # /credits: остаток генераций через API OpenRouter
 │   │   ├── filters.py             # кастомные фильтры (IsPendingAuth, NotCommand)
 │   │   ├── generation.py          # FSM-диалог генерации: кнопка «Сгенерировать», ввод промпта и названия, повтор
-│   │   └── generation_pipeline.py # движок генерации: пер-пользовательский лок, прогресс-бар,
-│   │                              #   отмена и обработка сбоев, отправка аудио (не знает о роутере)
+│   │   └── generation_pipeline.py # конвейер генерации: FSM-флаги, отрисовка прогресса
+│   │                              #   через edit_text, отмена и обработка сбоев,
+│   │                              #   отправка аудио (не знает о роутере)
 │   ├── fsm/                # Состояния пользователя (на каком этапе он находится)
 │   │   ├── generation_fsm.py      # состояния и лимиты диалога генерации
-│   │   └── evaluation_fsm.py      # состояния оценки/фидбека и обогащения промпта; здесь же
-│   │                              #   реестры pending_auth и active_tasks (живые задачи генерации),
-│   │                              #   чистка «осиротевших» флагов generating после рестарта
+│   │   ├── evaluation_fsm.py      # состояния оценки/фидбека и обогащения промпта
+│   │   ├── generation_flags.py    # чистка «осиротевших» флагов generating после рестарта
+│   │   └── registries/            # служебные реестры
+│   │       ├── auth_registry.py   #   pending_auth (ожидающие ввод ключа), Redis
+│   │       └── task_registry.py   #   active_tasks (живые задачи генерации), память процесса
 │   ├── keyboards/          # Клавиатуры для бота (для различных сценариев)
 │   │   ├── default_keyboards.py   # главная reply-клавиатура и кнопка отмены
 │   │   └── enricher_keyboards.py  # inline-клавиатуры обогащения промпта и фидбека
 │   │                              #   (callback_data по схеме "<домен>:<действие>")
 │   ├── services/           # Бизнес-логика, движок
-│   │   └── generation.py          # генерация песни: реальный вызов OpenRouter (SSE-стрим,
-│   │                              #   сборка аудио из base64-чанков) и демо-режим MOCK_MODE
+│   │   ├── generation.py          # генерация песни: реальный вызов OpenRouter (SSE-стрим,
+│   │   │                          #   сборка аудио из base64-чанков) и демо-режим MOCK_MODE
+│   │   └── pipeline.py            # оркестрация генерации: пер-пользовательский лок,
+│   │                              #   сборка текста прогресс-бара и троттлинг правок
+│   │                              #   статуса (лимиты Telegram)
 │   └── bot.py              # Точка входа: бот, диспетчер, регистрация роутеров,
 │                           #   хранилище FSM, глобальный хэндлер on_error
 ├── tests/                  # Тесты
@@ -76,8 +83,9 @@
 Пользователь
   └─> handlers/generation.py                 (FSM: промпт -> название)
         └─> generation_pipeline.generate_and_send   (фоновая задача)
-              └─> services/generation.py     (OpenRouter или MOCK_MODE, прогресс через колбэк)
-                    └─> отправка аудио, очистка FSM
+              └─> services/pipeline.py       (пер-пользовательский лок, троттлинг прогресса)
+                    └─> services/generation.py     (OpenRouter или MOCK_MODE, прогресс через колбэк)
+                          └─> отправка аудио, очистка FSM
 ```
 
 > **Отмена** — через `/cancel` или `/logout` (`task.cancel()` по `active_tasks`).
@@ -103,7 +111,7 @@
 | Данные | Где хранится | Примечание |
 | --- | --- | --- |
 | FSM-данные пользователей | Redis | Переживают рестарт контейнера |
-| `pending_auth` (ожидающие ввод ключа) | Redis | Множество |
-| `active_tasks` (живые задачи генерации) | Память процесса | `asyncio.Task` не сериализуется; след в FSM чистит `clear_orphaned_generation_flags()` на старте бота |
+| `pending_auth` (ожидающие ввод ключа) | Redis | Реестр `src/fsm/registries/auth_registry.py` |
+| `active_tasks` (живые задачи генерации) | Память процесса | `asyncio.Task` не сериализуется; след в FSM чистит `clear_orphaned_generation_flags()` (`src/fsm/generation_flags.py`) на старте бота |
 | Бизнес-данные (пользователи, фидбек по генерациям) | PostgreSQL | — |
 | Тестовое окружение | SQLite (in-memory) + fakeredis | Заменяют PostgreSQL и Redis в тестах |
