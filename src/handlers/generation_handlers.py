@@ -1,9 +1,11 @@
-"""Хендлеры точки входа генерации: кнопка «Сгенерировать» и повтор после сбоя.
+"""Хендлеры точки входа генерации: кнопка «Сгенерировать», повтор после сбоя
+и финальный шаг сценария — обработка названия песни.
 
-Диалог генерации (описание → обогащение → аппрув → название) ведёт
-сценарий обогащения — enricher_handlers; здесь остаются запуск сценария
-кнопкой и перезапуск генерации после сбоя. Механика запуска (локи,
-прогресс, отмена, обработка сбоев) вынесена в generation_pipeline.
+Диалог генерации (описание → обогащение → аппрув → название) начинается
+в enricher_handlers: здесь остаются запуск сценария кнопкой, приём
+названия песни (handle_title) и перезапуск генерации после сбоя.
+Механика запуска (локи, прогресс, отмена, обработка сбоев) вынесена
+в generation_pipeline.
 """
 
 import contextlib
@@ -14,10 +16,11 @@ from aiogram.types import CallbackQuery, Message
 
 from core.config import UIConfig
 from fsm.enricher_fsm import PromptEnricherStates
+from fsm.generation_fsm import MAX_TITLE_LEN, GenerationStates
 from handlers.auth import _require_auth, is_authorized
 from handlers.enricher_handlers import PROMPT_HINT, PROMPT_TEMPLATE
 from handlers.generation_pipeline import generate_and_send
-from keyboards.default_keyboards import get_cancel_keyboard
+from keyboards.default_keyboards import get_cancel_keyboard, get_main_keyboard
 
 router = Router()
 
@@ -110,3 +113,47 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
         title=title,
         user_id=callback.from_user.id,
     )
+
+
+@router.message(GenerationStates.waiting_for_title, F.text)
+async def handle_title(message: Message, state: FSMContext):
+    """Принимает название, генерирует песню и отправляет аудиофайл.
+
+    Финальный шаг сценария обогащения: к этому моменту в FSM под ключом
+    prompt лежит промпт, готовый к генерации (обогащённый или собранный
+    без обогащения). Валидирует название, сохраняет его в FSM (пригодится
+    для повтора после сбоя) и запускает фоновую задачу generate_and_send.
+
+    Args:
+        message: Входящее сообщение с названием песни.
+        state: FSM-контекст текущего пользователя.
+    """
+    title = message.text.strip()
+    if not title:
+        await message.answer(text="Пожалуйста, введите непустое название.")
+        return
+    if len(title) > MAX_TITLE_LEN:
+        await message.answer(text=f"Слишком длинное название. Максимум {MAX_TITLE_LEN} символов.")
+        return
+
+    data = await state.get_data()
+    if data.get("generating"):
+        await message.answer(text="⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
+        return
+
+    prompt = data.get("prompt")
+    if not prompt or not prompt.strip():
+        # Промпт потерялся (перезапуск бота / гонка кнопок / чистка FSM) —
+        # на генерацию с пустой строкой не отправляем
+        await message.answer(
+            text="😔 Описание песни потерялось. Начните заново — отправьте стихи или шаблон.",
+            reply_markup=get_main_keyboard(),
+        )
+        await state.clear()
+        return
+
+    # title кладём в FSM — пригодится для retry
+    await state.update_data(title=title)
+
+    # Все данные собраны, отправляем на генерацию
+    await generate_and_send(message=message, state=state, prompt=prompt, title=title, user_id=message.from_user.id)

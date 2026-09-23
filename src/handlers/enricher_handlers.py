@@ -21,9 +21,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from core.utils.error_notify import notify_owner
 from fsm.enricher_fsm import PromptEnricherStates
-from fsm.generation_fsm import MAX_PROMPT_LEN, MAX_TITLE_LEN, GenerationStates
+from fsm.generation_fsm import MAX_PROMPT_LEN, GenerationStates
 from handlers.auth import is_authorized
-from handlers.generation_pipeline import generate_and_send
 from keyboards.default_keyboards import get_cancel_keyboard, get_main_keyboard
 from keyboards.enricher_keyboards import (
     CB_PROMPT_APPROVE,
@@ -500,47 +499,3 @@ async def handle_prompt_cancel(callback: CallbackQuery, state: FSMContext):
     with contextlib.suppress(Exception):
         await callback.message.edit_text(text="Сценарий обогащения отменён.")
     await callback.message.answer(text="Возвращаю в главное меню.", reply_markup=get_main_keyboard())
-
-
-@router.message(GenerationStates.waiting_for_title, F.text)
-async def handle_title(message: Message, state: FSMContext):
-    """Принимает название, генерирует песню и отправляет аудиофайл.
-
-    Финальный шаг сценария обогащения: к этому моменту в FSM под ключом
-    prompt лежит промпт, готовый к генерации (обогащённый или собранный
-    без обогащения). Валидирует название, сохраняет его в FSM (пригодится
-    для повтора после сбоя) и запускает фоновую задачу generate_and_send.
-
-    Args:
-        message: Входящее сообщение с названием песни.
-        state: FSM-контекст текущего пользователя.
-    """
-    title = message.text.strip()
-    if not title:
-        await message.answer(text="Пожалуйста, введите непустое название.")
-        return
-    if len(title) > MAX_TITLE_LEN:
-        await message.answer(text=f"Слишком длинное название. Максимум {MAX_TITLE_LEN} символов.")
-        return
-
-    data = await state.get_data()
-    if data.get("generating"):
-        await message.answer(text="⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
-        return
-
-    prompt = data.get("prompt")
-    if not prompt or not prompt.strip():
-        # Промпт потерялся (перезапуск бота / гонка кнопок / чистка FSM) —
-        # на генерацию с пустой строкой не отправляем
-        await message.answer(
-            text="😔 Описание песни потерялось. Начните заново — отправьте стихи или шаблон.",
-            reply_markup=get_main_keyboard(),
-        )
-        await state.clear()
-        return
-
-    # title кладём в FSM — пригодится для retry
-    await state.update_data(title=title)
-
-    # Все данные собраны, отправляем на генерацию
-    await generate_and_send(message=message, state=state, prompt=prompt, title=title, user_id=message.from_user.id)
