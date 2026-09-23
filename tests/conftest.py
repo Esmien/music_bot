@@ -17,6 +17,9 @@ os.environ["POSTGRES_PASSWORD"] = "test-password"
 os.environ["POSTGRES_HOST"] = "localhost"
 os.environ["POSTGRES_PORT"] = "5432"
 os.environ["POSTGRES_DB"] = "test-db"
+os.environ["ENRICH_URL"] = "https://enricher.test/api/v1/chat/completions"
+os.environ["ENRICH_TOKEN"] = "test-enrich-token"
+os.environ["ENRICH_MODEL"] = "test-enrich-model"
 
 import importlib
 
