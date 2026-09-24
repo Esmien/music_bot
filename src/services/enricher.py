@@ -15,8 +15,14 @@ from sqlalchemy.exc import SQLAlchemyError
 from core.config import settings
 from core.database.engine import SessionLocal
 from core.database.models import GenerationFeedback
+from core.utils.exceptions import EnricherNotConfiguredError
+from services.enricher_validator import parse_enricher_json, validate_enriched_prompt
 
 logger = logging.getLogger(__name__)
+
+# DEVIATION: алиас для существующих тестов, обращающихся к enricher._parse_enricher_json;
+# реализация переехала в enricher_validator.
+_parse_enricher_json = parse_enricher_json
 
 REQUEST_TIMEOUT_SECONDS = 120.0
 
@@ -49,14 +55,15 @@ async def enrich_prompt(prompt: str, history: list[dict[str, str]] | None = None
             видела исходную идею и свой прошлый ответ.
 
     Returns:
-        Обогащённый промпт (сырой JSON-ответ обогатителя) либо None,
-        если запрос не удался или ответ пуст.
+        Обогащённый промпт: нормализованный JSON по контракту, либо сырой
+        текст (без ударений/«ё»), если ответ не соответствует JSON-контракту.
+        None возвращается только при сетевом сбое или пустом ответе.
 
     Raises:
-        ValueError: Если не сконфигурирован URL или модель обогатителя.
+        EnricherNotConfiguredError: Если не сконфигурирован URL или модель обогатителя.
     """
     if not settings.enrich.ENRICH_URL or not settings.enrich.ENRICH_MODEL:
-        raise ValueError("Enricher URL or model is not configured")
+        raise EnricherNotConfiguredError("Enricher URL or model is not configured")
 
     messages: list[dict[str, str]] = list(history) if history else []
     messages.append({"role": "user", "content": prompt})
@@ -80,7 +87,7 @@ async def enrich_prompt(prompt: str, history: list[dict[str, str]] | None = None
     if not enriched:
         logger.error("Enricher returned empty or unexpected response body")
         return None
-    return enriched
+    return validate_enriched_prompt(enriched)
 
 
 def format_enriched_prompt(raw: str) -> str:
@@ -99,7 +106,7 @@ def format_enriched_prompt(raw: str) -> str:
         Отформатированный текст для показа пользователю.
     """
     try:
-        data = _parse_enricher_json(raw=raw)
+        data = parse_enricher_json(raw=raw)
     except (ValueError, json.JSONDecodeError) as error:
         logger.warning("Enricher response is not valid JSON, showing raw text: %s", error)
         return raw.strip()
@@ -174,33 +181,3 @@ def _extract_message_content(data: dict) -> str | None:
     if not isinstance(content, str) or not content.strip():
         return None
     return content
-
-
-def _parse_enricher_json(raw: str) -> dict:
-    """Разбирает сырой ответ обогатителя в словарь.
-
-    Снимает markdown-ограждение кода (```json ... ```), которым модель
-    может обернуть JSON, и проверяет, что результат — объект.
-
-    Args:
-        raw: Сырой ответ обогатителя.
-
-    Returns:
-        Разобранный JSON-объект с полями промпта.
-
-    Raises:
-        json.JSONDecodeError: Если текст не является корректным JSON.
-        ValueError: Если JSON не является объектом.
-    """
-    text = raw.strip()
-    if text.startswith("```"):
-        # Срезаем открывающую строку ограждения (``` или ```json)
-        newline_index = text.find("\n")
-        text = text[newline_index + 1 :] if newline_index != -1 else text.lstrip("`")
-        closing_index = text.rfind("```")
-        if closing_index != -1:
-            text = text[:closing_index]
-    data = json.loads(text)
-    if not isinstance(data, dict):
-        raise ValueError("Enricher JSON payload is not an object")
-    return data

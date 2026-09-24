@@ -19,10 +19,15 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from sqlalchemy import select
 
+from core.config import UIConfig
+from core.database import SessionLocal
+from core.database.models import GenerationFeedback
 from core.utils.error_notify import notify_owner
-from fsm.registries.task_registry import active_tasks
-from keyboards.default_keyboards import get_main_keyboard
+from fsm.evaluation_fsm import FeedbackStates
+from fsm.registries.task_registry import register_active_task, unregister_active_task
+from keyboards.evaluation_keyboards import get_evaluation_keyboard
 from services.generation import ProgressCallback
 from services.pipeline import make_throttled_progress, run_generation, user_generation_lock
 
@@ -121,7 +126,7 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
             return
         await _deliver_result(gen_context=gen_context, status=status, audio_bytes=audio_bytes)
     finally:
-        _release_slot(gen_context=gen_context)
+        await _release_slot(gen_context=gen_context)
 
 
 async def _acquire_slot(gen_context: GenerationContext) -> bool:
@@ -151,8 +156,8 @@ async def _acquire_slot(gen_context: GenerationContext) -> bool:
         # Устанавливаем в FSM пользователя
         # статус "генерируется" и маркер самой генерации, занимая слот
         await gen_context.state.update_data(generating=True, gen_id=gen_context.gen_id)
-        # Регистрируем в реестре текущих задач
-        active_tasks[gen_context.user_id] = gen_context.task
+        # Регистрируем в едином реестре текущих задач
+        await register_active_task(uid=gen_context.user_id, task=gen_context.task)
         return True
 
 
@@ -251,25 +256,36 @@ async def _handle_failure(gen_context: GenerationContext, status: Message, error
 
 
 async def _deliver_result(gen_context: GenerationContext, status: Message, audio_bytes: bytes) -> None:
-    """Отправляет готовое аудио и чистит состояние после успеха.
+    """Отправляет готовое аудио, переводит в оценку и сохраняет название.
 
-    Состояние чистим, только если это всё ещё актуальная генерация:
-    иначе «поздний» успех после «❌ Отмена» затрёт состояние новой сессии.
+    Состояние переводим в ожидание оценки только если это всё ещё актуальная
+    генерация: иначе «поздний» успех после «❌ Отмена» затрёт состояние новой
+    сессии. Флаг generating снимаем вместе с переходом в сценарий фидбека.
 
     Args:
         gen_context: Контекст запуска генерации.
         status: Сообщение-статус с прогрессом.
         audio_bytes: Байты готового аудио.
     """
-    if await _is_actual_gen(state=gen_context.state, gen_id=gen_context.gen_id):
-        await gen_context.state.clear()
+    is_actual = await _is_actual_gen(state=gen_context.state, gen_id=gen_context.gen_id)
 
     # Санитайзинг названия песни, чтобы ТГ не сошел с ума от "левых" символов
     safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in gen_context.title)[:80] or "song"
 
-    # Сборка песни в файл, отправка пользователю и очистка экрана от прогресс-бара
+    # Сборка песни в файл и отправка пользователю.
     file = BufferedInputFile(file=audio_bytes, filename=f"{safe_title}.mp3")
-    await gen_context.message.answer_audio(audio=file, caption="🎵 Готово!", reply_markup=get_main_keyboard())
+    await gen_context.message.answer_audio(audio=file, caption="🎵 Готово!")
+
+    if is_actual:
+        await gen_context.state.update_data(generating=False)
+        await gen_context.state.set_state(FeedbackStates.waiting_evaluation)
+        await gen_context.message.answer(
+            text=UIConfig.EVALUATION_PROMPT_TEXT,
+            reply_markup=get_evaluation_keyboard(),
+        )
+
+    # Фиксируем название готовой песни — нужно для приветствия «С возвращением».
+    await _persist_generated_title(gen_context=gen_context)
 
     # Поведенческая симметрия с _cleanup_cancelled: сбой удаления статуса
     # не должен ронять задачу уже после отправки аудио
@@ -277,8 +293,45 @@ async def _deliver_result(gen_context: GenerationContext, status: Message, audio
         await status.delete()
 
 
-def _release_slot(gen_context: GenerationContext) -> None:
-    """Снимает регистрацию задачи в active_tasks.
+async def _persist_generated_title(gen_context: GenerationContext) -> None:
+    """Сохраняет название готовой песни в запись фидбека пользователя.
+
+    Обновляет последнюю запись `GenerationFeedback`; если записи ещё нет,
+    создаёт минимальную. Нужно для персонализированного приветствия на
+    /start. Сбой БД не должен ронять задачу уже после отправки аудио.
+
+    Args:
+        gen_context: Контекст запуска генерации.
+    """
+    try:
+        async with SessionLocal() as session:
+            result = await session.execute(
+                select(GenerationFeedback)
+                .where(GenerationFeedback.user_id == gen_context.user_id)
+                .order_by(GenerationFeedback.id.desc())
+                .limit(1)
+            )
+            feedback = result.scalar_one_or_none()
+            if feedback is not None:
+                feedback.title = gen_context.title
+            else:
+                # DEVIATION: записи фидбека нет — создаём минимальную, чтобы
+                # «С возвращением» работал и в сценариях без сохранения промпта.
+                session.add(
+                    GenerationFeedback(
+                        user_id=gen_context.user_id,
+                        initial_prompt=gen_context.prompt,
+                        enriched_prompt=gen_context.prompt,
+                        title=gen_context.title,
+                    )
+                )
+            await session.commit()
+    except Exception:
+        log.error("Failed to persist generated title (user=%s)", gen_context.user_id, exc_info=True)
+
+
+async def _release_slot(gen_context: GenerationContext) -> None:
+    """Снимает регистрацию задачи в едином реестре активных генераций.
 
     Убираем только свою запись: за время генерации могла начаться новая
     (другая задача) — её запись не трогаем.
@@ -286,5 +339,4 @@ def _release_slot(gen_context: GenerationContext) -> None:
     Args:
         gen_context: Контекст запуска генерации.
     """
-    if active_tasks.get(gen_context.user_id) is gen_context.task:
-        active_tasks.pop(gen_context.user_id, None)
+    await unregister_active_task(uid=gen_context.user_id, task=gen_context.task)

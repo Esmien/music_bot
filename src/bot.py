@@ -13,6 +13,7 @@ from core.config import settings
 from core.redis import redis_client
 from core.utils.error_notify import notify_owner
 from fsm.generation_flags import clear_orphaned_generation_flags
+from fsm.registries.task_registry import clear_active_tasks
 from handlers import router
 
 log = logging.getLogger(__name__)
@@ -55,13 +56,16 @@ async def main() -> None:
     # чистим осиротевшие флаги generating, иначе пользователь
     # останется с «Дождитесь окончания текущей генерации» навсегда
     await clear_orphaned_generation_flags()
+    # Реестр активных задач хранит uid в Redis: после рестарта записи
+    # неактуальны, сами задачи в памяти процесса не выжили
+    await clear_active_tasks()
 
     bot = Bot(
         token=settings.bot.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     # FSM-состояния храним в Redis: данные переживают рестарт контейнера
-    storage = RedisStorage.from_url(settings.redis.REDIS_URL)
+    storage = RedisStorage.from_url(settings.redis.redis_url)
     dp = Dispatcher(storage=storage)
     dp.include_router(router)  # все хендлеры собраны в один роутер пакета handlers
     dp.errors.register(on_error)

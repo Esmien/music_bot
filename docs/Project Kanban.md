@@ -6,8 +6,6 @@ kanban-plugin: board
 
 ## Backlog
 
-- [ ] [[add_evaluation_service]]
-- [ ] [[add_evaluation_handlers]]
 
 
 ## In progress
@@ -20,25 +18,31 @@ kanban-plugin: board
 
 ## Done
 
-- [ ] [[add_connection_to_enricher]]
-- [ ] [[add_fsm_for_enricher]]
-- [ ] [[add_handlers_for_enricher]]
 
 
 ## Deploy
 
 **Complete**
-- [x] [[add_group_FSM_for_handling_enriched_prompt]]
-- [x] [[gen_migrations]]
-- [x] [[add_sqlalchemy_models]]
-- [x] [[add_keyboards]]
 - [x] [[update_infrastructure]]
+- [x] [[add_sqlalchemy_models]]
+- [x] [[gen_migrations]]
+- [x] [[add_keyboards]]
+- [x] [[add_group_FSM_for_handling_enriched_prompt]]
+- [x] [[add_connection_to_enricher]]
+- [x] [[add_handlers_for_enricher]]
+- [x] [[add_enriched_prompt_validator]]
+- [x] [[combine_registries]]
+- [x] [[upgrade_ui]]
+- [x] [[upgrade_ux]]
+- [x] [[add_feedback_service]]
+- [x] [[add_evaluation_handlers]]
+- [x] [[add_feedback_handlers]]
 
 
 
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[false,false,false,false,false],"show-checkboxes":true,"new-note-folder":"Lyria music Bot/Tasks"}
+{"kanban-plugin":"board","list-collapse":[false,false,false,false,false],"show-checkboxes":true,"new-note-folder":"Tasks"}
 ```
 %%

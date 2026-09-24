@@ -36,7 +36,6 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 from core.database import init_db
 from fsm.registries import auth_registry as handlers_state
 from handlers import auth as handlers_auth  # noqa: E402
-from handlers.auth import failed_key_attempts  # noqa: E402
 
 # import database.engine as ... вернул бы не модуль, а затенённый атрибут
 # пакета database — AsyncEngine (реэкспорт engine в database/__init__.py).
@@ -94,10 +93,13 @@ def fake_redis(monkeypatch):
 
 @pytest.fixture
 def clean_auth_state(fake_redis):
-    """Пустой pending_auth (свежий fakeredis) и failed_key_attempts до и после теста."""
-    failed_key_attempts.clear()
-    yield
-    failed_key_attempts.clear()
+    """Чистый реестр авторизации.
+
+    И pending_auth, и счётчик неудачных попыток живут в Redis;
+    fake_redis создаётся заново на каждый тест, поэтому ключи не
+    перетекают между тестами.
+    """
+    yield fake_redis
 
 
 @pytest.fixture

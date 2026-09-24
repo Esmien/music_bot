@@ -1,4 +1,4 @@
-1. Добавить services/evaluation.py
+1. Добавить services/feedback.py
 2. Функции:
 		save_feedback(user_id: int, feedback: str, evalue: bool) -> None: ... # Принимает фидбек пользователя и пишет в базу при условии:
 		if feedback or evalue.

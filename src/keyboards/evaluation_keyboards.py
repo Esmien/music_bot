@@ -22,16 +22,3 @@ def get_evaluation_keyboard() -> InlineKeyboardMarkup:
     builder.button(text=UIConfig.EVALUATION_DISLIKE_BUTTON, callback_data=CB_FEEDBACK_DISLIKE)
     builder.adjust(2)
     return builder.as_markup()
-
-
-def get_feedback_keyboard() -> InlineKeyboardMarkup:
-    """Собирает клавиатуру завершения сценария фидбека.
-
-    Returns:
-        Инлайн-клавиатура с кнопками отправки фидбека и завершения.
-    """
-    builder = InlineKeyboardBuilder()
-    builder.button(text=UIConfig.FEEDBACK_SEND_BUTTON, callback_data=CB_FEEDBACK_SEND)
-    builder.button(text=UIConfig.FEEDBACK_FINISH_BUTTON, callback_data=CB_FEEDBACK_FINISH)
-    builder.adjust(1)
-    return builder.as_markup()

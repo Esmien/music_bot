@@ -13,7 +13,9 @@ import pytest
 from core.config import settings
 from core.database import User
 from fsm.enricher_fsm import PromptEnricherStates
-from fsm.registries.task_registry import active_tasks as registry
+from fsm.evaluation_fsm import FeedbackStates
+from fsm.registries import task_registry
+from fsm.registries.task_registry import _active_tasks as registry
 from handlers import base_handlers
 from handlers import enricher_handlers as handlers_enricher
 from handlers import generation_handlers as handlers_generation
@@ -24,8 +26,13 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def clean_generation_registry():
-    """Пустой реестр активных задач генерации до и после теста."""
+def clean_generation_registry(fake_redis, monkeypatch):
+    """Пустой реестр активных задач генерации до и после теста.
+
+    task_registry теперь тоже ходит в Redis — подменяем его клиент
+    на тот же fakeredis, что и в auth_registry.
+    """
+    monkeypatch.setattr(task_registry, "redis_client", fake_redis)
     registry.clear()
     yield
     registry.clear()
@@ -191,14 +198,15 @@ async def test_handle_idea_rejects_untouched_template(patched_auth_db, clean_aut
 async def test_handle_title_runs_generation_to_completion(
     patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state, monkeypatch
 ):
-    """Успешная генерация от названия до отправки аудио.
+    """Успешная генерация от названия до отправки аудио и перехода в оценку.
 
     Замоканный сервис вызывает on_progress — сообщение статуса
     редактируется с процентами; аудио уходит с санитизированным именем
-    файла (пробелы → подчёркивания), FSM очищается, задача снимается
-    с реестра active_tasks.
+    файла (пробелы → подчёркивания), FSM переходит в waiting_evaluation,
+    задача снимается с реестра active_tasks.
     """
     await _make_authorized_user(patched_auth_db, 55)
+    monkeypatch.setattr(pipeline, "SessionLocal", patched_auth_db)
 
     async def fake_generate(prompt, on_progress=None):
         if on_progress is not None:
@@ -215,11 +223,11 @@ async def test_handle_title_runs_generation_to_completion(
 
     # Прогресс-бар отредактировал сообщение статуса
     assert any("50%" in edit for edit in msg.sent[0].edits)
-    # Аудио отправлено, состояние сброшено, задача снята с реестра
+    # Аудио отправлено, FSM перешёл в ожидание оценки, задача снята с реестра
     assert len(msg.audios) == 1
     # Пробелы в имени файла санитизируются в подчёркивания
     assert msg.audios[0].filename == "Моя_песня.mp3"
-    assert state.cleared
+    assert state.state is FeedbackStates.waiting_evaluation
     assert 55 not in registry
 
 
@@ -349,12 +357,14 @@ async def test_mock_mode_generates_audio(
     При MOCK_MODE=True реальный сервис не вызывается (защищаемся
     AssertionError), вместо этого крутится демо-прогресс с текстом
     «демо-режим» и отправляется аудио из load_mock_audio.
+    FSM переходит в ожидание оценки.
     PROGRESS_EDIT_INTERVAL уменьшен, иначе тест спал бы ~9 секунд.
     """
     monkeypatch.setattr(settings.generation, "MOCK_MODE", True)
     # Ускоряем демо-прогресс, иначе тест спит ~9 секунд
     monkeypatch.setattr(service_pipeline, "PROGRESS_EDIT_INTERVAL", 0.01)
     monkeypatch.setattr(service_pipeline, "load_mock_audio", lambda: b"mock-audio")
+    monkeypatch.setattr(pipeline, "SessionLocal", patched_auth_db)
 
     async def unexpected_generate(prompt, on_progress=None):
         raise AssertionError("в mock-режиме generate_song_real не вызывается")
@@ -370,7 +380,7 @@ async def test_mock_mode_generates_audio(
 
     assert any("демо-режим" in edit for edit in msg.sent[0].edits)
     assert msg.audios[0].filename == "Демо.mp3"
-    assert state.cleared
+    assert state.state is FeedbackStates.waiting_evaluation
 
 
 async def test_cancelled_generation_deletes_status_and_unsets_flag(
@@ -547,9 +557,10 @@ async def test_retry_generation_runs_generation(
     Покрывает «счастливый путь» retry_generation: старое сообщение с
     кнопкой удаляется, callback.answer() закрывается без текста,
     генерация запускается с сохранёнными prompt/title и завершается
-    отправкой аудио; FSM очищается.
+    отправкой аудио; FSM переходит в ожидание оценки.
     """
     await _make_authorized_user(patched_auth_db, 68)
+    monkeypatch.setattr(pipeline, "SessionLocal", patched_auth_db)
 
     async def fake_generate(prompt, on_progress=None):
         return b"retry-audio"
@@ -567,4 +578,4 @@ async def test_retry_generation_runs_generation(
     assert callback.answered[-1] == (None, False)  # callback.answer()
     assert len(msg.audios) == 1
     assert msg.audios[0].filename == "Ретрай.mp3"
-    assert state.cleared
+    assert state.state is FeedbackStates.waiting_evaluation

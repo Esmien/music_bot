@@ -5,8 +5,10 @@
 ## Возможности
 
 - 🎵 Генерация песни по готовому тексту или брифу: жанр, настроение, инструменты, темп, голос
-- ✨ Обогащение промпта через LLM: идея превращается в детальный бриф с аппрувом и правками перед генерацией
-- ⭐ Оценка и фидбек по готовой песне (сохраняются в БД)
+- ✨ Обогащение промпта через LLM: идея превращается в детальный бриф с аппрувом, правками и продолжением без обогащения при сбое
+- 🔁 Повтор генерации после сбоя и название по умолчанию «Оставить как есть»
+- 👋 Персональное приветствие «С возвращением» с названием последней генерации
+- ⭐ Оценка и фидбек по готовой песне: inline-кнопки, выбор действия, текстовый отзыв или завершение без отзыва (сохраняются в БД)
 - 🔐 Вход по ключу доступа: защита от перебора, сообщение с ключом автоматически удаляется из чата
 - 💳 Остаток генераций по данным API OpenRouter
 - 🧪 Демо-режим (`MOCK_MODE=1`) — весь сценарий без обращения к внешнему API
@@ -46,8 +48,10 @@ src/
 │   ├── credits_handlers.py     # /credits: остаток генераций
 │   ├── filters.py              # кастомные фильтры (IsPendingAuth, NotCommand)
 │   ├── enricher_handlers.py    # FSM-диалог обогащения промпта
-│   ├── generation_handlers.py  # точка входа генерации, приём названия
-│   └── generation_pipeline.py  # конвейер генерации: прогресс, отмена, сбои, отправка аудио
+│   ├── evaluation_handlers.py  # FSM-обработка inline-оценки после генерации
+│   ├── feedback_handlers.py    # FSM-сбор текстового фидбека после генерации
+│   ├── generation_handlers.py  # точка входа генерации, приём названия, повтор после сбоя
+│   └── generation_pipeline.py  # конвейер генерации: прогресс, отмена, сбои, отправка аудио, сохранение названия
 ├── fsm/
 │   ├── enricher_fsm.py         # состояния сценария обогащения промпта
 │   ├── evaluation_fsm.py       # состояния оценки/фидбека
@@ -57,11 +61,14 @@ src/
 ├── keyboards/
 │   ├── default_keyboards.py     # reply-клавиатуры
 │   ├── enricher_keyboards.py    # inline-клавиатуры обогащения промпта
-│   └── evaluation_keyboards.py  # inline-клавиатуры оценки и фидбека
+│   ├── evaluation_keyboards.py  # inline-клавиатура оценки после генерации
+│   └── feedback_keyboards.py    # inline-клавиатуры сценария фидбека
 ├── services/
-│   ├── enricher.py     # обогащение промпта через LLM, сохранение пары «исходный → обогащённый»
-│   ├── generation.py   # запрос к OpenRouter (SSE) и мок-режим
-│   └── pipeline.py     # оркестрация: пер-пользовательский лок, прогресс-бар, троттлинг
+│   ├── enricher.py           # обогащение промпта через LLM, сохранение пары «исходный → обогащённый»
+│   ├── enricher_validator.py # разбор и валидация JSON-контракта обогащения
+│   ├── feedback.py           # сохранение оценки/отзыва в последнюю запись генерации
+│   ├── generation.py         # запрос к OpenRouter (SSE) и мок-режим
+│   └── pipeline.py           # оркестрация: пер-пользовательский лок, прогресс-бар, троттлинг
 migrations/             # миграции Alembic
 tests/                  # юнит- и интеграционные тесты
 pyproject.toml · poetry.lock · infra/Dockerfile · infra/docker-compose.yml · infra/entrypoint.sh · .github/workflows (CI/CD)
@@ -71,24 +78,26 @@ pyproject.toml · poetry.lock · infra/Dockerfile · infra/docker-compose.yml ·
 
 Скопируйте `.env.example` в `.env` и заполните:
 
-| Переменная | Обязательна | По умолчанию | Описание |
-|---|---|---|---|
-| `BOT_TOKEN` | ✅ | — | Токен бота от @BotFather |
-| `OPENROUTER_API_KEY` | ✅ | — | Ключ API OpenRouter |
-| `BOT_ACCESS_KEY` | ✅ | — | Ключ, который пользователь присылает боту для входа |
-| `SONG_PRICE` | ✅ | — | Стоимость одной генерации, $ — для расчёта остатка песен |
-| `COMPOSE_FILE` / `COMPOSE_PROJECT_NAME` | — | — | Путь к docker-compose.yml и имя проекта для compose |
+| Переменная                                            | Обязательна | По умолчанию | Описание |
+|-------------------------------------------------------|---|---|---|
+| `BOT_TOKEN`                                           | ✅ | — | Токен бота от @BotFather |
+| `OPENROUTER_API_KEY`                                  | ✅ | — | Ключ API OpenRouter |
+| `BOT_ACCESS_KEY`                                      | ✅ | — | Ключ, который пользователь присылает боту для входа |
+| `SONG_PRICE`                                          | ✅ | — | Стоимость одной генерации, $ — для расчёта остатка песен |
+| `COMPOSE_FILE` / `COMPOSE_PROJECT_NAME`               | — | — | Путь к docker-compose.yml и имя проекта для compose |
+| `DEV_MODE`                                            | — | `False` | Режим разработки: переключает хосты Redis/PostgreSQL на `localhost`; для доступа к контейнерным БД снаружи нужно раскомментировать секции `ports` в `infra/docker-compose.yml` |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | ✅ | — | Пользователь, пароль и имя БД PostgreSQL |
-| `POSTGRES_HOST` / `POSTGRES_PORT` | ✅ | — | Хост и порт PostgreSQL (в Docker-сети — `postgres:5432`) |
-| `MODEL_ID` | — | `google/lyria-3-pro-preview` | Модель OpenRouter |
-| `BOT_OWNER_ID` | — | `0` | Telegram ID владельца: ему уходят отчёты об ошибках |
-| `REDIS_HOST` / `REDIS_PORT` | — | `redis` / `6379` | Хост и порт Redis; в Docker-сети — `redis:6379` |
-| `REDIS_URL` | — | `redis://localhost:6379/0` | Строка подключения к Redis (FSM-состояния); в Docker собирается из `REDIS_HOST`/`REDIS_PORT` |
-| `MOCK_MODE` | — | `0` | `1` — демо-режим без вызова API |
-| `MOCK_FILE` | — | — | JSON-мок с аудио в base64 для демо-режима |
-| `ENRICH_URL` | — | — | URL чат-комплишн эндпоинта обогатителя (Open WebUI, OpenAI-совместимый API); пустое значение отключает обогащение |
-| `ENRICH_TOKEN` | — | — | Токен доступа к обогатителю |
-| `ENRICH_MODEL` | — | — | Модель обогатителя в терминах Open WebUI |
+| `POSTGRES_HOST` / `POSTGRES_PORT`                     | ✅ | — | Хост и порт PostgreSQL (в Docker-сети — `postgres:5432`) |
+| `MODEL_ID`                                            | — | `google/lyria-3-pro-preview` | Модель OpenRouter |
+| `BOT_OWNER_ID`                                        | — | `0` | Telegram ID владельца: ему уходят отчёты об ошибках |
+| `REDIS_HOST` / `REDIS_PORT` / `REDIS_VAULT`           | — | `redis` / `6379` / `0` | Хост, порт и номер БД Redis для FSM-хранилища; в Docker-сети — `redis:6379` |
+| `REDIS_URL`                                           | — | `redis://localhost:6379/0` | Строка подключения к Redis (FSM-состояния); в `docker-compose.yml` для контейнера бота задаётся автоматически из `REDIS_HOST`/`REDIS_PORT` |
+| `MOCK_MODE`                                           | — | `0` | `1` — демо-режим без вызова API |
+| `MOCK_FILE`                                           | — | — | JSON-мок с аудио в base64 для демо-режима |
+| `TYPICAL_GENERATION_SECONDS`                          | — | `30.0` | Ожидаемое время генерации в секундах — для расчёта прогресс-бара |
+| `ENRICH_URL`                                          | — | — | URL чат-комплишн эндпоинта обогатителя (Open WebUI, OpenAI-совместимый API); пустое значение отключает обогащение |
+| `ENRICH_TOKEN`                                        | — | — | Токен доступа к обогатителю |
+| `ENRICH_MODEL`                                        | — | — | Модель обогатителя в терминах Open WebUI |
 
 ## Развёртывание в Docker
 
@@ -110,13 +119,20 @@ docker compose up -d --build
 docker compose logs -f
 ~~~
 
-В логах должна появиться строка `Starting bot`. Схема БД применяется миграциями Alembic при запуске. Остановка: `docker compose down`. Данные PostgreSQL и Redis хранятся в именованных томах и переживают пересоздание контейнеров.
+В логах должна появиться строка `Starting bot`. Entrypoint контейнера перед запуском бота применяет миграции (`alembic upgrade head`) и переключается на непривилегированного пользователя `botuser`. Остановка: `docker compose down`. Данные PostgreSQL и Redis хранятся в именованных томах и переживают пересоздание контейнеров.
 
 ## CI/CD
 
-GitHub Actions: `.github/workflows/ci.yml` — Ruff и Pytest на каждый push/PR; `.github/workflows/deploy.yml` — после зелёного CI в `main` деплой на VPS по SSH (`git pull` + `docker compose up -d --build`). Требуются секреты репозитория: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_PROJECT_DIR`.
+GitHub Actions:
+
+- `.github/workflows/ci.yml` — на push/PR в `main`, `master` и `dev`: Ruff (проверка кода и формата), применение миграций Alembic к чистому сервисному PostgreSQL 17, прогон Pytest.
+- `.github/workflows/deploy.yml` — после успешного CI в `main`/`master` деплой на VPS по SSH: `git reset --hard` + `git pull origin master`, `docker compose up -d --build`, очистка старых образов и проверка, что миграции дошли до `head` (`alembic current`).
+
+Требуются секреты репозитория: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_PROJECT_DIR`.
 
 ## Локальный запуск (без Docker)
+
+Нужны доступные PostgreSQL и Redis (или поднимите только их: `docker compose up -d postgres redis` и укажите `DEV_MODE=True` с раскомментированными `ports` в compose).
 
 ~~~bash
 poetry install
@@ -129,10 +145,12 @@ poetry run python src/bot.py
 poetry run pytest
 ~~~
 
+Тесты разделены маркерами: `unit` — быстрые изолированные (внешние API мокаются), `integration` — с реальной in-memory SQLite и fakeredis. Покрытие собирается `pytest-cov` по умолчанию.
+
 ## Как пользоваться
 
 1. `/start` → отправьте боту ключ доступа.
 2. Нажмите «🎵 Сгенерировать», пришлите текст или идею.
-3. Подтвердите обогащённый промпт или внесите правки.
-4. Введите название — получите готовый MP3.
-5. Оцените результат и оставьте фидбек.
+3. Подтвердите обогащённый промпт, внесите правки или продолжите без обогащения после сбоя.
+4. Введите название или нажмите «Оставить как есть» — получите готовый MP3.
+5. Поставьте оценку кнопками, затем отправьте отзыв или завершите без отзыва.

@@ -17,6 +17,7 @@ CB_PROMPT_EDIT = f"{PROMPT_CB_PREFIX}edit"
 CB_PROMPT_CANCEL = f"{PROMPT_CB_PREFIX}cancel"
 CB_PROMPT_RETRY = f"{PROMPT_CB_PREFIX}retry"
 CB_PROMPT_FALLBACK = f"{PROMPT_CB_PREFIX}fallback"
+CB_TITLE_LEAVE_AS_IS = f"{PROMPT_CB_PREFIX}title_leave"
 
 
 def get_prompt_approval_keyboard() -> InlineKeyboardMarkup:
@@ -43,5 +44,19 @@ def get_enrich_failed_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=UIConfig.PROMPT_RETRY_BUTTON, callback_data=CB_PROMPT_RETRY)
     builder.button(text=UIConfig.PROMPT_FALLBACK_BUTTON, callback_data=CB_PROMPT_FALLBACK)
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def get_title_keyboard() -> InlineKeyboardMarkup:
+    """Собирает клавиатуру выбора названия песни.
+
+    Returns:
+        Инлайн-клавиатура с кнопками «Оставить как есть» и отмены.
+    """
+    builder = InlineKeyboardBuilder()
+    # DEVIATION: текст кнопки вне UIConfig, чтобы не менять config.py в рамках задачи.
+    builder.button(text="Оставить как есть", callback_data=CB_TITLE_LEAVE_AS_IS)
+    builder.button(text=UIConfig.PROMPT_CANCEL_BUTTON, callback_data=CB_PROMPT_CANCEL)
     builder.adjust(2)
     return builder.as_markup()
