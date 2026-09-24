@@ -34,6 +34,8 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       BOT_ACCESS_KEY: ${{ secrets.BOT_ACCESS_KEY }}
       SONG_PRICE: ${{ secrets.SONG_PRICE }}
+      REDIS_HOST: ${{ secrets.REDIS_HOST }}
+      REDIS_PORT: ${{ secrets.SONG_PORT }}
       POSTGRES_USER: ci_user
       POSTGRES_PASSWORD: ci_password
       POSTGRES_HOST: 127.0.0.1
