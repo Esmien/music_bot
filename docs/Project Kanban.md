@@ -10,21 +10,14 @@ kanban-plugin: board
 
 ## In progress
 
-- [ ] [[add_evaluation_handlers]]
-- [ ] [[add_feedback_handlers]]
-- [ ] [[add_feedback_service]]
 
 
 ## Testing
 
-- [ ] [[upgrade_ui]]
-- [ ] [[upgrade_ux]]
 
 
 ## Done
 
-- [ ] [[add_enriched_prompt_validator]]
-- [ ] [[combine_registries]]
 
 
 ## Deploy
@@ -37,6 +30,13 @@ kanban-plugin: board
 - [x] [[add_group_FSM_for_handling_enriched_prompt]]
 - [x] [[add_connection_to_enricher]]
 - [x] [[add_handlers_for_enricher]]
+- [x] [[add_enriched_prompt_validator]]
+- [x] [[combine_registries]]
+- [x] [[upgrade_ui]]
+- [x] [[upgrade_ux]]
+- [x] [[add_feedback_service]]
+- [x] [[add_evaluation_handlers]]
+- [x] [[add_feedback_handlers]]
 
 
 
