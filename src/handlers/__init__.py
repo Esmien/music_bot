@@ -6,7 +6,15 @@
 
 from aiogram import Router
 
-from handlers import auth, base_handlers, credits_handlers, enricher_handlers, generation_handlers
+from handlers import (
+    auth,
+    base_handlers,
+    credits_handlers,
+    enricher_handlers,
+    evaluation_handlers,
+    feedback_handlers,
+    generation_handlers,
+)
 
 router = Router()
 # Порядок важен: aiogram проверяет хендлеры по очереди.
@@ -15,5 +23,7 @@ router = Router()
 router.include_router(base_handlers.router)
 router.include_router(generation_handlers.router)
 router.include_router(enricher_handlers.router)
+router.include_router(evaluation_handlers.router)
+router.include_router(feedback_handlers.router)
 router.include_router(credits_handlers.router)
 router.include_router(auth.router)

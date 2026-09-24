@@ -13,10 +13,17 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from core.config import UIConfig, settings
 from core.database import SessionLocal, User
+from core.database.models import GenerationFeedback
 from core.utils.error_notify import notify_owner
 from core.utils.exceptions import AccessKeyNotSet
-from fsm.registries.auth_registry import add_pending_auth, discard_pending_auth, is_pending_auth
-from fsm.registries.task_registry import active_tasks
+from fsm.registries.auth_registry import (
+    add_pending_auth,
+    discard_pending_auth,
+    is_pending_auth,
+    register_failed_key_attempt,
+    reset_failed_key_attempts,
+)
+from fsm.registries.task_registry import get_active_task
 from handlers.filters import IsPendingAuth, NotCommand
 from keyboards.default_keyboards import get_main_keyboard
 
@@ -25,9 +32,8 @@ log = logging.getLogger(__name__)
 router = Router()
 
 # Защита от перебора ключа доступа: счётчик неудачных попыток на пользователя.
-# Как и pending_auth, живёт в памяти и сбрасывается при перезапуске
+# Как и pending_auth, живёт в Redis и переживает перезапуск (см. auth_registry)
 MAX_KEY_ATTEMPTS = 5
-failed_key_attempts: dict[int, int] = {}
 
 
 async def is_authorized(uid: int) -> bool:
@@ -43,6 +49,25 @@ async def is_authorized(uid: int) -> bool:
         db_user = await session.get(User, uid)
 
         return bool(db_user and db_user.is_authorized)
+
+
+async def _get_last_generated_title(uid: int) -> str | None:
+    """Возвращает название последней сгенерированной песни пользователя.
+
+    Args:
+        uid: Telegram user_id.
+
+    Returns:
+        Название последней генерации или None, если её нет.
+    """
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(GenerationFeedback.title)
+            .where(GenerationFeedback.user_id == uid, GenerationFeedback.title.isnot(None))
+            .order_by(GenerationFeedback.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
 
 async def _require_auth(message: Message) -> bool:
@@ -83,14 +108,13 @@ async def _check_key_with_attempts(key: str, expected: str, uid: int) -> str | N
     """
     # Позиционно: compare_digest — C-функция, именованные аргументы не принимает
     if secrets.compare_digest(key.encode("utf-8"), expected.encode("utf-8")):
-        failed_key_attempts.pop(uid, None)
+        await reset_failed_key_attempts(uid=uid)
         return None
 
-    attempts = failed_key_attempts.get(uid, 0) + 1
-    failed_key_attempts[uid] = attempts
+    attempts = await register_failed_key_attempt(uid=uid)
     if attempts >= MAX_KEY_ATTEMPTS:
         await discard_pending_auth(uid=uid)
-        failed_key_attempts.pop(uid, None)
+        await reset_failed_key_attempts(uid=uid)
         log.warning("Access key attempts exhausted (user=%s)", uid)
         return "❌ Слишком много неверных попыток. Отправьте /start, чтобы начать заново."
 
@@ -132,10 +156,11 @@ async def _mark_user_authorized(uid: int) -> None:
 async def cmd_start(message: Message, state: FSMContext):
     """/start: приветствие и проверка статуса авторизации.
 
-    Точка входа для нового пользователя. Авторизованным отправляет
-    приветствие с основной клавиатурой, неавторизованным — предложение
-    отправить ключ доступа, попутно добавляя их в pending_auth: дальше
-    ввод ключа перехватит handle_key через фильтр IsPendingAuth.
+    Точка входа. Авторизованным показывает персонализированное приветствие:
+    вернувшемуся (есть последняя генерация) — «С возвращением, {имя}» с
+    названием последнего трека, новому — обычное приветствие. Неавторизованным —
+    предложение отправить ключ доступа, попутно добавляя их в pending_auth:
+    дальше ввод ключа перехватит handle_key через фильтр IsPendingAuth.
 
     Args:
         message: Входящее сообщение с командой /start.
@@ -147,12 +172,24 @@ async def cmd_start(message: Message, state: FSMContext):
 
     # если у пользователя is_authorized=True - отправляем на стартовый экран
     if await is_authorized(uid):
-        await message.answer(
-            text="👋 Привет! Я бот для генерации песен.\nИспользуйте кнопки ниже для управления.",
-            reply_markup=get_main_keyboard(),
-        )
         # убираем из реестра ожидания ключа, не тратим память
         await discard_pending_auth(uid=uid)
+        last_title = await _get_last_generated_title(uid=uid)
+        if last_title:
+            tg_name = message.from_user.first_name or message.from_user.username or "друг"
+            await message.answer(
+                text=(
+                    f"👋 С возвращением, {tg_name}!\n"
+                    f"Последняя генерация: {last_title}\n"
+                    "Используйте кнопки ниже для управления."
+                ),
+                reply_markup=get_main_keyboard(),
+            )
+        else:
+            await message.answer(
+                text="👋 Привет! Я бот для генерации песен.\nИспользуйте кнопки ниже для управления.",
+                reply_markup=get_main_keyboard(),
+            )
     else:
         # пользователь не залогинен, добавляем в реестр "ожидает ключа"
         await add_pending_auth(uid=uid)
@@ -195,7 +232,7 @@ async def cmd_logout(message: Message, state: FSMContext):
 
     # Гасим живую генерацию, если она есть: иначе после logout пользователю
     # всё равно прилетит песня.
-    task = active_tasks.get(uid)
+    task = get_active_task(uid)
     if task and not task.done():
         task.cancel()
     # убираем из реестра ожидающих ключ

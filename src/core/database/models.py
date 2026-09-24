@@ -37,6 +37,7 @@ class GenerationFeedback(Base):
         user: Связанный объект User.
         initial_prompt: Промпт от пользователя.
         enriched_prompt: Обработанный ИИ промпт.
+        title: Название сгенерированной песни.
         is_liked: Понравилась ли пользователю сгенерированная песня.
         feedback: Опциональное короткое резюме пользователя о песне.
     """
@@ -46,6 +47,7 @@ class GenerationFeedback(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.tg_id"), index=True)
     initial_prompt: Mapped[str] = mapped_column(Text)
     enriched_prompt: Mapped[str] = mapped_column(Text)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_liked: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
 

@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
 from core.database import User
-from fsm.registries.auth_registry import add_pending_auth, is_pending_auth
+from fsm.registries import task_registry
+from fsm.registries.auth_registry import add_pending_auth, get_failed_key_attempts, is_pending_auth
 from handlers import auth as handlers_auth
 
 pytestmark = pytest.mark.integration
@@ -80,7 +81,7 @@ async def test_handle_key_counts_failed_attempts(patched_auth_db, clean_auth_sta
     for _ in range(attempt):
         await handlers_auth.handle_key(msg)
 
-    assert handlers_auth.failed_key_attempts[301] == attempt
+    assert await get_failed_key_attempts(uid=301) == attempt
     assert "Неверный ключ доступа." in msg.answers[-1]
     assert await handlers_auth.is_authorized(301) is False
 
@@ -97,7 +98,7 @@ async def test_handle_key_blocks_after_max_attempts(patched_auth_db, clean_auth_
 
     assert "Слишком много неверных попыток" in msg.answers[-1]
     # После блокировки счётчик и статус ожидания должны быть сброшены
-    assert 302 not in handlers_auth.failed_key_attempts
+    assert await get_failed_key_attempts(uid=302) == 0
     assert not await is_pending_auth(302)
     assert await handlers_auth.is_authorized(302) is False
 
@@ -342,7 +343,7 @@ async def test_cmd_logout_cancels_active_generation(patched_auth_db, make_messag
             self.cancel_calls += 1
 
     task = FakeTask()
-    monkeypatch.setattr(handlers_auth, "active_tasks", {23: task})
+    monkeypatch.setattr(task_registry, "_active_tasks", {23: task})
 
     msg = make_message(uid=23)
     state = fake_state()
@@ -375,7 +376,7 @@ async def test_cmd_logout_skips_cancel_for_finished_task(
             self.cancel_calls += 1
 
     task = FakeTask()
-    monkeypatch.setattr(handlers_auth, "active_tasks", {24: task})
+    monkeypatch.setattr(task_registry, "_active_tasks", {24: task})
 
     msg = make_message(uid=24)
     await handlers_auth.cmd_logout(msg, fake_state())

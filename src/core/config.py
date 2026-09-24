@@ -4,10 +4,13 @@
 импортируют только этот файл, ничего не читая из окружения напрямую.
 """
 
+from pydantic import computed_field
+from pydantic_core import MultiHostUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class BaseModelConfig(BaseSettings):
+    DEV_MODE: bool = False
     # Подхватываем .env из корня проекта при локальном запуске;
     # в Docker переменные приходят через environment/docker-compose
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -46,6 +49,7 @@ class GenerationConfig(BaseModelConfig):
     SONG_PRICE: float
     MOCK_MODE: bool = False
     MOCK_FILE: str = ""
+    TYPICAL_GENERATION_SECONDS: float = 30.0
 
 
 class DatabaseConfig(BaseModelConfig):
@@ -62,14 +66,46 @@ class DatabaseConfig(BaseModelConfig):
     POSTGRES_DB: str
 
     @property
+    def postgres_host(self) -> str:
+        return "localhost" if self.DEV_MODE else self.POSTGRES_HOST
+
+    @computed_field
+    @property
     def database_url(self) -> str:
-        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        url = MultiHostUrl.build(
+            scheme="postgresql+asyncpg",
+            username=self.POSTGRES_USER,
+            password=self.POSTGRES_PASSWORD,
+            host=self.postgres_host,
+            port=self.POSTGRES_PORT,
+            path=self.POSTGRES_DB,
+        )
+        return str(url)
 
 
 class RedisConfig(BaseModelConfig):
     """Redis: хранение FSM-состояний (переживают рестарт контейнера)."""
 
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_HOST: str
+    REDIS_PORT: int
+    REDIS_VAULT: str = "0"
+
+    @property
+    def redis_host(self) -> str:
+        return "localhost" if self.DEV_MODE else self.REDIS_HOST
+
+    @computed_field
+    @property
+    def redis_url(self) -> str:
+        url = MultiHostUrl.build(
+            scheme="redis",
+            username=None,
+            password=None,
+            host=self.redis_host,
+            port=self.REDIS_PORT,
+            path=f"/{self.REDIS_VAULT}" if not self.REDIS_VAULT.startswith("/") else self.REDIS_VAULT,
+        )
+        return str(url)
 
 
 class UIConfig:
@@ -90,10 +126,16 @@ class UIConfig:
         PROMPT_CANCEL_BUTTON: Кнопка отмены сценария обогащения.
         PROMPT_RETRY_BUTTON: Кнопка повтора обогащения после сбоя.
         PROMPT_FALLBACK_BUTTON: Кнопка продолжения сценария без обогащения.
+        DEFAULT_TITLE: Название песни по умолчанию.
         EVALUATION_LIKE_BUTTON: Кнопка «нравится» при оценке генерации.
         EVALUATION_DISLIKE_BUTTON: Кнопка «не нравится» при оценке генерации.
         FEEDBACK_SEND_BUTTON: Кнопка отправки фидбека.
         FEEDBACK_FINISH_BUTTON: Кнопка завершения сценария фидбека.
+        FEEDBACK_CHOICE_TEXT: Текст просьбы выбрать действие после оценки.
+        EVALUATION_PROMPT_TEXT: Текст просьбы оценить сгенерированную композицию.
+        FEEDBACK_PROMPT_TEXT: Текст просьбы написать отзыв.
+        FEEDBACK_RECEIVED_TEXT: Текст подтверждения приёма отзыва в FSM.
+        FEEDBACK_THANKS_TEXT: Текст благодарности после сохранения оценки/отзыва.
     """
 
     GENERATE_BUTTON = "🎵 Сгенерировать"
@@ -106,13 +148,20 @@ class UIConfig:
     PROMPT_CANCEL_BUTTON = "❌ Отменить"
     PROMPT_RETRY_BUTTON = "🔄 Попробовать снова"
     PROMPT_FALLBACK_BUTTON = "⏭ Без обогащения"
+    DEFAULT_TITLE = "Lyria's_Generated_song"
     EVALUATION_LIKE_BUTTON = "👍"
     EVALUATION_DISLIKE_BUTTON = "👎"
     FEEDBACK_SEND_BUTTON = "📝 Отправить фидбек"
-    FEEDBACK_FINISH_BUTTON = "✅ Завершить"
+    FEEDBACK_FINISH_BUTTON = "✅ Завершить без отзыва"
+    FEEDBACK_CHOICE_TEXT = "👇 Выберите действие кнопками ниже."
+    EVALUATION_PROMPT_TEXT = "🎧 Оцените сгенерированную композицию"
+    FEEDBACK_PROMPT_TEXT = "✍️ Напишите, что понравилось или нет"
+    FEEDBACK_RECEIVED_TEXT = "💬 Отзыв принят. Нажмите «✅ Завершить без отзыва», чтобы сохранить."
+    FEEDBACK_THANKS_TEXT = "✅ Спасибо, ваша оценка принята!"
 
 
 class Settings(BaseModelConfig):
+    MIN_FEEDBACK_TEXT: int = 20
     bot: BotConfig = BotConfig()
     generation: GenerationConfig = GenerationConfig()
     db: DatabaseConfig = DatabaseConfig()

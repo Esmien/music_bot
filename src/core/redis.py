@@ -10,4 +10,4 @@ from redis.asyncio import Redis
 from core.config import settings
 
 # decode_responses: работаем со строками, а не с bytes
-redis_client: Redis = Redis.from_url(settings.redis.REDIS_URL, decode_responses=True)
+redis_client: Redis = Redis.from_url(settings.redis.redis_url, decode_responses=True)
