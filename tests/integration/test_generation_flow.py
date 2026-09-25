@@ -12,8 +12,8 @@ import pytest
 
 from core.config import settings
 from core.database import User
+from domains.evaluation.fsm import FeedbackStates
 from fsm.enricher_fsm import PromptEnricherStates
-from fsm.evaluation_fsm import FeedbackStates
 from fsm.registries import task_registry
 from fsm.registries.task_registry import _active_tasks as registry
 from handlers import base_handlers
@@ -221,11 +221,8 @@ async def test_handle_title_runs_generation_to_completion(
 
     await handlers_generation.handle_title(msg, state)
 
-    # Прогресс-бар отредактировал сообщение статуса
     assert any("50%" in edit for edit in msg.sent[0].edits)
-    # Аудио отправлено, FSM перешёл в ожидание оценки, задача снята с реестра
     assert len(msg.audios) == 1
-    # Пробелы в имени файла санитизируются в подчёркивания
     assert msg.audios[0].filename == "Моя_песня.mp3"
     assert state.state is FeedbackStates.waiting_evaluation
     assert 55 not in registry
@@ -254,7 +251,6 @@ async def test_generate_failure_leaves_retry_button(
     await handlers_generation.handle_title(msg, state)
 
     assert "Не получилось сгенерировать" in msg.sent[-1].text
-    # prompt и title остались в FSM для повтора, флаг generating снят
     data = await state.get_data()
     assert data["prompt"] == "промпт"
     assert data["title"] == "Название"
@@ -291,7 +287,6 @@ async def test_retry_generation_requires_auth(
     получает alert с предложением авторизоваться заново, FSM очищается,
     генерация не запускается.
     """
-    # Пользователя 58 в БД нет — доступ отозван/никогда не выдавался
     state = fake_state()
     await state.update_data(prompt="промпт", title="название")
     msg = make_message(uid=58)
@@ -313,7 +308,7 @@ async def test_retry_generation_without_prompt_suggests_restart(
     пользователь получает alert «Начните заново», состояние очищается.
     """
     await _make_authorized_user(patched_auth_db, 59)
-    state = fake_state()  # промпт потерялся (перезапуск бота)
+    state = fake_state()
     callback = make_callback(59, make_message(uid=59))
 
     await handlers_generation.retry_generation(callback, state)
@@ -352,16 +347,13 @@ async def test_generate_and_send_blocked_inside_lock(
 async def test_mock_mode_generates_audio(
     patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state, monkeypatch
 ):
-    """Ветка MOCK_MODE (строка 113): демо-прогресс, аудио из load_mock_audio.
+    """Ветка MOCK_MODE: демо-прогресс, аудио из load_mock_audio.
 
-    При MOCK_MODE=True реальный сервис не вызывается (защищаемся
-    AssertionError), вместо этого крутится демо-прогресс с текстом
-    «демо-режим» и отправляется аудио из load_mock_audio.
+    При MOCK_MODE=True реальный сервис не вызывается, вместо этого
+    крутится демо-прогресс и отправляется аудио из load_mock_audio.
     FSM переходит в ожидание оценки.
-    PROGRESS_EDIT_INTERVAL уменьшен, иначе тест спал бы ~9 секунд.
     """
     monkeypatch.setattr(settings.generation, "MOCK_MODE", True)
-    # Ускоряем демо-прогресс, иначе тест спит ~9 секунд
     monkeypatch.setattr(service_pipeline, "PROGRESS_EDIT_INTERVAL", 0.01)
     monkeypatch.setattr(service_pipeline, "load_mock_audio", lambda: b"mock-audio")
     monkeypatch.setattr(pipeline, "SessionLocal", patched_auth_db)
@@ -386,13 +378,10 @@ async def test_mock_mode_generates_audio(
 async def test_cancelled_generation_deletes_status_and_unsets_flag(
     patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state, monkeypatch
 ):
-    """Честная отмена генерации (строки 121–126).
+    """Отмена генерации удаляет сообщение прогресса и снимает флаг generating.
 
-    Покрывает обработчик CancelledError в generate_and_send: сообщение
-    прогресса удаляется, флаг generating снимается (gen_id совпадает —
-    отмена пришла раньше нового состояния), CancelledError пробрасывается
-    дальше, задача снимается с реестра. Задача запускается явно через
-    create_task, чтобы отменить её извне, как это делает base_handlers.cmd_cancel.
+    Задача запускается явно через create_task, чтобы отменить её извне,
+    как это делает base_handlers.cmd_cancel.
     """
     await _make_authorized_user(patched_auth_db, 62)
 
@@ -406,17 +395,16 @@ async def test_cancelled_generation_deletes_status_and_unsets_flag(
     msg = make_message(text="Отмена", uid=62)
 
     task = asyncio.create_task(handlers_generation.handle_title(msg, state))
-    # Ждём, пока задача зарегистрируется в реестре и начнёт генерацию
     for _ in range(100):
         if 62 in registry and not registry[62].done():
             break
         await asyncio.sleep(0.01)
 
-    registry[62].cancel()  # то же, что делает cmd_cancel_generation
+    registry[62].cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert msg.sent[0].deleted  # сообщение прогресса удалено
+    assert msg.sent[0].deleted
     data = await state.get_data()
     assert data["generating"] is False
     assert 62 not in registry
@@ -425,11 +413,10 @@ async def test_cancelled_generation_deletes_status_and_unsets_flag(
 async def test_generation_failure_notifies_owner(
     patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state, monkeypatch
 ):
-    """Сбой генерации уведомляет владельца (строки 134–140).
+    """Сбой генерации уведомляет владельца.
 
     При исключении в сервисе notify_owner вызывается один раз с
-    контекстом, содержащим user_id, и самим исключением; после чего
-    пользователю остаётся кнопка ретрая.
+    контекстом, содержащим user_id, и самим исключением.
     """
     await _make_authorized_user(patched_auth_db, 63)
 
@@ -459,10 +446,10 @@ async def test_generation_failure_notifies_owner(
 async def test_handle_title_rejects_empty_title(
     patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state
 ):
-    """Название из одних пробелов отклоняется (строка 287–288).
+    """Название из одних пробелов отклоняется.
 
     Пустое (после strip) название не сохраняется в FSM, состояние
-    остаётся waiting_for_title, генерация не запускается.
+    остаётся прежним, генерация не запускается.
     """
     state = fake_state()
     await state.update_data(prompt="промпт")
@@ -477,7 +464,7 @@ async def test_handle_title_rejects_empty_title(
 async def test_handle_title_rejects_too_long_title(
     patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state
 ):
-    """Слишком длинное название отклоняется (строка 287–288).
+    """Слишком длинное название отклоняется.
 
     Название длиннее MAX_TITLE_LEN отвергается с указанием лимита;
     FSM-состояние не меняется.
@@ -495,7 +482,7 @@ async def test_handle_title_rejects_too_long_title(
 async def test_handle_title_blocked_while_generating(
     patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state
 ):
-    """handle_title не запускает генерацию при активной (строки 324–325).
+    """handle_title не запускает генерацию при активной генерации.
 
     Внешняя проверка флага generating: пользователь получает просьбу
     подождать, title в FSM не сохраняется.
@@ -507,20 +494,18 @@ async def test_handle_title_blocked_while_generating(
     await handlers_generation.handle_title(msg, state)
 
     assert "Дождитесь окончания" in msg.answers[-1]
-    # title не сохранился и генерация не запускалась
     assert "title" not in (await state.get_data())
 
 
 async def test_handle_title_missing_prompt_suggests_restart(
     patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state
 ):
-    """Генерация без сохранённого промпта не запускается (строки 179–184).
+    """Генерация без сохранённого промпта не запускается.
 
-    Если промпт потерялся из FSM (перезапуск бота, гонка кнопок, чистка),
-    пользователь получает предложение начать заново, FSM очищается,
-    генерация не запускается.
+    Если промпт потерялся из FSM, пользователь получает предложение
+    начать заново, FSM очищается, генерация не запускается.
     """
-    state = fake_state()  # промпта нет
+    state = fake_state()
     msg = make_message(text="Название", uid=73)
 
     await handlers_generation.handle_title(msg, state)
@@ -533,7 +518,7 @@ async def test_handle_title_missing_prompt_suggests_restart(
 async def test_retry_generation_blocked_while_generating(
     patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state, make_callback
 ):
-    """Ретрай заблокирован во время идущей генерации (строки 327–328).
+    """Ретрай заблокирован во время идущей генерации.
 
     Устаревшая кнопка повтора при активной генерации отвечает alert
     «Генерация уже идёт.» и не запускает вторую генерацию.
@@ -552,12 +537,11 @@ async def test_retry_generation_blocked_while_generating(
 async def test_retry_generation_runs_generation(
     patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state, make_callback, monkeypatch
 ):
-    """Успешный ретрай после сбоя (строки 364–365, 377–381).
+    """Успешный ретрай после сбоя.
 
-    Покрывает «счастливый путь» retry_generation: старое сообщение с
-    кнопкой удаляется, callback.answer() закрывается без текста,
-    генерация запускается с сохранёнными prompt/title и завершается
-    отправкой аудио; FSM переходит в ожидание оценки.
+    Покрывает retry_generation: старое сообщение с кнопкой удаляется,
+    callback.answer() закрывается без текста, генерация запускается с
+    сохранёнными prompt/title и завершается отправкой аудио.
     """
     await _make_authorized_user(patched_auth_db, 68)
     monkeypatch.setattr(pipeline, "SessionLocal", patched_auth_db)
@@ -574,8 +558,8 @@ async def test_retry_generation_runs_generation(
 
     await handlers_generation.retry_generation(callback, state)
 
-    assert msg.deleted  # старое сообщение с кнопкой удалено
-    assert callback.answered[-1] == (None, False)  # callback.answer()
+    assert msg.deleted
+    assert callback.answered[-1] == (None, False)
     assert len(msg.audios) == 1
     assert msg.audios[0].filename == "Ретрай.mp3"
     assert state.state is FeedbackStates.waiting_evaluation

@@ -20,6 +20,8 @@ from core.config import UIConfig
 from core.database import SessionLocal
 from core.database.models import GenerationFeedback
 from core.utils.error_notify import notify_owner
+from domains.evaluation.fsm import FeedbackStates
+from domains.evaluation.keyboards import get_evaluation_keyboard
 from domains.generation.keyboards import get_retry_keyboard
 from domains.generation.registries.task_registry import register_active_task, unregister_active_task
 from domains.generation.service import (
@@ -28,8 +30,6 @@ from domains.generation.service import (
     run_generation,
     user_generation_lock,
 )
-from fsm.evaluation_fsm import FeedbackStates
-from keyboards.evaluation_keyboards import get_evaluation_keyboard
 
 log = logging.getLogger(__name__)
 
@@ -91,14 +91,10 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
         title: Название трека (используется в имени файла).
         user_id: Telegram user_id пользователя.
     """
-    # current_task() возвращает Optional[Task]; в корутине он фактически не None,
-    # но type-checker требует явной проверки. Явный raise вместо assert:
-    # под python -O assert вырезается, а это боевой инвариант
     task = asyncio.current_task()
     if task is None:
         raise RuntimeError("generate_and_send must run inside an asyncio Task")
 
-    # Собираем весь контекст генерации в кучу
     gen_context = GenerationContext(
         message=message,
         state=state,
@@ -108,11 +104,9 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
         task=task,
     )
     try:
-        # Слот занят другой генерацией - не запускаем новую
         if not await _acquire_slot(gen_context=gen_context):
             return
 
-        # Запускаем визуальный процесс генерации для пользователя
         status = await _start_status(gen_context=gen_context)
         on_progress = _make_progress_reporter(status=status)
 
@@ -133,10 +127,7 @@ async def _acquire_slot(gen_context: GenerationContext) -> bool:
     """Атомарно занимает слот генерации пользователя.
 
     Под пер-пользовательским локом проверяет флаг generating и выставляет
-    его вместе с маркером gen_id; регистрирует задачу в active_tasks —
-    «активной» становится только та генерация, что прошла проверку, —
-    иначе cancel() погасил бы задачу, которая лишь ждёт лок, а не
-    реально генерирует.
+    его вместе с маркером gen_id; регистрирует задачу в active_tasks.
 
     Args:
         gen_context: Контекст запуска генерации.
@@ -145,18 +136,12 @@ async def _acquire_slot(gen_context: GenerationContext) -> bool:
         True, если слот занят и генерацию можно запускать.
     """
     async with user_generation_lock(user_id=gen_context.user_id):
-        # Проверка, занят ли слот. Если занят, не даем запустить новую
         if (await gen_context.state.get_data()).get("generating"):
             await gen_context.message.answer(text="⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
-            # Сообщаем, что слот занят, генерировать нельзя
             return False
 
-        # Присваиваем маркер конкретной генерации
         gen_context.gen_id = uuid4().hex
-        # Устанавливаем в FSM пользователя
-        # статус "генерируется" и маркер самой генерации, занимая слот
         await gen_context.state.update_data(generating=True, gen_id=gen_context.gen_id)
-        # Регистрируем в едином реестре текущих задач
         await register_active_task(uid=gen_context.user_id, task=gen_context.task)
         return True
 
@@ -173,9 +158,6 @@ async def _start_status(gen_context: GenerationContext) -> Message:
 def _make_progress_reporter(status: Message) -> ProgressCallback:
     """Возвращает колбэк on_progress, троттлящий правки статуса.
 
-    Троттлинг и сборку текста делает domains.generation.service; здесь —
-    только «отрисовка» через edit_text конкретного сообщения.
-
     Args:
         status: Сообщение-статус, которое редактируется по мере прогресса.
 
@@ -190,42 +172,27 @@ def _make_progress_reporter(status: Message) -> ProgressCallback:
             text: Готовый текст статуса с прогресс-баром.
         """
         with contextlib.suppress(Exception):
-            # Позиционно: заглушки edit_text в тестах объявлены как (new_text, **kwargs)
             await status.edit_text(text)
 
     return make_throttled_progress(report=report)
 
 
 async def _cleanup_cancelled(gen_context: GenerationContext, status: Message) -> None:
-    """Чистим экран пользователя после отмены генерации.
-
-    Сама отмена приходит из cmd_cancel_generation / cmd_logout через task.cancel().
-    Убираем «ползущее» сообщение прогресса.
-    Флаг 'generating' обычно уже стёрт state.clear() в отменившем хендлере.
-    Снимаем сами, только если gen_id в стейте еще актуален.
-    Прилетевший CancelledError пропускаем дальше, его получит Task и
-    отменит задачу.
+    """Чистит пользовательский экран после отмены генерации.
 
     Args:
         gen_context: Контекст запуска генерации.
         status: Сообщение-статус с прогрессом.
     """
-    # Чистим экран пользователя от прогресс-бара
     with contextlib.suppress(Exception):
         await status.delete()
 
-    # Снимаем флаг только если в FSM все еще текущая генерация
     if await _is_actual_gen(state=gen_context.state, gen_id=gen_context.gen_id):
         await gen_context.state.update_data(generating=False)
 
 
 async def _handle_failure(gen_context: GenerationContext, status: Message, error: Exception) -> None:
-    """Обрабатывает сбой сервиса: уведомляет владельца и рисует кнопку повтора.
-
-    Состояние НЕ чистим: prompt и title остались в FSM,
-    повтор не требует сборки контекста еще раз.
-    Флаг снимаем только если генерация всё ещё актуальна.
-    Сбой самого уведомления не должен лишить пользователя кнопки ретрая.
+    """Обрабатывает сбой сервиса: уведомляет владельца и показывает кнопку повтора.
 
     Args:
         gen_context: Контекст запуска генерации.
@@ -239,12 +206,9 @@ async def _handle_failure(gen_context: GenerationContext, status: Message, error
             err=error,
         )
 
-    # Защита только для флага: не глушим генерирующий флаг новой генерации.
-    # Кнопка ретрая вешается всегда — контекст она возьмёт из FSM в момент нажатия.
     if await _is_actual_gen(state=gen_context.state, gen_id=gen_context.gen_id):
         await gen_context.state.update_data(generating=False)
 
-    # Даже если правка статуса не пройдёт — не роняем задачу, кнопка ретрая важнее
     with contextlib.suppress(Exception):
         await status.edit_text(
             "😔 Не получилось сгенерировать. Попробуйте ещё раз чуть позже.",
@@ -255,21 +219,14 @@ async def _handle_failure(gen_context: GenerationContext, status: Message, error
 async def _deliver_result(gen_context: GenerationContext, status: Message, audio_bytes: bytes) -> None:
     """Отправляет готовое аудио, переводит в оценку и сохраняет название.
 
-    Состояние переводим в ожидание оценки только если это всё ещё актуальная
-    генерация: иначе «поздний» успех после «❌ Отмена» затрёт состояние новой
-    сессии. Флаг generating снимаем вместе с переходом в сценарий фидбека.
-
     Args:
         gen_context: Контекст запуска генерации.
         status: Сообщение-статус с прогрессом.
         audio_bytes: Байты готового аудио.
     """
     is_actual = await _is_actual_gen(state=gen_context.state, gen_id=gen_context.gen_id)
-
-    # Санитайзинг названия песни, чтобы ТГ не сошел с ума от "левых" символов
     safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in gen_context.title)[:80] or "song"
 
-    # Сборка песни в файл и отправка пользователю.
     file = BufferedInputFile(file=audio_bytes, filename=f"{safe_title}.mp3")
     await gen_context.message.answer_audio(audio=file, caption="🎵 Готово!")
 
@@ -281,21 +238,14 @@ async def _deliver_result(gen_context: GenerationContext, status: Message, audio
             reply_markup=get_evaluation_keyboard(),
         )
 
-    # Фиксируем название готовой песни — нужно для приветствия «С возвращением».
     await _persist_generated_title(gen_context=gen_context)
 
-    # Поведенческая симметрия с _cleanup_cancelled: сбой удаления статуса
-    # не должен ронять задачу уже после отправки аудио
     with contextlib.suppress(Exception):
         await status.delete()
 
 
 async def _persist_generated_title(gen_context: GenerationContext) -> None:
     """Сохраняет название готовой песни в запись фидбека пользователя.
-
-    Обновляет последнюю запись `GenerationFeedback`; если записи ещё нет,
-    создаёт минимальную. Нужно для персонализированного приветствия на
-    /start. Сбой БД не должен ронять задачу уже после отправки аудио.
 
     Args:
         gen_context: Контекст запуска генерации.
@@ -312,8 +262,6 @@ async def _persist_generated_title(gen_context: GenerationContext) -> None:
             if feedback is not None:
                 feedback.title = gen_context.title
             else:
-                # DEVIATION: записи фидбека нет — создаём минимальную, чтобы
-                # «С возвращением» работал и в сценариях без сохранения промпта.
                 session.add(
                     GenerationFeedback(
                         user_id=gen_context.user_id,
@@ -329,9 +277,6 @@ async def _persist_generated_title(gen_context: GenerationContext) -> None:
 
 async def _release_slot(gen_context: GenerationContext) -> None:
     """Снимает регистрацию задачи в едином реестре активных генераций.
-
-    Убираем только свою запись: за время генерации могла начаться новая
-    (другая задача) — её запись не трогаем.
 
     Args:
         gen_context: Контекст запуска генерации.

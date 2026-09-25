@@ -7,8 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-import services.feedback as feedback_service
 from core.database.models import GenerationFeedback
+from services import feedback as feedback_service
 
 
 @pytest.fixture

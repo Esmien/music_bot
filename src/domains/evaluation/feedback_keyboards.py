@@ -2,9 +2,7 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from core.config import UIConfig
-
-CB_FEEDBACK_SEND = "fb:send"
-CB_FEEDBACK_FINISH = "fb:finish"
+from domains.evaluation.keyboards import CB_FEEDBACK_FINISH, CB_FEEDBACK_SEND
 
 
 def get_feedback_keyboard() -> InlineKeyboardMarkup:

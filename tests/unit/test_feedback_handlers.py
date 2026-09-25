@@ -10,9 +10,9 @@ import pytest
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from core.config import UIConfig, settings
-from fsm.evaluation_fsm import FeedbackStates
+from domains.base.keyboards import get_main_keyboard
+from domains.evaluation.fsm import FeedbackStates
 from handlers import feedback_handlers
-from keyboards.default_keyboards import get_main_keyboard
 from keyboards.feedback_keyboards import get_feedback_finish_keyboard, get_feedback_keyboard
 
 
