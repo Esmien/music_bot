@@ -7,9 +7,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from core.config import UIConfig
-from fsm.evaluation_fsm import FeedbackStates
-from keyboards.evaluation_keyboards import CB_FEEDBACK_DISLIKE, CB_FEEDBACK_LIKE, get_evaluation_keyboard
-from keyboards.feedback_keyboards import get_feedback_keyboard
+from domains.evaluation.keyboards import CB_FEEDBACK_DISLIKE, CB_FEEDBACK_LIKE, get_evaluation_keyboard
+from domains.feedback.fsm import FeedbackStates
+from domains.feedback.keyboards import get_feedback_keyboard
 
 router = Router()
 
