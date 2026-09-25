@@ -4,7 +4,8 @@ import httpx
 import pytest
 
 from core.database import User
-from handlers import credits_handlers as handlers_credits
+from domains.credits import handlers as handlers_credits
+from domains.credits import service as credits_service
 
 pytestmark = pytest.mark.integration
 
@@ -40,10 +41,10 @@ class FakeAsyncClient:
 
 @pytest.fixture
 def patch_key_info(monkeypatch):
-    """Подменяет httpx.AsyncClient в хендлере кредитов на заглушку."""
+    """Подменяет httpx.AsyncClient в сервисе кредитов на заглушку."""
 
     def _install(response):
-        monkeypatch.setattr(handlers_credits.httpx, "AsyncClient", lambda **kwargs: FakeAsyncClient(response))
+        monkeypatch.setattr(credits_service.httpx, "AsyncClient", lambda **kwargs: FakeAsyncClient(response))
 
     return _install
 
