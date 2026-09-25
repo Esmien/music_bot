@@ -37,6 +37,7 @@ kanban-plugin: board
 - [x] [[add_feedback_service]]
 - [x] [[add_evaluation_handlers]]
 - [x] [[add_feedback_handlers]]
+- [x] [[add_model_generation]]
 
 
 
