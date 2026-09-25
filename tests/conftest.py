@@ -34,8 +34,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # no
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from core.database import init_db
-from fsm.registries import auth_registry as handlers_state
-from handlers import auth as handlers_auth  # noqa: E402
+from domains.auth import handlers as auth_handlers
+from domains.auth import service as auth_service
+from domains.base import service as base_service
 
 # import database.engine as ... вернул бы не модуль, а затенённый атрибут
 # пакета database — AsyncEngine (реэкспорт engine в database/__init__.py).
@@ -74,20 +75,22 @@ async def db_sessionmaker(db_engine, monkeypatch):
 
 @pytest.fixture
 async def patched_auth_db(db_sessionmaker, monkeypatch):
-    """Перенаправляет обращение хендлеров авторизации к тестовой БД."""
-    monkeypatch.setattr(handlers_auth, "SessionLocal", db_sessionmaker)
+    """Перенаправляет сервисы авторизации и base на тестовую SQLite."""
+    monkeypatch.setattr(auth_service, "SessionLocal", db_sessionmaker)
+    monkeypatch.setattr(auth_handlers, "SessionLocal", db_sessionmaker)
+    monkeypatch.setattr(base_service, "SessionLocal", db_sessionmaker)
     return db_sessionmaker
 
 
 @pytest.fixture
 def fake_redis(monkeypatch):
-    """Подменяет клиент Redis в handlers.state на in-memory fakeredis.
+    """Подменяет клиент Redis в сервисе авторизации на in-memory fakeredis.
 
-    pending_auth теперь живёт в Redis — реальный сервер в тестах не нужен.
-    Клиент чист при создании, ключи между тестами не перетекают.
+    Реальный сервер в тестах не нужен. Клиент чист при создании,
+    ключи между тестами не перетекают.
     """
     client = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    monkeypatch.setattr(handlers_state, "redis_client", client)
+    monkeypatch.setattr(auth_service, "redis_client", client)
     return client
 
 

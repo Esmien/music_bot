@@ -75,7 +75,7 @@ line-ending = "auto"
 
 [tool.ruff.lint.isort]
 # Группировка импортов, чтобы всё было красиво
-known-first-party = ["core", "fsm", "handlers", "keyboards", "services"] # Модули проекта отделяются пустой строкой
+known-first-party = ["core", "domains", "fsm", "handlers", "keyboards", "services"] # Модули проекта отделяются пустой строкой
 
 [tool.pytest.ini_options]
 # Режим "auto" — то самое "always": async-тесты и фикстуры выполняются
@@ -98,7 +98,7 @@ addopts = "--cov --cov-report=term-missing:skip-covered"
 # Измеряем только код проекта — тесты и зависимости не считаем.
 # bot.py не включён: это точка входа с polling, в тестах не импортируется,
 # из-за чего coverage предупреждал "Module bot was never imported"
-source = ["core", "handlers", "services"]
+source = ["core", "domains", "handlers", "services"]
 
 [tool.coverage.report]
 show_missing = true

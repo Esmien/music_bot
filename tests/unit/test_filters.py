@@ -3,8 +3,8 @@
 import pytest
 from aiogram.types import Message, User
 
-from fsm.registries.auth_registry import add_pending_auth
-from handlers.filters import IsPendingAuth, NotCommand
+from domains.auth.handlers import IsPendingAuth, NotCommand
+from domains.auth.service import add_pending_auth
 
 pytestmark = pytest.mark.unit
 
