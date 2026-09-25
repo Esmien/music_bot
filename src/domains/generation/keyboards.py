@@ -10,7 +10,5 @@ def get_retry_keyboard() -> InlineKeyboardMarkup:
         Inline-клавиатура с кнопкой повторного запуска.
     """
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="retry_generation")]
-        ]
+        inline_keyboard=[[InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="retry_generation")]]
     )

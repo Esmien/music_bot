@@ -17,7 +17,7 @@ from aiogram.types import BufferedInputFile, Message
 from sqlalchemy import select
 
 from core.config import UIConfig
-from core.database import SessionLocal
+from core.database.engine import get_session
 from core.utils.error_notify import notify_owner
 from domains.evaluation.fsm import FeedbackStates
 from domains.evaluation.keyboards import get_evaluation_keyboard
@@ -82,9 +82,9 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
 
     Args:
         message: Сообщение, от имени которого шлются статусы и аудио.
-        state: FSM-контекст пользователя.
+        state: FSM-контекст текущего пользователя.
         prompt: Подготовленное описание песни.
-        title: Название трека (используется в имени файла).
+        title: Название трека.
         user_id: Telegram user_id пользователя.
     """
     task = asyncio.current_task()
@@ -250,7 +250,7 @@ async def _persist_generated_title(gen_context: GenerationContext) -> None:
         gen_context: Контекст запуска генерации.
     """
     try:
-        async with SessionLocal() as session:
+        async with get_session() as session:
             result = await session.execute(
                 select(Generation)
                 .where(

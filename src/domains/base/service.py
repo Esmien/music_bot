@@ -2,7 +2,7 @@
 
 from sqlalchemy import select
 
-from core.database import SessionLocal
+from core.database.engine import get_session
 from domains.generation.models import Generation, GenerationStatus
 
 
@@ -15,7 +15,7 @@ async def get_last_generated_title(uid: int) -> str | None:
     Returns:
         Название последней успешной генерации или None, если её нет.
     """
-    async with SessionLocal() as session:
+    async with get_session() as session:
         result = await session.execute(
             select(Generation.title)
             .where(

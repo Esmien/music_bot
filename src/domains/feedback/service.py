@@ -5,7 +5,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from core.database import SessionLocal
+from core.database.engine import get_session
 from domains.feedback.models import GenerationFeedback
 from domains.generation.models import Generation, GenerationStatus
 
@@ -27,7 +27,7 @@ async def save_feedback(user_id: int, feedback: str | None, evalue: bool) -> Non
         return
 
     try:
-        async with SessionLocal() as session:
+        async with get_session() as session:
             generation_result = await session.execute(
                 select(Generation)
                 .where(

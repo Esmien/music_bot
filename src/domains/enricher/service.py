@@ -7,7 +7,7 @@ import httpx
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.config import settings
-from core.database.engine import SessionLocal
+from core.database.engine import get_session
 from core.utils.exceptions import EnricherNotConfiguredError
 from domains.enricher.validator import parse_enricher_json, validate_enriched_prompt
 from domains.generation.models import Generation
@@ -133,7 +133,7 @@ async def save_enriched_prompt(tg_id: int, initial_prompt: str, enriched_prompt:
         SQLAlchemyError: Если запись не удалось сохранить.
     """
     try:
-        async with SessionLocal() as session:
+        async with get_session() as session:
             session.add(
                 Generation(
                     user_id=tg_id,

@@ -5,7 +5,8 @@ import secrets
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from core.database import SessionLocal, User
+from core.database import User
+from core.database.engine import get_session
 from core.redis import redis_client
 
 PENDING_AUTH_KEY = "bot:pending_auth"
@@ -22,7 +23,7 @@ async def is_authorized(uid: int) -> bool:
     Returns:
         True, если пользователь найден и is_authorized=True.
     """
-    async with SessionLocal() as session:
+    async with get_session() as session:
         db_user = await session.get(User, uid)
         return bool(db_user and db_user.is_authorized)
 
@@ -126,7 +127,7 @@ async def mark_user_authorized(uid: int) -> None:
     Args:
         uid: Telegram user_id.
     """
-    async with SessionLocal() as session:
+    async with get_session() as session:
         db_user = await session.get(User, uid)
 
         if db_user:

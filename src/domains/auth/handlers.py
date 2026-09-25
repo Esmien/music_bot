@@ -11,7 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.config import UIConfig, settings
-from core.database import SessionLocal, User
+from core.database import User
+from core.database.engine import get_session
 from core.utils.error_notify import notify_owner
 from core.utils.exceptions import AccessKeyNotSet
 from domains.auth.service import (
@@ -39,7 +40,7 @@ class IsPendingAuth(Filter):
             message: Входящее сообщение.
 
         Returns:
-            True, если пользователь ожидает ввода ключа.
+            True, если сообщение отправил пользователь, ожидающий ввода ключа.
         """
         return message.from_user is not None and await is_pending_auth(uid=message.from_user.id)
 
@@ -86,7 +87,7 @@ async def _logout_user(uid: int) -> None:
     Args:
         uid: Telegram user_id.
     """
-    async with SessionLocal() as session:
+    async with get_session() as session:
         result = await session.execute(select(User).where(User.tg_id == uid))
         db_user = result.scalar_one_or_none()
         if db_user:
