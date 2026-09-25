@@ -8,9 +8,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from core.config import settings
 from core.database.engine import SessionLocal
-from core.database.models import GenerationFeedback
 from core.utils.exceptions import EnricherNotConfiguredError
 from domains.enricher.validator import parse_enricher_json, validate_enriched_prompt
+from domains.generation.models import Generation
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +103,26 @@ def format_enriched_prompt(raw: str) -> str:
     return "\n\n".join(sections) if sections else raw.strip()
 
 
+def _enriched_prompt_to_dict(enriched_prompt: str) -> dict:
+    """Преобразует строку обогащённого промпта в JSON-объект для хранения.
+
+    Args:
+        enriched_prompt: Строка, возвращённая обогатителем.
+
+    Returns:
+        Структура обогащённого промпта. Если строка не является JSON-объектом,
+        сохраняется как объект с ключом text.
+    """
+    try:
+        parsed_prompt = parse_enricher_json(raw=enriched_prompt)
+    except (ValueError, json.JSONDecodeError):
+        return {"text": enriched_prompt}
+
+    return parsed_prompt if isinstance(parsed_prompt, dict) else {"text": enriched_prompt}
+
+
 async def save_enriched_prompt(tg_id: int, initial_prompt: str, enriched_prompt: str) -> None:
-    """Сохраняет исходный и обогащённый промпты в записи фидбека.
+    """Создаёт ожидающую генерацию с исходным и обогащённым промптами.
 
     Args:
         tg_id: Telegram user_id пользователя.
@@ -117,11 +135,10 @@ async def save_enriched_prompt(tg_id: int, initial_prompt: str, enriched_prompt:
     try:
         async with SessionLocal() as session:
             session.add(
-                GenerationFeedback(
+                Generation(
                     user_id=tg_id,
-                    initial_prompt=initial_prompt,
-                    enriched_prompt=enriched_prompt,
-                    is_liked=None,
+                    prompt=initial_prompt,
+                    enriched_prompt=_enriched_prompt_to_dict(enriched_prompt=enriched_prompt),
                 )
             )
             await session.commit()

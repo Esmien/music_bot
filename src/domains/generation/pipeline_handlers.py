@@ -18,12 +18,12 @@ from sqlalchemy import select
 
 from core.config import UIConfig
 from core.database import SessionLocal
-from core.database.models import GenerationFeedback
 from core.utils.error_notify import notify_owner
 from domains.evaluation.fsm import FeedbackStates
 from domains.evaluation.keyboards import get_evaluation_keyboard
 from domains.generation import service as generation_service
 from domains.generation.keyboards import get_retry_keyboard
+from domains.generation.models import Generation, GenerationStatus
 from domains.generation.registries.task_registry import register_active_task, unregister_active_task
 from domains.generation.service import ProgressCallback, make_throttled_progress, user_generation_lock
 
@@ -244,7 +244,7 @@ async def _deliver_result(gen_context: GenerationContext, status: Message, audio
 
 
 async def _persist_generated_title(gen_context: GenerationContext) -> None:
-    """Сохраняет название готовой песни в запись фидбека пользователя.
+    """Сохраняет название и успешный статус в ожидающую запись генерации.
 
     Args:
         gen_context: Контекст запуска генерации.
@@ -252,23 +252,21 @@ async def _persist_generated_title(gen_context: GenerationContext) -> None:
     try:
         async with SessionLocal() as session:
             result = await session.execute(
-                select(GenerationFeedback)
-                .where(GenerationFeedback.user_id == gen_context.user_id)
-                .order_by(GenerationFeedback.id.desc())
+                select(Generation)
+                .where(
+                    Generation.user_id == gen_context.user_id,
+                    Generation.status == GenerationStatus.PENDING,
+                )
+                .order_by(Generation.created_at.desc(), Generation.id.desc())
                 .limit(1)
             )
-            feedback = result.scalar_one_or_none()
-            if feedback is not None:
-                feedback.title = gen_context.title
-            else:
-                session.add(
-                    GenerationFeedback(
-                        user_id=gen_context.user_id,
-                        initial_prompt=gen_context.prompt,
-                        enriched_prompt=gen_context.prompt,
-                        title=gen_context.title,
-                    )
-                )
+            generation = result.scalar_one_or_none()
+            if generation is None:
+                log.warning("Pending generation record not found (user=%s)", gen_context.user_id)
+                return
+
+            generation.title = gen_context.title
+            generation.status = GenerationStatus.SUCCESS
             await session.commit()
     except Exception:
         log.error("Failed to persist generated title (user=%s)", gen_context.user_id, exc_info=True)

@@ -1,8 +1,8 @@
 """Интеграционные тесты хендлеров обогатителя.
 
 Реальная in-memory SQLite (см. conftest.py); внешний API обогатителя
-мокается. Проверяется связка хендлеров с БД: авторизация, сохранение
-фидбека о паре «исходный → обогащённый» промпт.
+мокается. Проверяется связка хендлеров с БД: авторизация и создание
+ожидающей генерации с исходным и обогащённым промптами.
 """
 
 from types import SimpleNamespace
@@ -10,11 +10,12 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from core.database.models import GenerationFeedback, User
+from core.database.models import User
 from domains.enricher import handlers as enricher_handlers
 from domains.enricher import service as enricher
 from domains.enricher.fsm import PromptEnricherStates
 from domains.generation.fsm import GenerationStates
+from domains.generation.models import Generation
 
 
 @pytest.fixture
@@ -74,12 +75,13 @@ def make_callback(make_callback_message):
 
 
 async def _make_authorized_user(sessionmaker, tg_id: int) -> None:
+    """Создаёт авторизованного пользователя в тестовой БД."""
     async with sessionmaker() as session:
         session.add(User(tg_id=tg_id, is_authorized=True))
         await session.commit()
 
 
-async def test_full_enrichment_flow_saves_feedback(
+async def test_full_enrichment_flow_saves_generation(
     patched_auth_db,
     patched_enricher_db,
     patched_enrich_api,
@@ -89,6 +91,7 @@ async def test_full_enrichment_flow_saves_feedback(
     make_callback,
     make_callback_message,
 ):
+    """Подтверждение обогащения сохраняет ожидающую генерацию."""
     await _make_authorized_user(patched_auth_db, tg_id=7)
     state = fake_state()
     await state.set_state(PromptEnricherStates.waiting_for_idea)
@@ -107,13 +110,12 @@ async def test_full_enrichment_flow_saves_feedback(
     assert data["prompt"] == enricher_handlers._build_generation_prompt(text="обогащённый: грустная песня о дожде")
 
     async with patched_enricher_db() as session:
-        record = await session.scalar(select(GenerationFeedback).where(GenerationFeedback.user_id == 7))
+        record = await session.scalar(select(Generation).where(Generation.user_id == 7))
+
     assert record is not None
-    assert record.initial_prompt == "грустная песня о дожде"
-    assert record.enriched_prompt == "обогащённый: грустная песня о дожде"
-    # Оценка заполняется позже хендлерами оценки
-    assert record.is_liked is None
-    assert record.feedback is None
+    assert record.prompt == "грустная песня о дожде"
+    assert record.enriched_prompt == {"text": "обогащённый: грустная песня о дожде"}
+    assert record.title is None
 
 
 async def test_approve_denied_for_unauthorized_user(
@@ -124,7 +126,7 @@ async def test_approve_denied_for_unauthorized_user(
     make_callback,
     make_callback_message,
 ):
-    # Пользователь не создавался — авторизации нет
+    """Неавторизованный пользователь не создаёт запись генерации."""
     state = fake_state()
     await state.update_data(prompt="идея", enriched_prompt="обогащённый")
     callback = make_callback(uid=99, message=make_callback_message())
@@ -135,11 +137,12 @@ async def test_approve_denied_for_unauthorized_user(
     assert state.cleared
 
     async with patched_enricher_db() as session:
-        record = await session.scalar(select(GenerationFeedback).where(GenerationFeedback.user_id == 99))
+        record = await session.scalar(select(Generation).where(Generation.user_id == 99))
+
     assert record is None
 
 
-async def test_fallback_saves_feedback_with_raw_prompt(
+async def test_fallback_saves_generation_with_raw_prompt(
     patched_auth_db,
     patched_enricher_db,
     clean_auth_state,
@@ -147,6 +150,7 @@ async def test_fallback_saves_feedback_with_raw_prompt(
     make_callback,
     make_callback_message,
 ):
+    """Fallback сохраняет исходный промпт как обогащённый, если обогатитель недоступен."""
     await _make_authorized_user(patched_auth_db, tg_id=5)
     state = fake_state()
     await state.update_data(prompt="идея без обогащения")
@@ -156,7 +160,8 @@ async def test_fallback_saves_feedback_with_raw_prompt(
 
     assert state.state == GenerationStates.waiting_for_title
     async with patched_enricher_db() as session:
-        record = await session.scalar(select(GenerationFeedback).where(GenerationFeedback.user_id == 5))
+        record = await session.scalar(select(Generation).where(Generation.user_id == 5))
+
     assert record is not None
-    assert record.initial_prompt == "идея без обогащения"
-    assert record.enriched_prompt == "идея без обогащения"
+    assert record.prompt == "идея без обогащения"
+    assert record.enriched_prompt == {"text": "идея без обогащения"}
