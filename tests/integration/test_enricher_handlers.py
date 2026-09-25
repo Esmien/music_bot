@@ -11,10 +11,10 @@ import pytest
 from sqlalchemy import select
 
 from core.database.models import GenerationFeedback, User
-from fsm.enricher_fsm import PromptEnricherStates
-from fsm.generation_fsm import GenerationStates
-from handlers import enricher_handlers
-from services import enricher
+from domains.enricher import handlers as enricher_handlers
+from domains.enricher import service as enricher
+from domains.enricher.fsm import PromptEnricherStates
+from domains.generation.fsm import GenerationStates
 
 
 @pytest.fixture
@@ -59,7 +59,7 @@ def make_callback_message(make_message):
 
 @pytest.fixture
 def make_callback(make_callback_message):
-    """Фабрика callback-запросов-заглушек для инлайн-кнопок обогатителя."""
+    """Фабрика callback-запросов-заглушек для inline-кнопок обогатителя."""
 
     class FakeCallback:
         def __init__(self, uid, message=None):

@@ -2,7 +2,7 @@
 
 import pytest
 
-from services.pipeline import _progress_bar
+from domains.generation.service import _progress_bar
 
 pytestmark = pytest.mark.unit
 

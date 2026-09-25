@@ -11,9 +11,9 @@ from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from core.config import UIConfig, settings
 from domains.base.keyboards import get_main_keyboard
-from domains.evaluation.fsm import FeedbackStates
-from handlers import feedback_handlers
-from keyboards.feedback_keyboards import get_feedback_finish_keyboard, get_feedback_keyboard
+from domains.feedback import handlers as feedback_handlers
+from domains.feedback.fsm import FeedbackStates
+from domains.feedback.keyboards import get_feedback_finish_keyboard, get_feedback_keyboard
 
 
 def _inline_button_texts(markup: InlineKeyboardMarkup | None) -> list[list[str | None]]:

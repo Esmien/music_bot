@@ -1,4 +1,4 @@
-"""Юнит-тесты сервиса сохранения обратной связи."""
+"""Тесты сервиса сохранения обратной связи."""
 
 import logging
 
@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.database.models import GenerationFeedback
-from services import feedback as feedback_service
+from domains.feedback import service as feedback_service
 
 
 @pytest.fixture

@@ -16,7 +16,6 @@ from core.utils.error_notify import notify_owner
 from domains.generation.fsm import clear_orphaned_generation_flags
 from domains.generation.registries.task_registry import clear_active_tasks
 
-
 log = logging.getLogger(__name__)
 
 

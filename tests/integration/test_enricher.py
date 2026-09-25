@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.database.models import GenerationFeedback, User
-from services import enricher
+from domains.enricher import service as enricher
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-"""Юнит-тесты сервиса обогащения промпта (services/enricher.py).
+"""Юнит-тесты сервиса обогащения промпта (domains/enricher/service.py).
 
 Внешний API обогатителя обязательно мокается: тестируется логика
 клиента, парсинга и форматирования, а не сеть.
@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from core.config import settings
-from services import enricher
+from domains.enricher import service as enricher
 
 
 class FakeResponse:
@@ -51,7 +51,7 @@ class FakeAsyncClient:
 
 @pytest.fixture
 def patch_enricher_client(monkeypatch):
-    """Подменяет httpx.AsyncClient в services.enricher на фабрику заглушек.
+    """Подменяет httpx.AsyncClient в domains.enricher.service на фабрику заглушек.
 
     Возвращает функцию-фабрику: patch_enricher_client(response=..., error=...).
     """

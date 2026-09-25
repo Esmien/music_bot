@@ -13,8 +13,8 @@ import json
 import httpx
 import pytest
 
-from services.enricher import enrich_prompt
-from services.enricher_validator import (
+from domains.enricher.service import enrich_prompt
+from domains.enricher.validator import (
     EnrichedSongPrompt,
     _strip_forbidden_diacritics,
     parse_enricher_json,
@@ -142,7 +142,7 @@ def patch_enricher_client(monkeypatch) -> dict[str, object]:
     Returns:
         Словарь-конфигурация ответа/ошибки для тестов.
     """
-    from services import enricher as enricher_service
+    from domains.enricher import service as enricher_service
 
     config = {"payload": None, "raise_error": False}
 

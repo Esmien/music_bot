@@ -10,7 +10,7 @@ import json
 import pytest
 
 from core.config import settings
-from services import generation as gen
+from domains.generation import service as gen
 
 pytestmark = pytest.mark.unit
 

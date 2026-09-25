@@ -7,8 +7,8 @@ from domains.base.handlers import router as base_router
 from domains.credits.handlers import router as credits_router
 from domains.enricher.handlers import router as enricher_router
 from domains.evaluation.handlers import router as evaluation_router
-from domains.generation.handlers import router as generation_router
 from domains.feedback.handlers import router as feedback_router
+from domains.generation.handlers import router as generation_router
 
 router = Router()
 router.include_router(base_router)

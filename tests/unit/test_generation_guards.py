@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from services.pipeline import _generation_locks, user_generation_lock
+from domains.generation.service import _generation_locks, user_generation_lock
 
 pytestmark = pytest.mark.unit
 

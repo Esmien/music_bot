@@ -1,4 +1,4 @@
-"""Юнит-тесты хендлеров обогатителя (handlers/enricher_handlers.py).
+"""Юнит-тесты хендлеров обогатителя (domains/enricher/handlers.py).
 
 Внешние зависимости мокаются: вызов API обогатителя, авторизация,
 сохранение фидбека в БД и уведомление владельца. Тестируется логика
@@ -9,9 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from fsm.enricher_fsm import PromptEnricherStates
-from fsm.generation_fsm import MAX_PROMPT_LEN, GenerationStates
-from handlers import enricher_handlers
+from domains.enricher import handlers as enricher_handlers
+from domains.enricher.fsm import PromptEnricherStates
+from domains.generation.fsm import MAX_PROMPT_LEN, GenerationStates
 
 
 @pytest.fixture
@@ -103,7 +103,7 @@ def make_callback_message(make_message):
 
 @pytest.fixture
 def make_callback(make_callback_message):
-    """Фабрика callback-запросов-заглушек для инлайн-кнопок обогатителя."""
+    """Фабрика callback-запросов-заглушек для inline-кнопок обогатителя."""
 
     class FakeCallback:
         def __init__(self, uid, message=None):

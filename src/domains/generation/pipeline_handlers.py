@@ -22,14 +22,10 @@ from core.database.models import GenerationFeedback
 from core.utils.error_notify import notify_owner
 from domains.evaluation.fsm import FeedbackStates
 from domains.evaluation.keyboards import get_evaluation_keyboard
+from domains.generation import service as generation_service
 from domains.generation.keyboards import get_retry_keyboard
 from domains.generation.registries.task_registry import register_active_task, unregister_active_task
-from domains.generation.service import (
-    ProgressCallback,
-    make_throttled_progress,
-    run_generation,
-    user_generation_lock,
-)
+from domains.generation.service import ProgressCallback, make_throttled_progress, user_generation_lock
 
 log = logging.getLogger(__name__)
 
@@ -111,7 +107,10 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
         on_progress = _make_progress_reporter(status=status)
 
         try:
-            audio_bytes = await run_generation(prompt=gen_context.prompt, on_progress=on_progress)
+            audio_bytes = await generation_service.run_generation(
+                prompt=gen_context.prompt,
+                on_progress=on_progress,
+            )
         except asyncio.CancelledError:
             await _cleanup_cancelled(gen_context=gen_context, status=status)
             raise
