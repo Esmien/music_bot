@@ -9,7 +9,7 @@ from core.config import UIConfig
 from domains.auth.service import add_pending_auth, discard_pending_auth, is_authorized
 from domains.base.keyboards import get_main_keyboard
 from domains.base.service import get_last_generated_title
-from fsm.registries.task_registry import get_active_task
+from domains.generation.registries.task_registry import get_active_task
 
 router = Router(name="base")
 

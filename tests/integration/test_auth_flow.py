@@ -10,7 +10,7 @@ from core.database import User
 from domains.auth import handlers as auth_handlers
 from domains.auth import service as auth_service
 from domains.base import handlers as base_handlers
-from fsm.registries import task_registry
+from domains.generation.registries import task_registry
 
 pytestmark = pytest.mark.integration
 

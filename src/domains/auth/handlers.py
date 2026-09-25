@@ -22,6 +22,7 @@ from domains.auth.service import (
     mark_user_authorized,
 )
 from domains.base.keyboards import get_main_keyboard
+from domains.generation.registries.task_registry import get_active_task
 
 log = logging.getLogger(__name__)
 
@@ -115,8 +116,6 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
         )
         await message.answer(text="Не удалось выйти. Генерация продолжается.")
         return
-
-    from fsm.registries.task_registry import get_active_task
 
     task = get_active_task(uid=uid)
     if task and not task.done():
