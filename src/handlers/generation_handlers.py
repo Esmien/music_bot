@@ -10,11 +10,11 @@ from core.config import UIConfig
 from domains.auth.handlers import _require_auth
 from domains.auth.service import is_authorized
 from domains.base.keyboards import get_cancel_keyboard, get_main_keyboard
+from domains.enricher.handlers import PROMPT_HINT, PROMPT_TEMPLATE
+from domains.enricher.keyboards import CB_TITLE_LEAVE_AS_IS
 from fsm.enricher_fsm import PromptEnricherStates
 from fsm.generation_fsm import MAX_TITLE_LEN, GenerationStates
-from handlers.enricher_handlers import PROMPT_HINT, PROMPT_TEMPLATE
 from handlers.generation_pipeline import generate_and_send
-from keyboards.enricher_keyboards import CB_TITLE_LEAVE_AS_IS
 
 router = Router()
 
@@ -82,7 +82,7 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
 
 @router.message(GenerationStates.waiting_for_title, F.text)
 async def handle_title(message: Message, state: FSMContext):
-    """Принимает название, генерирует песню и отправляет аудиофайл.
+    """Принимает название, запускает генерацию и отправляет аудиофайл.
 
     Args:
         message: Сообщение с названием песни.
