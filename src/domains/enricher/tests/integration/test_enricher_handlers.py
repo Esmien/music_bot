@@ -21,7 +21,7 @@ from domains.generation.models import Generation
 @pytest.fixture
 def patched_enricher_db(db_sessionmaker, monkeypatch):
     """Перенаправляет обращение сервиса обогатителя к тестовой БД."""
-    monkeypatch.setattr(enricher, "SessionLocal", db_sessionmaker)
+    monkeypatch.setattr(enricher, "get_session", db_sessionmaker)
     return db_sessionmaker
 
 

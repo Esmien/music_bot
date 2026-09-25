@@ -18,8 +18,8 @@ def patched_feedback_db(
     db_sessionmaker: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> async_sessionmaker[AsyncSession]:
-    """Подменяет SessionLocal сервиса обратной связи на тестовую БД."""
-    monkeypatch.setattr(feedback_service, "SessionLocal", db_sessionmaker)
+    """Подменяет get_session сервиса обратной связи на тестовую БД."""
+    monkeypatch.setattr(feedback_service, "get_session", db_sessionmaker)
     return db_sessionmaker
 
 
@@ -79,10 +79,10 @@ async def _get_feedback_records(
 async def test_save_feedback_skips_without_touching_db(monkeypatch: pytest.MonkeyPatch) -> None:
     """Пустой отзыв и дизлайк не должны создавать сессию БД."""
 
-    def _fail_session_local() -> None:
-        raise AssertionError("SessionLocal should not be called")
+    def _fail_get_session() -> None:
+        raise AssertionError("get_session should not be called")
 
-    monkeypatch.setattr(feedback_service, "SessionLocal", _fail_session_local)
+    monkeypatch.setattr(feedback_service, "get_session", _fail_get_session)
 
     await feedback_service.save_feedback(user_id=1, feedback=None, evalue=False)
     await feedback_service.save_feedback(user_id=1, feedback="", evalue=False)
@@ -245,7 +245,7 @@ async def test_save_feedback_swallows_and_logs_sqlalchemy_error(
         async def execute(self, *args: object, **kwargs: object) -> None:
             raise SQLAlchemyError("db error")
 
-    monkeypatch.setattr(feedback_service, "SessionLocal", lambda: FailingSession())
+    monkeypatch.setattr(feedback_service, "get_session", lambda: FailingSession())
     caplog.set_level(logging.ERROR, logger=feedback_service.log.name)
 
     await feedback_service.save_feedback(user_id=1, feedback="test", evalue=True)

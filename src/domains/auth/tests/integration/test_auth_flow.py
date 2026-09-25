@@ -288,7 +288,7 @@ async def test_mark_user_authorized_recovers_after_integrity_error(patched_auth_
 async def test_cmd_logout_db_error_notifies_owner(patched_auth_db, make_message, fake_state, monkeypatch):
     """Сбой БД при logout: пользователь остаётся авторизован, владелец уведомлён.
 
-    SessionLocal бросает SQLAlchemyError — срабатывает ветка except:
+    get_session бросает SQLAlchemyError — срабатывает ветка except:
     сообщение «Не удалось выйти», вызов notify_owner, ранний выход
     без очистки FSM и без снятия авторизации.
     """
@@ -297,7 +297,7 @@ async def test_cmd_logout_db_error_notifies_owner(patched_auth_db, make_message,
     def _failing_session_factory():
         raise SQLAlchemyError("database is down")
 
-    monkeypatch.setattr(auth_handlers, "SessionLocal", _failing_session_factory)
+    monkeypatch.setattr(auth_handlers, "get_session", _failing_session_factory)
 
     notify_calls = []
 

@@ -76,9 +76,9 @@ async def db_sessionmaker(db_engine, monkeypatch):
 @pytest.fixture
 async def patched_auth_db(db_sessionmaker, monkeypatch):
     """Перенаправляет сервисы авторизации и base на тестовую SQLite."""
-    monkeypatch.setattr(auth_service, "SessionLocal", db_sessionmaker)
-    monkeypatch.setattr(auth_handlers, "SessionLocal", db_sessionmaker)
-    monkeypatch.setattr(base_service, "SessionLocal", db_sessionmaker)
+    monkeypatch.setattr(auth_service, "get_session", db_sessionmaker)
+    monkeypatch.setattr(auth_handlers, "get_session", db_sessionmaker)
+    monkeypatch.setattr(base_service, "get_session", db_sessionmaker)
     return db_sessionmaker
 
 

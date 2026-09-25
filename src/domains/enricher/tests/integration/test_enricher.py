@@ -16,7 +16,7 @@ from domains.generation.models import Generation, GenerationStatus
 @pytest.fixture
 def patched_enricher_db(db_sessionmaker, monkeypatch):
     """Перенаправляет обращение сервиса обогатителя к тестовой БД."""
-    monkeypatch.setattr(enricher, "SessionLocal", db_sessionmaker)
+    monkeypatch.setattr(enricher, "get_session", db_sessionmaker)
     return db_sessionmaker
 
 
@@ -82,7 +82,7 @@ async def test_save_enriched_prompt_db_error_propagates(monkeypatch):
         async def commit(self):
             raise SQLAlchemyError("commit failed")
 
-    monkeypatch.setattr(enricher, "SessionLocal", FailingSession)
+    monkeypatch.setattr(enricher, "get_session", FailingSession)
 
     with pytest.raises(SQLAlchemyError, match="commit failed"):
         await enricher.save_enriched_prompt(tg_id=1, initial_prompt="идея", enriched_prompt="промпт")

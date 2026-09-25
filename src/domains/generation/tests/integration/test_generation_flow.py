@@ -178,7 +178,7 @@ async def test_handle_title_runs_generation_to_completion(
 ):
     """Успешная генерация от названия до отправки аудио и перехода в оценку."""
     await _make_authorized_user(patched_auth_db, 55)
-    monkeypatch.setattr(pipeline, "SessionLocal", patched_auth_db)
+    monkeypatch.setattr(pipeline, "get_session", patched_auth_db)
 
     async def fake_generate(prompt, on_progress=None):
         if on_progress is not None:
@@ -299,7 +299,7 @@ async def test_mock_mode_generates_audio(
     monkeypatch.setattr(settings.generation, "MOCK_MODE", True)
     monkeypatch.setattr(service_generation, "PROGRESS_EDIT_INTERVAL", 0.01)
     monkeypatch.setattr(service_generation, "load_mock_audio", lambda: b"mock-audio")
-    monkeypatch.setattr(pipeline, "SessionLocal", patched_auth_db)
+    monkeypatch.setattr(pipeline, "get_session", patched_auth_db)
 
     await _make_authorized_user(patched_auth_db, 61)
     state = fake_state()
@@ -449,7 +449,7 @@ async def test_retry_generation_runs_generation(
 ):
     """Успешный ретрай после сбоя."""
     await _make_authorized_user(patched_auth_db, 68)
-    monkeypatch.setattr(pipeline, "SessionLocal", patched_auth_db)
+    monkeypatch.setattr(pipeline, "get_session", patched_auth_db)
 
     async def fake_generate(prompt, on_progress=None):
         return b"retry-audio"
