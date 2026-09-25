@@ -15,7 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from core.config import UIConfig
 from core.utils.error_notify import notify_owner
 from domains.auth.service import is_authorized
-from domains.base.keyboards import get_main_keyboard
+from domains.base.keyboards import get_main_keyboard, get_cancel_keyboard
 from domains.enricher.fsm import PromptEnricherStates
 from domains.enricher.keyboards import (
     CB_PROMPT_APPROVE,
@@ -28,8 +28,7 @@ from domains.enricher.keyboards import (
     get_title_keyboard,
 )
 from domains.enricher.service import enrich_prompt, format_enriched_prompt, save_enriched_prompt
-from fsm.generation_fsm import MAX_PROMPT_LEN, GenerationStates
-from keyboards.default_keyboards import get_cancel_keyboard
+from domains.generation.fsm import MAX_PROMPT_LEN, GenerationStates
 
 log = logging.getLogger(__name__)
 

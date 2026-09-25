@@ -1,5 +1,5 @@
 """Совместимый реэкспорт общего FSM-модуля сценариев оценки и фидбека."""
 
-from fsm.evaluation_fsm import FeedbackStates
+from domains.feedback.fsm import FeedbackStates
 
 __all__ = ["FeedbackStates"]
