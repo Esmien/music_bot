@@ -170,11 +170,17 @@ def upgrade() -> None:
         ["generation_id"],
         unique=False,
     )
-    op.drop_constraint(
-        op.f("generation_feedbacks_user_id_fkey"),
-        "generation_feedbacks",
-        type_="foreignkey",
-    )
+    from sqlalchemy.engine.reflection import Inspector
+    bind = op.get_bind()
+    inspector = Inspector.from_engine(bind)
+
+    # Запрашиваем у базы реальные имена всех внешних ключей таблицы
+    for fk in inspector.get_foreign_keys("generation_feedbacks"):
+        # Если находим ключ, который привязан к колонке user_id
+        if fk["constrained_columns"] == ["user_id"]:
+            # Удаляем его по тому имени, которое вернула сама БД
+            op.drop_constraint(fk["name"], "generation_feedbacks", type_="foreignkey")
+
     op.create_foreign_key(
         op.f("fk_generation_feedbacks_generation_id_generations"),
         "generation_feedbacks",
