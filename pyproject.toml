@@ -86,7 +86,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # Корень проекта и каталог src в sys.path: тесты импортируют config, models, handlers напрямую
 pythonpath = [".", "src"]
-testpaths = ["tests"]
+testpaths = ["src/domains"]
 markers = [
     "unit: быстрые изолированные тесты (сеть и БД замоканы)",
     "integration: тесты с реальной in-memory БД",
@@ -98,7 +98,8 @@ addopts = "--cov --cov-report=term-missing:skip-covered"
 # Измеряем только код проекта — тесты и зависимости не считаем.
 # bot.py не включён: это точка входа с polling, в тестах не импортируется,
 # из-за чего coverage предупреждал "Module bot was never imported"
-source = ["core", "domains", "handlers", "services"]
+source = ["core", "domains"]
+omit = ["*/tests/*", "*/test_*.py"]
 
 [tool.coverage.report]
 show_missing = true
