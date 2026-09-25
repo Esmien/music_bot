@@ -21,10 +21,11 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from core.config import UIConfig
 from core.utils.error_notify import notify_owner
+from domains.auth.service import is_authorized
+from domains.base.keyboards import get_main_keyboard
 from fsm.enricher_fsm import PromptEnricherStates
 from fsm.generation_fsm import MAX_PROMPT_LEN, GenerationStates
-from handlers.auth import is_authorized
-from keyboards.default_keyboards import get_cancel_keyboard, get_main_keyboard
+from keyboards.default_keyboards import get_cancel_keyboard
 from keyboards.enricher_keyboards import (
     CB_PROMPT_APPROVE,
     CB_PROMPT_CANCEL,
@@ -41,8 +42,6 @@ log = logging.getLogger(__name__)
 
 router = Router()
 
-# Подсказка о том, что можно указать в описании песни: длинный копирайт
-# вынесен в константу уровня модуля — её отправляет cmd_generate
 PROMPT_HINT = (
     "✍️ <b>Опишите песню, которую хотите услышать.</b>\n\n"
     "Можно просто прислать стихи — музыку подберу сам.\n"
@@ -71,15 +70,11 @@ PROMPT_HINT = (
     "<b>Шаблон — нажмите, чтобы скопировать:</b>"
 )
 
-# Копируемый шаблон описания песни
 PROMPT_TEMPLATE = "Жанр: \n\nНастроение: \n\nИнструменты: \n\nТемп и ритм: \n\nГолос: \n\nТекст песни: \n"
-# Маркеры полей шаблона: детекция формата ввода и отсечение пустого шаблона
 _PROMPT_MARKERS = tuple(
     line.strip().split(":")[0] + ":" for line in PROMPT_TEMPLATE.split("\n") if line.strip().endswith(":")
-)  # ("Жанр:", "Настроение:", "Инструменты:", "Темп и ритм:", "Голос:", "Текст песни:")
-_FIELD_NAMES = tuple(marker[:-1] for marker in _PROMPT_MARKERS)  # тут они уже без ":"
-
-# Парсим шаблон на предмет заполненности полей
+)
+_FIELD_NAMES = tuple(marker[:-1] for marker in _PROMPT_MARKERS)
 _EMPTY_FIELD_RE = re.compile(
     r"^\s*(?:" + "|".join(map(re.escape, _FIELD_NAMES)) + r")\s*:\s*$",
     flags=re.MULTILINE,
@@ -89,10 +84,6 @@ _EMPTY_FIELD_RE = re.compile(
 def _build_generation_prompt(text: str) -> str:
     """Оборачивает текст описания в промпт для сервиса генерации.
 
-    Модель явно инструктируется петь по-русски. Формулировка выбирается
-    по маркерам шаблона: структурированный бриф и просто стихи
-    оборачиваются по-разному.
-
     Args:
         text: Обогащённый или исходный текст описания песни.
 
@@ -100,13 +91,11 @@ def _build_generation_prompt(text: str) -> str:
         Промпт, готовый к отправке в сервис генерации.
     """
     if any(marker in text for marker in _PROMPT_MARKERS):
-        # Текст структурирован по шаблону — оставляем структуру
         return (
             "Create a song based on the following brief. "
             "If the lyrics are provided in Russian, sing in Russian.\n\n"
             f"{text}"
         )
-    # Пришли просто стихи — не пугаем модель словом "brief"
     return f"Create a song based on these lyrics. If the lyrics are in Russian, sing in Russian.\n\n{text}"
 
 
@@ -115,22 +104,19 @@ async def _is_actual_enrich(state: FSMContext, enrich_id: str) -> bool:
 
     Args:
         state: Состояние FSM пользователя.
-        enrich_id: Маркер запуска обогащения из контекста.
+        enrich_id: Маркер запуска обогащения.
 
     Returns:
-        True, если маркер в FSM совпадает с текущим запуском.
+        True, если маркер совпадает с текущим запуском.
     """
     return (await state.get_data()).get("enrich_id") == enrich_id
 
 
 async def _ensure_callback_authorized(callback: CallbackQuery, state: FSMContext) -> bool:
-    """Гарантирует авторизацию для нажатий по инлайн-кнопкам сценария.
-
-    Кнопки могли остаться в чате после logout: без проверки отозванный
-    ключ позволил бы продолжать сценарий обогащения.
+    """Проверяет авторизацию для нажатий по инлайн-кнопкам сценария.
 
     Args:
-        callback: Нажатие по инлайн-кнопке сценария.
+        callback: Нажатие по инлайн-кнопке.
         state: FSM-контекст текущего пользователя.
 
     Returns:
@@ -144,16 +130,12 @@ async def _ensure_callback_authorized(callback: CallbackQuery, state: FSMContext
 
 
 async def _save_feedback_best_effort(status: Message, uid: int, initial_prompt: str, enriched_prompt: str) -> None:
-    """Сохраняет пару «исходный → обогащённый» промпт в БД, не блокируя сценарий.
-
-    Запись нужна хендлерам оценки после генерации; сбой записи не должен
-    останавливать диалог, поэтому ошибка уходит владельцу, а пользователь
-    продолжает сценарий.
+    """Сохраняет пару промптов в БД, не блокируя сценарий.
 
     Args:
-        status: Сообщение-лоадер (нужно ради бота для уведомления владельцу).
+        status: Сообщение-лоадер для уведомления владельца.
         uid: Telegram user_id пользователя.
-        initial_prompt: Исходный промпт от пользователя.
+        initial_prompt: Исходный промпт пользователя.
         enriched_prompt: Обогащённый промпт.
     """
     try:
@@ -169,18 +151,7 @@ async def _save_feedback_best_effort(status: Message, uid: int, initial_prompt: 
 
 
 async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str, uid: int) -> None:
-    """Дергает обогатитель и показывает результат или клавиатуру сбоя.
-
-    Первое обогащение уходит с исходной идеей, повтор после правок —
-    с историей диалога (идея → прошлый ответ → правки). Перед показом
-    результата проверяется актуальность запуска: если сценарий отменили
-    («❌ Отмена», /start), результат тихо отбрасывается, чтобы не
-    воскрешать сценарий поверх нового состояния.
-
-    В FSM под ключом enriched_prompt хранится сырой JSON-ответ обогатителя
-    (он нужен для истории правок, фидбека и промпта генерации), а
-    пользователю показывается отформатированная версия через
-    format_enriched_prompt.
+    """Запускает обогатитель и показывает результат или клавиатуру сбоя.
 
     Args:
         status: Сообщение-лоадер, которое редактируется по завершении.
@@ -195,7 +166,6 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
 
     try:
         if edits_text and enriched_prev:
-            # Правки: модель видит исходную идею, свой прошлый ответ и правки
             history = [
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": enriched_prev},
@@ -204,8 +174,6 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
         else:
             result = await enrich_prompt(prompt=prompt)
     except ValueError as error:
-        # Обогатитель не сконфигурирован: ретрай бессмысленен,
-        # но пользователь может продолжить без обогащения
         if await _is_actual_enrich(state=state, enrich_id=enrich_id):
             await state.update_data(enriching=False)
         with contextlib.suppress(Exception):
@@ -221,7 +189,6 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
             )
         return
 
-    # Сценарий отменили, пока обогащение работало, — результат не показываем
     if not await _is_actual_enrich(state=state, enrich_id=enrich_id):
         log.info("Stale enrichment result dropped (user=%s)", uid)
         return
@@ -229,7 +196,6 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
     await state.update_data(enriching=False)
 
     if result is None:
-        # Сетевой сбой или пустой ответ: повтор или продолжение без обогащения
         with contextlib.suppress(Exception):
             await status.edit_text(
                 text="😔 Не получилось обогатить описание. Попробуйте ещё раз или продолжите без обогащения.",
@@ -239,12 +205,8 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
 
     await state.update_data(enriched_prompt=result)
     log.info("Enrichment succeeded (user=%s, edits=%s)", uid, bool(edits_text))
-
-    # Пользователю показываем отформатированный текст, в FSM остаётся сырой JSON
     display_text = format_enriched_prompt(raw=result)
 
-    # У бота по умолчанию parse_mode=HTML: ответ модели экранируем,
-    # чтобы символы разметки в нём не ломали сообщение
     with contextlib.suppress(Exception):
         await status.edit_text(
             text=(
@@ -261,16 +223,8 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
 async def handle_idea(message: Message, state: FSMContext):
     """Принимает описание песни и запускает обогащение.
 
-    Валидирует ввод: непустой текст, лимит длины, нетронутый шаблон.
-    Идея сохраняется в FSM под ключом prompt (после аппрува туда же
-    запишется промпт, готовый к генерации). Обогащение идет синхронно
-    в хендлере: на время запроса выставляется флаг enriching с маркером
-    enrich_id — повторные сообщения отсекаются, а отмена сценария
-    делает результат «протухшим». Если бот перезапустился посреди
-    обогащения, флаг снимается кнопкой «❌ Отмена» или /start.
-
     Args:
-        message: Входящее сообщение с описанием песни.
+        message: Сообщение с описанием песни.
         state: FSM-контекст текущего пользователя.
     """
     prompt = message.text.strip()
@@ -282,9 +236,7 @@ async def handle_idea(message: Message, state: FSMContext):
         await message.answer(text=f"Слишком длинный текст: {len(prompt)} символов. Максимум — {MAX_PROMPT_LEN}.")
         return
 
-    # Отсекаем нетронутый шаблон: все поля пустые
-    filled = _EMPTY_FIELD_RE.sub("", prompt)
-    if not filled.strip():
+    if not _EMPTY_FIELD_RE.sub("", prompt).strip():
         await message.answer(text="Шаблон пришёл пустым 🙂 Заполните хотя бы поле «Текст песни».")
         return
 
@@ -294,8 +246,6 @@ async def handle_idea(message: Message, state: FSMContext):
         return
 
     enrich_id = uuid4().hex
-    # Начинаем новый сценарий: гасим следы предыдущего запуска, иначе
-    # старые enriched_prompt/pending_edits уведут обогащение по пути правок
     await state.update_data(
         prompt=prompt,
         enriched_prompt=None,
@@ -304,21 +254,15 @@ async def handle_idea(message: Message, state: FSMContext):
         enrich_id=enrich_id,
     )
     status = await message.answer(text="🔄 Обогащаю описание песни… Это может занять до пары минут.")
-
     await _enrich_and_present(status=status, state=state, enrich_id=enrich_id, uid=message.from_user.id)
 
 
 @router.callback_query(PromptEnricherStates.waiting_for_approval, F.data == CB_PROMPT_APPROVE)
 async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
-    """Аппрув обогащённого промпта: финализация и запрос названия песни.
-
-    Обогащённый текст оборачивается в промпт для генерации и пишется
-    в FSM под ключом prompt — его же используют конвейер генерации
-    и повтор после сбоя. Инлайн-клавиатура снимается, чтобы сценарий
-    нельзя было пройти повторно по оставшейся в чате кнопке.
+    """Финализирует обогащённый промпт и запрашивает название песни.
 
     Args:
-        callback: Нажатие на кнопку «✅ Подтвердить».
+        callback: Нажатие на кнопку подтверждения.
         state: FSM-контекст текущего пользователя.
     """
     if not await _ensure_callback_authorized(callback=callback, state=state):
@@ -327,12 +271,10 @@ async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     enriched = data.get("enriched_prompt")
     if not enriched:
-        # Сессия потерялась (перезапуск бота / чистка FSM) — просим начать заново
         await callback.answer(text="Начните заново: 🎵 Сгенерировать", show_alert=True)
         await state.clear()
         return
 
-    # Фидбек пишем до финализации: в data["prompt"] ещё исходная идея пользователя
     await _save_feedback_best_effort(
         status=callback.message,
         uid=callback.from_user.id,
@@ -346,17 +288,17 @@ async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(GenerationStates.waiting_for_title)
     await callback.message.answer(
-        text=(f"🎤 Введите название песни или нажмите «Оставить как есть»:\n({UIConfig.DEFAULT_TITLE})"),
+        text=f"🎤 Введите название песни или нажмите «Оставить как есть»:\n({UIConfig.DEFAULT_TITLE})",
         reply_markup=get_title_keyboard(),
     )
 
 
 @router.callback_query(PromptEnricherStates.waiting_for_approval, F.data == CB_PROMPT_EDIT)
 async def handle_prompt_edit(callback: CallbackQuery, state: FSMContext):
-    """Переводит сценарий в ожидание правок обогащённого промпта.
+    """Переводит сценарий в ожидание правок.
 
     Args:
-        callback: Нажатие на кнопку «✏️ Изменить».
+        callback: Нажатие на кнопку изменения.
         state: FSM-контекст текущего пользователя.
     """
     if not await _ensure_callback_authorized(callback=callback, state=state):
@@ -374,14 +316,10 @@ async def handle_prompt_edit(callback: CallbackQuery, state: FSMContext):
 
 @router.message(PromptEnricherStates.waiting_for_edits, F.text)
 async def handle_prompt_edits(message: Message, state: FSMContext):
-    """Принимает правки и повторно обогащает промпт с историей диалога.
-
-    Правки уходят в обогатитель вместе с исходной идеей и прошлым
-    вариантом обогащения. Результат снова показывается на аппрув;
-    при сбое — кнопки повтора и продолжения без обогащения.
+    """Принимает правки и повторно запускает обогащение.
 
     Args:
-        message: Входящее сообщение с правками.
+        message: Сообщение с правками.
         state: FSM-контекст текущего пользователя.
     """
     edits_text = message.text.strip()
@@ -395,7 +333,6 @@ async def handle_prompt_edits(message: Message, state: FSMContext):
 
     data = await state.get_data()
     if not data.get("prompt"):
-        # Сессия потерялась (перезапуск бота / чистка FSM) — начинаем заново
         await message.answer(
             text="😔 Сессия обогащения потерялась. Начните заново — нажмите «🎵 Сгенерировать».",
             reply_markup=get_main_keyboard(),
@@ -409,7 +346,6 @@ async def handle_prompt_edits(message: Message, state: FSMContext):
     enrich_id = uuid4().hex
     await state.update_data(pending_edits=edits_text, enriching=True, enrich_id=enrich_id)
     status = await message.answer(text="🔄 Обогащаю с учётом правок… Это может занять до пары минут.")
-
     await _enrich_and_present(status=status, state=state, enrich_id=enrich_id, uid=message.from_user.id)
 
 
@@ -418,17 +354,10 @@ async def handle_prompt_edits(message: Message, state: FSMContext):
     F.data == CB_PROMPT_RETRY,
 )
 async def handle_prompt_retry(callback: CallbackQuery, state: FSMContext):
-    """Повторный запуск обогащения после сбоя.
-
-    Доступен только авторизованным и пока сценарий не ушёл дальше
-    (стейт waiting_for_idea или waiting_for_edits): кнопка могла
-    остаться в чате после аппрува или отмены. Контекст берётся из FSM
-    в момент нажатия: первый запуск обогащает исходную идею, повтор
-    после правок — историю диалога с правками. Сообщение с кнопкой
-    сбоя переиспользуется как лоадер.
+    """Повторно запускает обогащение после сбоя.
 
     Args:
-        callback: Нажатие на кнопку «🔄 Попробовать снова».
+        callback: Нажатие на кнопку повтора.
         state: FSM-контекст текущего пользователя.
     """
     if not await _ensure_callback_authorized(callback=callback, state=state):
@@ -448,7 +377,6 @@ async def handle_prompt_retry(callback: CallbackQuery, state: FSMContext):
     await state.update_data(enriching=True, enrich_id=enrich_id)
     with contextlib.suppress(Exception):
         await callback.message.edit_text(text="🔄 Обогащаю описание песни… Это может занять до пары минут.")
-
     await _enrich_and_present(status=callback.message, state=state, enrich_id=enrich_id, uid=callback.from_user.id)
 
 
@@ -459,13 +387,8 @@ async def handle_prompt_retry(callback: CallbackQuery, state: FSMContext):
 async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
     """Продолжает сценарий без обогащения после сбоя.
 
-    Берёт последний удачный обогащённый вариант, если он был (правки
-    могли не обогатиться, но предыдущая версия лучше сырого текста),
-    иначе — исходную идею. Текст оборачивается в промпт для генерации,
-    состояние переводится в ожидание названия.
-
     Args:
-        callback: Нажатие на кнопку «⏭ Без обогащения».
+        callback: Нажатие на кнопку продолжения без обогащения.
         state: FSM-контекст текущего пользователя.
     """
     if not await _ensure_callback_authorized(callback=callback, state=state):
@@ -479,9 +402,7 @@ async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
         return
 
     await callback.answer()
-    # Последний удачный вариант обогащения приоритетнее сырого текста
     final_text = data.get("enriched_prompt") or prompt
-    # Фидбек пишем до финализации: в data["prompt"] ещё исходная идея пользователя
     await _save_feedback_best_effort(
         status=callback.message,
         uid=callback.from_user.id,
@@ -494,7 +415,7 @@ async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(GenerationStates.waiting_for_title)
     await callback.message.answer(
-        text=(f"🎤 Введите название песни или нажмите «Оставить как есть»:\n({UIConfig.DEFAULT_TITLE})"),
+        text=f"🎤 Введите название песни или нажмите «Оставить как есть»:\n({UIConfig.DEFAULT_TITLE})",
         reply_markup=get_title_keyboard(),
     )
 
@@ -504,10 +425,10 @@ async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
     F.data == CB_PROMPT_CANCEL,
 )
 async def handle_prompt_cancel(callback: CallbackQuery, state: FSMContext):
-    """Отменяет сценарий обогащения и возвращает в главное меню.
+    """Отменяет сценарий обогащения и возвращает пользователя в главное меню.
 
     Args:
-        callback: Нажатие на кнопку «❌ Отменить».
+        callback: Нажатие на кнопку отмены.
         state: FSM-контекст текущего пользователя.
     """
     if not await _ensure_callback_authorized(callback=callback, state=state):

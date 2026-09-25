@@ -11,8 +11,8 @@ from aiogram.types import Message
 from core.config import UIConfig, settings
 from core.utils.error_notify import notify_owner
 from core.utils.exceptions import APINotSet
-from handlers.auth import _require_auth
-from keyboards.default_keyboards import get_main_keyboard
+from domains.auth.handlers import _require_auth
+from domains.base.keyboards import get_main_keyboard
 
 log = logging.getLogger(__name__)
 
@@ -25,8 +25,8 @@ async def cmd_credits(message: Message, state: FSMContext):
     """Показывает остаток генераций по данным API OpenRouter.
 
     Args:
-        message: Входящее сообщение (команда или нажатие кнопки).
-        state: FSM-контекст; сбрасываем, чтобы прервать незавершённую генерацию.
+        message: Входящее сообщение.
+        state: FSM-контекст; очищается для отмены незавершённого сценария.
     """
     if not await _require_auth(message):
         return
@@ -51,14 +51,14 @@ async def cmd_credits(message: Message, state: FSMContext):
             used = key_info.get("usage")
 
             def _songs_counter(value: int | float | None, placeholder: str) -> int | str:
-                """Конвертирует сумму в долларах в примерное количество песен.
+                """Конвертирует сумму в долларах в примерное число песен.
 
                 Args:
-                    value: Сумма (int/float) или None, если API не вернул значение.
-                    placeholder: Заглушка для случая, когда посчитать нельзя.
+                    value: Сумма или None, если API не вернул значение.
+                    placeholder: Заглушка, если посчитать нельзя.
 
                 Returns:
-                    Целое число песен либо placeholder, если value не число или цена не задана.
+                    Число песен либо placeholder.
                 """
                 if isinstance(value, (int, float)) and settings.generation.SONG_PRICE > 0:
                     return int(value / settings.generation.SONG_PRICE)
@@ -69,10 +69,12 @@ async def cmd_credits(message: Message, state: FSMContext):
             remaining_songs = _songs_counter(value=remaining, placeholder="Невозможно посчитать")
 
             await message.answer(
-                text=f"💳 Баланс песен:\n"
-                f"Всего доступно генераций: {total_songs}\n"
-                f"Сгенерировано композиций: {used_songs}\n"
-                f"Доступное количество генераций: {remaining_songs}",
+                text=(
+                    f"💳 Баланс песен:\n"
+                    f"Всего доступно генераций: {total_songs}\n"
+                    f"Сгенерировано композиций: {used_songs}\n"
+                    f"Доступное количество генераций: {remaining_songs}"
+                ),
                 reply_markup=get_main_keyboard(),
             )
     except httpx.HTTPError as error:

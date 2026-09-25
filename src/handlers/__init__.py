@@ -1,14 +1,10 @@
-"""Пакет обработчиков Telegram-бота.
-
-Собирает роутеры отдельных модулей в один общий роутер,
-который подключается в bot.py: `from handlers import router`.
-"""
+"""Пакет обработчиков Telegram-бота."""
 
 from aiogram import Router
 
+from domains.auth.handlers import router as auth_router
+from domains.base.handlers import router as base_router
 from handlers import (
-    auth,
-    base_handlers,
     credits_handlers,
     enricher_handlers,
     evaluation_handlers,
@@ -17,13 +13,10 @@ from handlers import (
 )
 
 router = Router()
-# Порядок важен: aiogram проверяет хендлеры по очереди.
-# base_handlers первым — универсальная отмена не должна перехватываться
-# сценарными хендлерами, а catch-all fallback из auth — последним.
-router.include_router(base_handlers.router)
+router.include_router(base_router)
 router.include_router(generation_handlers.router)
 router.include_router(enricher_handlers.router)
 router.include_router(evaluation_handlers.router)
 router.include_router(feedback_handlers.router)
 router.include_router(credits_handlers.router)
-router.include_router(auth.router)
+router.include_router(auth_router)
