@@ -15,6 +15,15 @@ from core.database import User
 from core.database.engine import get_session
 from core.utils.error_notify import notify_owner
 from core.utils.exceptions import AccessKeyNotSet
+from domains.auth.auth_messages import (
+    ACCESS_KEY_CONFIGURATION_ERROR,
+    ACCESS_KEY_REQUIRED,
+    AUTHENTICATION_REQUIRED,
+    AUTHENTICATION_SUCCESS,
+    LOGOUT_DATABASE_ERROR,
+    LOGOUT_SUCCESS,
+    UNKNOWN_MESSAGE,
+)
 from domains.auth.service import (
     check_key_with_attempts,
     discard_pending_auth,
@@ -74,7 +83,7 @@ async def _require_auth(message: Message) -> bool:
     uid = message.from_user.id
     if await is_pending_auth(uid=uid) or not await is_authorized(uid=uid):
         await message.answer(
-            text="Требуется ключ доступа. Нажмите /start, чтобы ввести",
+            text=ACCESS_KEY_REQUIRED,
             reply_markup=ReplyKeyboardRemove(),
         )
         return False
@@ -115,7 +124,7 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
             context=f"Logout упал (user={uid}, username={message.from_user.username!r})",
             err=error,
         )
-        await message.answer(text="Не удалось выйти. Генерация продолжается.")
+        await message.answer(text=LOGOUT_DATABASE_ERROR)
         return
 
     task = get_active_task(uid=uid)
@@ -125,7 +134,7 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
     await state.clear()
 
     log.info("User %s logged out", uid)
-    await message.answer(text="👋 Вы вышли. /start чтобы войти снова.", reply_markup=ReplyKeyboardRemove())
+    await message.answer(text=LOGOUT_SUCCESS, reply_markup=ReplyKeyboardRemove())
 
 
 @router.message(F.text, NotCommand(), IsPendingAuth())
@@ -150,7 +159,7 @@ async def handle_key(message: Message) -> None:
             context="Не настроен ключ входа, необходимо проверить.",
             err=AccessKeyNotSet("BOT_ACCESS_KEY is empty"),
         )
-        await message.answer(text="⚠️ Бот не настроен. Владелец уже уведомлен.")
+        await message.answer(text=ACCESS_KEY_CONFIGURATION_ERROR)
         return
 
     error_text = await check_key_with_attempts(key=message.text.strip(), expected=expected_key, uid=uid)
@@ -162,7 +171,7 @@ async def handle_key(message: Message) -> None:
 
     await mark_user_authorized(uid=uid)
     await discard_pending_auth(uid=uid)
-    await message.answer(text="✅ Вы успешно авторизованы!", reply_markup=get_main_keyboard())
+    await message.answer(text=AUTHENTICATION_SUCCESS, reply_markup=get_main_keyboard())
 
 
 @router.message(F.text, NotCommand())
@@ -179,8 +188,8 @@ async def fallback(message: Message) -> None:
 
     if not await is_authorized(uid=uid):
         await message.answer(
-            text="🔒 Сначала /start и введите ключ доступа.",
+            text=AUTHENTICATION_REQUIRED,
             reply_markup=ReplyKeyboardRemove(),
         )
         return
-    await message.answer(text="Не понял. Используйте кнопки внизу.", reply_markup=get_main_keyboard())
+    await message.answer(text=UNKNOWN_MESSAGE, reply_markup=get_main_keyboard())
