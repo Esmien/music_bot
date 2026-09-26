@@ -143,11 +143,6 @@ class UIConfig:
     LOGOUT_BUTTON = "🚪 Выйти"
     CANCEL_BUTTON = "❌ Отмена"
 
-    PROMPT_APPROVE_BUTTON = "✅ Подтвердить"
-    PROMPT_EDIT_BUTTON = "✏️ Изменить"
-    PROMPT_CANCEL_BUTTON = "❌ Отменить"
-    PROMPT_RETRY_BUTTON = "🔄 Попробовать снова"
-    PROMPT_FALLBACK_BUTTON = "⏭ Без обогащения"
     DEFAULT_TITLE = "Lyria's_Generated_song"
     EVALUATION_LIKE_BUTTON = "👍"
     EVALUATION_DISLIKE_BUTTON = "👎"

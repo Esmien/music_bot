@@ -3,7 +3,6 @@
 import contextlib
 import html
 import logging
-import re
 from uuid import uuid4
 
 from aiogram import F, Router
@@ -12,10 +11,33 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.exc import SQLAlchemyError
 
-from core.config import UIConfig
 from core.utils.error_notify import notify_owner
 from domains.auth.service import is_authorized
 from domains.base.keyboards import get_cancel_keyboard, get_main_keyboard
+from domains.enricher.enricher_messages import (
+    ACCESS_DENIED_MSG,
+    EMPTY_FIELD_RE,
+    EMPTY_PROMPT_EDITS,
+    EMPTY_PROMPT_MSG,
+    EMPTY_TEMPLATE_MSG,
+    ENRICH_CANCELED,
+    ENRICH_FAIL,
+    ENRICH_IN_PROGRESS_MSG,
+    ENRICH_RESULT_MSG,
+    ENRICH_RETRY_IN_PROGRESS_MSG,
+    ENRICH_SESSION_FAILURE,
+    ENRICH_STARTS_MSG,
+    ENRICH_STARTS_WITH_EDITS,
+    ENRICHER_IS_BROKEN,
+    NOTIFY_ENRICHER_NOT_CONFIGURED_CTX,
+    NOTIFY_SAVE_PROMPT_FAILED_CTX,
+    PROMPT_MARKERS,
+    PROMPT_TOO_LONG_MSG,
+    RETURN_TO_START,
+    RUN_AGAIN,
+    WAITING_PROMPT_EDITS,
+    WAITING_TITLE_MSG,
+)
 from domains.enricher.fsm import PromptEnricherStates
 from domains.enricher.keyboards import (
     CB_PROMPT_APPROVE,
@@ -34,44 +56,6 @@ log = logging.getLogger(__name__)
 
 router = Router()
 
-PROMPT_HINT = (
-    "✍️ <b>Опишите песню, которую хотите услышать.</b>\n\n"
-    "Можно просто прислать стихи — музыку подберу сам.\n"
-    "А можно подсказать, как именно она должна звучать.\n\n"
-    "<blockquote expandable>"
-    "<b>Что можно указать:</b>\n\n"
-    "<b>Жанр и стиль</b>\n"
-    "    русский рок, эстрада 80-х, авторская песня, "
-    "частушки, романс\n\n"
-    "<b>Настроение</b>\n"
-    "    весёлое, грустное, задумчивое, озорное, "
-    "торжественное\n\n"
-    "<b>Инструменты</b>\n"
-    "    гитара и баян, фортепиано и скрипка, "
-    "только акустика, с барабанами\n\n"
-    "<b>Темп и ритм</b>\n"
-    "    медленно и плавно, быстро и зажигательно, "
-    "в ритме вальса, марш\n\n"
-    "<b>Голос</b>\n"
-    "    женский, мягкий и нежный, на русском языке\n\n"
-    "<b>Текст песни</b>\n"
-    "    ваши стихи или тема, о чём петь\n"
-    "</blockquote>\n"
-    "💡 <i>Достаточно заполнить 2–3 пункта — "
-    "остальное додумаю сам.</i>\n\n"
-    "<b>Шаблон — нажмите, чтобы скопировать:</b>"
-)
-
-PROMPT_TEMPLATE = "Жанр: \n\nНастроение: \n\nИнструменты: \n\nТемп и ритм: \n\nГолос: \n\nТекст песни: \n"
-_PROMPT_MARKERS = tuple(
-    line.strip().split(":")[0] + ":" for line in PROMPT_TEMPLATE.split("\n") if line.strip().endswith(":")
-)
-_FIELD_NAMES = tuple(marker[:-1] for marker in _PROMPT_MARKERS)
-_EMPTY_FIELD_RE = re.compile(
-    r"^\s*(?:" + "|".join(map(re.escape, _FIELD_NAMES)) + r")\s*:\s*$",
-    flags=re.MULTILINE,
-)
-
 
 def _build_generation_prompt(text: str) -> str:
     """Оборачивает пользовательский текст в промпт для генерации.
@@ -82,7 +66,7 @@ def _build_generation_prompt(text: str) -> str:
     Returns:
         Промпт для сервиса генерации.
     """
-    if any(marker in text for marker in _PROMPT_MARKERS):
+    if any(marker in text for marker in PROMPT_MARKERS):
         return (
             "Create a song based on the following brief. "
             "If the lyrics are provided in Russian, sing in Russian.\n\n"
@@ -116,7 +100,7 @@ async def _ensure_callback_authorized(callback: CallbackQuery, state: FSMContext
     """
     if await is_authorized(callback.from_user.id):
         return True
-    await callback.answer(text="Доступ закрыт. Авторизуйтесь заново: /start", show_alert=True)
+    await callback.answer(text=ACCESS_DENIED_MSG, show_alert=True)
     await state.clear()
     return False
 
@@ -137,7 +121,7 @@ async def _save_feedback_best_effort(status: Message, uid: int, initial_prompt: 
         with contextlib.suppress(Exception):
             await notify_owner(
                 bot=status.bot,
-                context=f"Не сохранился обогащённый промпт (user={uid})",
+                context=NOTIFY_SAVE_PROMPT_FAILED_CTX.format(uid=uid),
                 err=error,
             )
 
@@ -171,12 +155,12 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
         with contextlib.suppress(Exception):
             await notify_owner(
                 bot=status.bot,
-                context=f"Обогатитель не сконфигурирован (user={uid})",
+                context=NOTIFY_ENRICHER_NOT_CONFIGURED_CTX.format(uid=uid),
                 err=error,
             )
         with contextlib.suppress(Exception):
             await status.edit_text(
-                text="⚠️ Сервис обогащения не настроен. Владелец уже уведомлен.",
+                text=ENRICHER_IS_BROKEN,
                 reply_markup=get_enrich_failed_keyboard(),
             )
         return
@@ -190,7 +174,7 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
     if result is None:
         with contextlib.suppress(Exception):
             await status.edit_text(
-                text="😔 Не получилось обогатить описание. Попробуйте ещё раз или продолжите без обогащения.",
+                text=ENRICH_FAIL,
                 reply_markup=get_enrich_failed_keyboard(),
             )
         return
@@ -201,11 +185,7 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
 
     with contextlib.suppress(Exception):
         await status.edit_text(
-            text=(
-                "🪄 <b>Я подготовил описание песни:</b>\n\n"
-                f"<blockquote expandable>{html.escape(display_text)}</blockquote>\n\n"
-                "Подтвердите или пришлите правки."
-            ),
+            text=ENRICH_RESULT_MSG.format(display_text=html.escape(display_text)),
             reply_markup=get_prompt_approval_keyboard(),
         )
     await state.set_state(PromptEnricherStates.waiting_for_approval)
@@ -222,19 +202,19 @@ async def handle_idea(message: Message, state: FSMContext):
     prompt = message.text.strip()
 
     if not prompt:
-        await message.answer(text="Пожалуйста, введите непустой текст.")
+        await message.answer(text=EMPTY_PROMPT_MSG)
         return
     if len(prompt) > MAX_PROMPT_LEN:
-        await message.answer(text=f"Слишком длинный текст: {len(prompt)} символов. Максимум — {MAX_PROMPT_LEN}.")
+        await message.answer(text=PROMPT_TOO_LONG_MSG.format(length=len(prompt), max_len=MAX_PROMPT_LEN))
         return
 
-    if not _EMPTY_FIELD_RE.sub("", prompt).strip():
-        await message.answer(text="Шаблон пришёл пустым 🙂 Заполните хотя бы поле «Текст песни».")
+    if not EMPTY_FIELD_RE.sub("", prompt).strip():
+        await message.answer(text=EMPTY_TEMPLATE_MSG)
         return
 
     data = await state.get_data()
     if data.get("enriching"):
-        await message.answer(text="⏳ Дождитесь окончания обогащения или нажмите «❌ Отмена».")
+        await message.answer(text=ENRICH_IN_PROGRESS_MSG)
         return
 
     enrich_id = uuid4().hex
@@ -245,7 +225,7 @@ async def handle_idea(message: Message, state: FSMContext):
         enriching=True,
         enrich_id=enrich_id,
     )
-    status = await message.answer(text="🔄 Обогащаю описание песни… Это может занять до пары минут.")
+    status = await message.answer(text=ENRICH_STARTS_MSG)
     await _enrich_and_present(status=status, state=state, enrich_id=enrich_id, uid=message.from_user.id)
 
 
@@ -263,7 +243,7 @@ async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     enriched = data.get("enriched_prompt")
     if not enriched:
-        await callback.answer(text="Начните заново: 🎵 Сгенерировать", show_alert=True)
+        await callback.answer(text=RUN_AGAIN, show_alert=True)
         await state.clear()
         return
 
@@ -280,7 +260,7 @@ async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(GenerationStates.waiting_for_title)
     await callback.message.answer(
-        text=f"🎤 Введите название песни или нажмите «Оставить как есть»:\n({UIConfig.DEFAULT_TITLE})",
+        text=WAITING_TITLE_MSG,
         reply_markup=get_title_keyboard(),
     )
 
@@ -301,7 +281,7 @@ async def handle_prompt_edit(callback: CallbackQuery, state: FSMContext):
     with contextlib.suppress(Exception):
         await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
-        text="✏️ Пришлите правки: что изменить в описании песни.",
+        text=WAITING_PROMPT_EDITS,
         reply_markup=get_cancel_keyboard(),
     )
 
@@ -317,27 +297,27 @@ async def handle_prompt_edits(message: Message, state: FSMContext):
     edits_text = message.text.strip()
 
     if not edits_text:
-        await message.answer(text="Пожалуйста, введите непустые правки.")
+        await message.answer(text=EMPTY_PROMPT_EDITS)
         return
     if len(edits_text) > MAX_PROMPT_LEN:
-        await message.answer(text=f"Слишком длинный текст: {len(edits_text)} символов. Максимум — {MAX_PROMPT_LEN}.")
+        await message.answer(text=PROMPT_TOO_LONG_MSG.format(length=len(edits_text), max_len=MAX_PROMPT_LEN))
         return
 
     data = await state.get_data()
     if not data.get("prompt"):
         await message.answer(
-            text="😔 Сессия обогащения потерялась. Начните заново — нажмите «🎵 Сгенерировать».",
+            text=ENRICH_SESSION_FAILURE,
             reply_markup=get_main_keyboard(),
         )
         await state.clear()
         return
     if data.get("enriching"):
-        await message.answer(text="⏳ Дождитесь окончания обогащения или нажмите «❌ Отмена».")
+        await message.answer(text=ENRICH_IN_PROGRESS_MSG)
         return
 
     enrich_id = uuid4().hex
     await state.update_data(pending_edits=edits_text, enriching=True, enrich_id=enrich_id)
-    status = await message.answer(text="🔄 Обогащаю с учётом правок… Это может занять до пары минут.")
+    status = await message.answer(text=ENRICH_STARTS_WITH_EDITS)
     await _enrich_and_present(status=status, state=state, enrich_id=enrich_id, uid=message.from_user.id)
 
 
@@ -357,10 +337,10 @@ async def handle_prompt_retry(callback: CallbackQuery, state: FSMContext):
 
     data = await state.get_data()
     if data.get("enriching"):
-        await callback.answer(text="Обогащение уже выполняется.", show_alert=True)
+        await callback.answer(text=ENRICH_RETRY_IN_PROGRESS_MSG, show_alert=True)
         return
     if not data.get("prompt"):
-        await callback.answer(text="Начните заново: 🎵 Сгенерировать", show_alert=True)
+        await callback.answer(text=RUN_AGAIN, show_alert=True)
         await state.clear()
         return
 
@@ -368,7 +348,7 @@ async def handle_prompt_retry(callback: CallbackQuery, state: FSMContext):
     enrich_id = uuid4().hex
     await state.update_data(enriching=True, enrich_id=enrich_id)
     with contextlib.suppress(Exception):
-        await callback.message.edit_text(text="🔄 Обогащаю описание песни… Это может занять до пары минут.")
+        await callback.message.edit_text(text=ENRICH_STARTS_MSG)
     await _enrich_and_present(status=callback.message, state=state, enrich_id=enrich_id, uid=callback.from_user.id)
 
 
@@ -389,7 +369,7 @@ async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     prompt = data.get("prompt")
     if not prompt:
-        await callback.answer(text="Начните заново: 🎵 Сгенерировать", show_alert=True)
+        await callback.answer(text=RUN_AGAIN, show_alert=True)
         await state.clear()
         return
 
@@ -407,7 +387,7 @@ async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_reply_markup(reply_markup=None)
     await state.set_state(GenerationStates.waiting_for_title)
     await callback.message.answer(
-        text=f"🎤 Введите название песни или нажмите «Оставить как есть»:\n({UIConfig.DEFAULT_TITLE})",
+        text=WAITING_TITLE_MSG,
         reply_markup=get_title_keyboard(),
     )
 
@@ -429,5 +409,5 @@ async def handle_prompt_cancel(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
     with contextlib.suppress(Exception):
-        await callback.message.edit_text(text="Сценарий обогащения отменён.")
-    await callback.message.answer(text="Возвращаю в главное меню.", reply_markup=get_main_keyboard())
+        await callback.message.edit_text(text=ENRICH_CANCELED)
+    await callback.message.answer(text=RETURN_TO_START, reply_markup=get_main_keyboard())

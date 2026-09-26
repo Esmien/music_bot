@@ -10,8 +10,8 @@ from core.config import UIConfig
 from domains.auth.handlers import _require_auth
 from domains.auth.service import is_authorized
 from domains.base.keyboards import get_cancel_keyboard, get_main_keyboard
+from domains.enricher.enricher_messages import PROMPT_HINT, PROMPT_TEMPLATE
 from domains.enricher.fsm import PromptEnricherStates
-from domains.enricher.handlers import PROMPT_HINT, PROMPT_TEMPLATE
 from domains.enricher.keyboards import CB_TITLE_LEAVE_AS_IS
 from domains.generation.fsm import MAX_TITLE_LEN, GenerationStates
 from domains.generation.pipeline_handlers import generate_and_send

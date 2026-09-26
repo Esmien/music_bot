@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from domains.enricher import handlers as enricher_handlers
+from domains.enricher.enricher_messages import PROMPT_TEMPLATE
 from domains.enricher.fsm import PromptEnricherStates
 from domains.generation.fsm import MAX_PROMPT_LEN, GenerationStates
 
@@ -177,7 +178,7 @@ async def test_handle_idea_too_long(make_message, fake_state, enrich_stub):
 
 
 async def test_handle_idea_empty_template(make_message, fake_state, enrich_stub):
-    message = make_message(text=enricher_handlers.PROMPT_TEMPLATE)
+    message = make_message(text=PROMPT_TEMPLATE)
     state = fake_state()
 
     await enricher_handlers.handle_idea(message=message, state=state)
