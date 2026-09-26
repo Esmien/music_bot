@@ -17,8 +17,6 @@ kanban-plugin: board
 
 ## Backlog
 
-- [ ] [[0.4 Реестр и локи в Redis]]
-- [ ] [[1.1 RabbitMQ и taskiq в проект]]
 - [ ] [[1.2 Конфигурация брокера и сериализация]]
 - [ ] [[2.1 Переключение polling → webhook за флагом]]
 - [ ] [[2.2 Graceful shutdown и lifecycle]]
@@ -38,6 +36,7 @@ kanban-plugin: board
 
 ## In progress
 
+- [ ] [[1.1 RabbitMQ и taskiq в проект]]
 
 
 ## Testing
@@ -45,6 +44,7 @@ kanban-plugin: board
 - [ ] [[0.1 Публичные контракты auth вместо приватных импортов]]
 - [ ] [[0.2 Разрыв цикла generation ↔ enricher]]
 - [ ] [[0.3 Типизированные FSM-данные вместо магических строк]]
+- [ ] [[0.4 Реестр и локи в Redis]]
 
 
 ## Done

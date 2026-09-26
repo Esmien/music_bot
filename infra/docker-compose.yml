@@ -56,6 +56,25 @@ services:
       timeout: 5s
       retries: 5
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: ${COMPOSE_PROJECT_NAME}-rabbitmq
+    restart: always
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-songai}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-songai}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   redis_data:
+  rabbitmq_data:
