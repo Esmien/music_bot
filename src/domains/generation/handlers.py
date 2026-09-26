@@ -6,10 +6,12 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
 from domains.auth.handlers import require_auth
 from domains.auth.service import is_authorized
 from domains.base.keyboards import GENERATE_BUTTON, get_main_keyboard
 from domains.enricher.keyboards import CB_PROMPT_CANCEL, CB_TITLE_LEAVE_AS_IS
+from domains.enricher.state_models import EnrichmentFlowState
 from domains.generation.fsm import MAX_TITLE_LEN, GenerationStates
 from domains.generation.generation_messages import (
     ACCESS_DENIED_TEXT,
@@ -23,6 +25,7 @@ from domains.generation.generation_messages import (
     TITLE_TOO_LONG_TEXT,
 )
 from domains.generation.pipeline_handlers import generate_and_send
+from domains.generation.state_models import GenerationFlowState
 from domains.shared.ports import enrichment_flow_starter
 
 router = Router(name="generation")
@@ -39,11 +42,13 @@ async def cmd_generate(message: Message, state: FSMContext):
     if not await require_auth(message):
         return
 
-    data = await state.get_data()
-    if data.get("generating"):
+    gen_state = await get_fsm_data(state=state, model_class=GenerationFlowState)
+    enrich_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    
+    if gen_state.generating:
         await message.answer(text=GENERATION_CANCEL_WAIT_TEXT)
         return
-    if data.get("enriching"):
+    if enrich_state.enriching:
         await message.answer(text=ENRICHMENT_IN_PROGRESS_TEXT)
         return
 
@@ -63,13 +68,13 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
-    data = await state.get_data()
-    if data.get("generating"):
+    flow_state = await get_fsm_data(state=state, model_class=GenerationFlowState)
+    if flow_state.generating:
         await callback.answer(text=GENERATION_ALREADY_RUNNING_TEXT, show_alert=True)
         return
 
-    prompt = data.get("prompt")
-    title = data.get("title", DEFAULT_TITLE)
+    prompt = flow_state.prompt
+    title = flow_state.title or DEFAULT_TITLE
     if not prompt or not prompt.strip():
         await callback.answer(text=RESTART_GENERATION_TEXT, show_alert=True)
         await state.clear()
@@ -103,12 +108,12 @@ async def handle_title(message: Message, state: FSMContext):
         await message.answer(text=TITLE_TOO_LONG_TEXT.format(max_title_len=MAX_TITLE_LEN))
         return
 
-    data = await state.get_data()
-    if data.get("generating"):
+    flow_state = await get_fsm_data(state=state, model_class=GenerationFlowState)
+    if flow_state.generating:
         await message.answer(text=GENERATION_CANCEL_WAIT_TEXT)
         return
 
-    prompt = data.get("prompt")
+    prompt = flow_state.prompt
     if not prompt or not prompt.strip():
         await message.answer(
             text=PROMPT_LOST_TEXT,
@@ -117,7 +122,8 @@ async def handle_title(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    await state.update_data(title=title)
+    flow_state.title = title
+    await update_fsm_data(state=state, model=flow_state)
     await generate_and_send(message=message, state=state, prompt=prompt, title=title, user_id=message.from_user.id)
 
 
@@ -154,19 +160,20 @@ async def handle_title_leave_as_is(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
-    data = await state.get_data()
-    if data.get("generating"):
+    flow_state = await get_fsm_data(state=state, model_class=GenerationFlowState)
+    if flow_state.generating:
         await callback.answer(text=GENERATION_ALREADY_RUNNING_TEXT, show_alert=True)
         return
 
-    prompt = data.get("prompt")
+    prompt = flow_state.prompt
     if not prompt or not prompt.strip():
         await callback.answer(text=RESTART_GENERATION_TEXT, show_alert=True)
         await state.clear()
         return
 
     title = DEFAULT_TITLE
-    await state.update_data(title=title)
+    flow_state.title = title
+    await update_fsm_data(state=state, model=flow_state)
     await callback.answer()
     with contextlib.suppress(Exception):
         await callback.message.delete()

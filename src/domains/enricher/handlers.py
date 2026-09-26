@@ -12,6 +12,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.utils.error_notify import notify_owner
+from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
 from domains.auth.service import is_authorized
 from domains.base.keyboards import get_cancel_keyboard, get_main_keyboard
 from domains.enricher.enricher_messages import (
@@ -48,6 +49,7 @@ from domains.enricher.keyboards import (
     get_prompt_approval_keyboard,
 )
 from domains.enricher.service import enrich_prompt, format_enriched_prompt, save_enriched_prompt
+from domains.enricher.state_models import EnrichmentFlowState
 from domains.generation.fsm import MAX_PROMPT_LEN
 from domains.shared.ports import generation_flow_starter
 
@@ -84,7 +86,8 @@ async def _is_actual_enrich(state: FSMContext, enrich_id: str) -> bool:
     Returns:
         True, если идентификатор совпадает с сохранённым в FSM.
     """
-    return (await state.get_data()).get("enrich_id") == enrich_id
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    return flow_state.enrich_id == enrich_id
 
 
 async def _ensure_callback_authorized(callback: CallbackQuery, state: FSMContext) -> bool:
@@ -134,10 +137,10 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
         enrich_id: Идентификатор текущего запуска.
         uid: Telegram user_id пользователя.
     """
-    data = await state.get_data()
-    prompt = data.get("prompt", "")
-    enriched_prev = data.get("enriched_prompt")
-    edits_text = data.get("pending_edits")
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    prompt = flow_state.prompt or ""
+    enriched_prev = flow_state.enriched_prompt
+    edits_text = flow_state.pending_edits
 
     try:
         if edits_text and enriched_prev:
@@ -150,7 +153,9 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
             result = await enrich_prompt(prompt=prompt)
     except ValueError as error:
         if await _is_actual_enrich(state=state, enrich_id=enrich_id):
-            await state.update_data(enriching=False)
+            flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+            flow_state.enriching = False
+            await update_fsm_data(state=state, model=flow_state)
         with contextlib.suppress(Exception):
             await notify_owner(
                 bot=status.bot,
@@ -168,7 +173,10 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
         log.info("Stale enrichment result dropped (user=%s)", uid)
         return
 
-    await state.update_data(enriching=False)
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    flow_state.enriching = False
+    flow_state.enriched_prompt = result
+    await update_fsm_data(state=state, model=flow_state)
 
     if result is None:
         with contextlib.suppress(Exception):
@@ -178,7 +186,6 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
             )
         return
 
-    await state.update_data(enriched_prompt=result)
     log.info("Enrichment succeeded (user=%s, edits=%s)", uid, bool(edits_text))
     display_text = format_enriched_prompt(raw=result)
 
@@ -211,19 +218,19 @@ async def handle_idea(message: Message, state: FSMContext):
         await message.answer(text=EMPTY_TEMPLATE_MSG)
         return
 
-    data = await state.get_data()
-    if data.get("enriching"):
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    if flow_state.enriching:
         await message.answer(text=ENRICH_IN_PROGRESS_MSG)
         return
 
     enrich_id = uuid4().hex
-    await state.update_data(
-        prompt=prompt,
-        enriched_prompt=None,
-        pending_edits=None,
-        enriching=True,
-        enrich_id=enrich_id,
-    )
+    flow_state.prompt = prompt
+    flow_state.enriched_prompt = None
+    flow_state.pending_edits = None
+    flow_state.enriching = True
+    flow_state.enrich_id = enrich_id
+    await update_fsm_data(state=state, model=flow_state)
+    
     status = await message.answer(text=ENRICH_STARTS_MSG)
     await _enrich_and_present(status=status, state=state, enrich_id=enrich_id, uid=message.from_user.id)
 
@@ -239,8 +246,8 @@ async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
     if not await _ensure_callback_authorized(callback=callback, state=state):
         return
 
-    data = await state.get_data()
-    enriched = data.get("enriched_prompt")
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    enriched = flow_state.enriched_prompt
     if not enriched:
         await callback.answer(text=RUN_AGAIN, show_alert=True)
         await state.clear()
@@ -249,7 +256,7 @@ async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
     await _save_feedback_best_effort(
         status=callback.message,
         uid=callback.from_user.id,
-        initial_prompt=data.get("prompt"),
+        initial_prompt=flow_state.prompt or "",
         enriched_prompt=enriched,
     )
 
@@ -302,20 +309,24 @@ async def handle_prompt_edits(message: Message, state: FSMContext):
         await message.answer(text=PROMPT_TOO_LONG_MSG.format(length=len(edits_text), max_len=MAX_PROMPT_LEN))
         return
 
-    data = await state.get_data()
-    if not data.get("prompt"):
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    if not flow_state.prompt:
         await message.answer(
             text=ENRICH_SESSION_FAILURE,
             reply_markup=get_main_keyboard(),
         )
         await state.clear()
         return
-    if data.get("enriching"):
+    if flow_state.enriching:
         await message.answer(text=ENRICH_IN_PROGRESS_MSG)
         return
 
     enrich_id = uuid4().hex
-    await state.update_data(pending_edits=edits_text, enriching=True, enrich_id=enrich_id)
+    flow_state.pending_edits = edits_text
+    flow_state.enriching = True
+    flow_state.enrich_id = enrich_id
+    await update_fsm_data(state=state, model=flow_state)
+    
     status = await message.answer(text=ENRICH_STARTS_WITH_EDITS)
     await _enrich_and_present(status=status, state=state, enrich_id=enrich_id, uid=message.from_user.id)
 
@@ -334,18 +345,21 @@ async def handle_prompt_retry(callback: CallbackQuery, state: FSMContext):
     if not await _ensure_callback_authorized(callback=callback, state=state):
         return
 
-    data = await state.get_data()
-    if data.get("enriching"):
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    if flow_state.enriching:
         await callback.answer(text=ENRICH_RETRY_IN_PROGRESS_MSG, show_alert=True)
         return
-    if not data.get("prompt"):
+    if not flow_state.prompt:
         await callback.answer(text=RUN_AGAIN, show_alert=True)
         await state.clear()
         return
 
     await callback.answer()
     enrich_id = uuid4().hex
-    await state.update_data(enriching=True, enrich_id=enrich_id)
+    flow_state.enriching = True
+    flow_state.enrich_id = enrich_id
+    await update_fsm_data(state=state, model=flow_state)
+    
     with contextlib.suppress(Exception):
         await callback.message.edit_text(text=ENRICH_STARTS_MSG)
     await _enrich_and_present(status=callback.message, state=state, enrich_id=enrich_id, uid=callback.from_user.id)
@@ -365,15 +379,15 @@ async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
     if not await _ensure_callback_authorized(callback=callback, state=state):
         return
 
-    data = await state.get_data()
-    prompt = data.get("prompt")
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    prompt = flow_state.prompt
     if not prompt:
         await callback.answer(text=RUN_AGAIN, show_alert=True)
         await state.clear()
         return
 
     await callback.answer()
-    final_text = data.get("enriched_prompt") or prompt
+    final_text = flow_state.enriched_prompt or prompt
     await _save_feedback_best_effort(
         status=callback.message,
         uid=callback.from_user.id,
