@@ -8,10 +8,8 @@ from aiogram.types import CallbackQuery, Message
 
 from domains.auth.handlers import require_auth
 from domains.auth.service import is_authorized
-from domains.base.keyboards import GENERATE_BUTTON, get_cancel_keyboard, get_main_keyboard
-from domains.enricher.enricher_messages import PROMPT_HINT, PROMPT_TEMPLATE
-from domains.enricher.fsm import PromptEnricherStates
-from domains.enricher.keyboards import CB_TITLE_LEAVE_AS_IS
+from domains.base.keyboards import GENERATE_BUTTON, get_main_keyboard
+from domains.enricher.keyboards import CB_PROMPT_CANCEL, CB_TITLE_LEAVE_AS_IS
 from domains.generation.fsm import MAX_TITLE_LEN, GenerationStates
 from domains.generation.generation_messages import (
     ACCESS_DENIED_TEXT,
@@ -25,6 +23,7 @@ from domains.generation.generation_messages import (
     TITLE_TOO_LONG_TEXT,
 )
 from domains.generation.pipeline_handlers import generate_and_send
+from domains.shared.ports import enrichment_flow_starter
 
 router = Router(name="generation")
 
@@ -48,9 +47,7 @@ async def cmd_generate(message: Message, state: FSMContext):
         await message.answer(text=ENRICHMENT_IN_PROGRESS_TEXT)
         return
 
-    await message.answer(text=PROMPT_HINT, reply_markup=get_cancel_keyboard(), parse_mode="HTML")
-    await message.answer(text=f"<code>{PROMPT_TEMPLATE}</code>", parse_mode="HTML")
-    await state.set_state(PromptEnricherStates.waiting_for_idea)
+    await enrichment_flow_starter.start_enrichment(message=message, state=state)
 
 
 @router.callback_query(F.data == "retry_generation")
@@ -122,6 +119,26 @@ async def handle_title(message: Message, state: FSMContext):
 
     await state.update_data(title=title)
     await generate_and_send(message=message, state=state, prompt=prompt, title=title, user_id=message.from_user.id)
+
+
+@router.callback_query(GenerationStates.waiting_for_title, F.data == CB_PROMPT_CANCEL)
+async def handle_generation_cancel(callback: CallbackQuery, state: FSMContext):
+    """Отменяет ввод названия и возвращает пользователя в меню.
+
+    Args:
+        callback: Нажатие на кнопку отмены.
+        state: FSM-контекст текущего пользователя.
+    """
+    if not await is_authorized(uid=callback.from_user.id):
+        await callback.answer(text=ACCESS_DENIED_TEXT, show_alert=True)
+        await state.clear()
+        return
+
+    await state.clear()
+    await callback.answer()
+    with contextlib.suppress(Exception):
+        await callback.message.edit_text(text="Генерация отменена.")
+    await callback.message.answer(text=RESTART_GENERATION_TEXT, reply_markup=get_main_keyboard())
 
 
 @router.callback_query(GenerationStates.waiting_for_title, F.data == CB_TITLE_LEAVE_AS_IS)

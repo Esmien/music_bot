@@ -279,7 +279,7 @@ async def test_approve_finalizes_prompt_and_saves_feedback(
     assert state.state == GenerationStates.waiting_for_title
     assert save_stub == [{"tg_id": 7, "initial_prompt": "идея", "enriched_prompt": "обогащённый промпт"}]
     assert callback.message.reply_markup_removed
-    assert "Введите название песни" in callback.message.answers[0]
+    assert "название песни" in callback.message.answers[0]
     assert callback.answered == [(None, False)]
 
 
@@ -471,7 +471,7 @@ async def test_fallback_uses_enriched_prompt(make_callback, make_callback_messag
     assert data["prompt"] == enricher_handlers._build_generation_prompt(text="прошлый обогащённый")
     assert state.state == GenerationStates.waiting_for_title
     assert save_stub[0]["enriched_prompt"] == "прошлый обогащённый"
-    assert "Введите название песни" in callback.message.answers[0]
+    assert "название песни" in callback.message.answers[0]
 
 
 async def test_fallback_uses_raw_prompt_without_enriched(

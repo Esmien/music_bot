@@ -17,8 +17,6 @@ kanban-plugin: board
 
 ## Backlog
 
-- [ ] [[0.1 Публичные контракты auth вместо приватных импортов]]
-- [ ] [[0.2 Разрыв цикла generation ↔ enricher]]
 - [ ] [[0.3 Типизированные FSM-данные вместо магических строк]]
 - [ ] [[0.4 Реестр и локи в Redis]]
 - [ ] [[1.1 RabbitMQ и taskiq в проект]]
@@ -45,6 +43,8 @@ kanban-plugin: board
 
 ## Testing
 
+- [ ] [[0.1 Публичные контракты auth вместо приватных импортов]]
+- [ ] [[0.2 Разрыв цикла generation ↔ enricher]]
 
 
 ## Done
@@ -75,6 +75,6 @@ kanban-plugin: board
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[false,false,false,true,true,true],"show-checkboxes":true,"new-note-folder":"Tasks"}
+{"kanban-plugin":"board","list-collapse":[false,false,false,false,true,true],"show-checkboxes":true,"new-note-folder":"Tasks"}
 ```
 %%

@@ -36,7 +36,6 @@ from domains.enricher.enricher_messages import (
     RETURN_TO_START,
     RUN_AGAIN,
     WAITING_PROMPT_EDITS,
-    WAITING_TITLE_MSG,
 )
 from domains.enricher.fsm import PromptEnricherStates
 from domains.enricher.keyboards import (
@@ -47,10 +46,10 @@ from domains.enricher.keyboards import (
     CB_PROMPT_RETRY,
     get_enrich_failed_keyboard,
     get_prompt_approval_keyboard,
-    get_title_keyboard,
 )
 from domains.enricher.service import enrich_prompt, format_enriched_prompt, save_enriched_prompt
-from domains.generation.fsm import MAX_PROMPT_LEN, GenerationStates
+from domains.generation.fsm import MAX_PROMPT_LEN
+from domains.shared.ports import generation_flow_starter
 
 log = logging.getLogger(__name__)
 
@@ -254,14 +253,14 @@ async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
         enriched_prompt=enriched,
     )
 
-    await state.update_data(prompt=_build_generation_prompt(text=enriched))
+    final_prompt = _build_generation_prompt(text=enriched)
     await callback.answer()
     with contextlib.suppress(Exception):
         await callback.message.edit_reply_markup(reply_markup=None)
-    await state.set_state(GenerationStates.waiting_for_title)
-    await callback.message.answer(
-        text=WAITING_TITLE_MSG,
-        reply_markup=get_title_keyboard(),
+    await generation_flow_starter.start_title_input(
+        message=callback.message,
+        state=state,
+        prompt=final_prompt,
     )
 
 
@@ -381,19 +380,19 @@ async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
         initial_prompt=prompt,
         enriched_prompt=final_text,
     )
-    await state.update_data(prompt=_build_generation_prompt(text=final_text))
+    final_prompt = _build_generation_prompt(text=final_text)
     log.info("Enrichment fallback used (user=%s)", callback.from_user.id)
     with contextlib.suppress(Exception):
         await callback.message.edit_reply_markup(reply_markup=None)
-    await state.set_state(GenerationStates.waiting_for_title)
-    await callback.message.answer(
-        text=WAITING_TITLE_MSG,
-        reply_markup=get_title_keyboard(),
+    await generation_flow_starter.start_title_input(
+        message=callback.message,
+        state=state,
+        prompt=final_prompt,
     )
 
 
 @router.callback_query(
-    StateFilter(PromptEnricherStates.waiting_for_approval, GenerationStates.waiting_for_title),
+    StateFilter(PromptEnricherStates.waiting_for_approval),
     F.data == CB_PROMPT_CANCEL,
 )
 async def handle_prompt_cancel(callback: CallbackQuery, state: FSMContext):
