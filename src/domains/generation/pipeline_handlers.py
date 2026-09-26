@@ -278,7 +278,7 @@ async def _persist_generated_title(gen_context: GenerationContext) -> None:
             generation.status = GenerationStatus.SUCCESS
             await session.commit()
     except Exception:
-        log.error("Failed to persist generated title (user=%s)", gen_context.user_id, exc_info=True)
+        log.exception("Failed to persist generated title (user=%s)", gen_context.user_id, exc_info=True)
 
 
 async def _release_slot(gen_context: GenerationContext) -> None:

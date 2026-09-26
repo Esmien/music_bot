@@ -61,7 +61,7 @@ async def enrich_prompt(prompt: str, history: list[dict[str, str]] | None = None
             response = await client.post(url=settings.enrich.ENRICH_URL, json=payload, headers=headers)
             response.raise_for_status()
     except httpx.HTTPError as exc:
-        logger.error("Enricher request failed: %s", exc)
+        logger.exception("Enricher request failed: %s", exc)
         return None
 
     enriched = _extract_message_content(response.json())
@@ -142,7 +142,7 @@ async def save_enriched_prompt(tg_id: int, initial_prompt: str, enriched_prompt:
             )
             await session.commit()
     except SQLAlchemyError as exc:
-        logger.error("Failed to save enriched prompt: %s", exc)
+        logger.exception("Failed to save enriched prompt: %s", exc)
         raise
 
 

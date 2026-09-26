@@ -55,4 +55,4 @@ async def save_feedback(user_id: int, feedback: str | None, evalue: bool) -> Non
                 record.feedback = feedback
             await session.commit()
     except SQLAlchemyError:
-        log.error("Failed to save feedback (user=%s)", user_id, exc_info=True)
+        log.exception("Failed to save feedback (user=%s)", user_id, exc_info=True)
