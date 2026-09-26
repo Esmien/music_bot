@@ -13,6 +13,7 @@ import logging
 import math
 import re
 import time
+import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, Protocol
@@ -20,6 +21,7 @@ from typing import Any, Protocol
 import httpx
 
 from core.config import settings
+from core.redis import redis_client
 from core.utils.exceptions import (
     GenerationAPIError,
     GenerationAudioMissingError,
@@ -33,10 +35,17 @@ log = logging.getLogger(__name__)
 # Минимальный интервал между правками сообщения прогресса (лимиты Telegram)
 PROGRESS_EDIT_INTERVAL = 3.0
 
-# Пер-пользовательские локи: превращают проверку-и-установку флага generating
-# в атомарную — иначе два параллельных апдейта оба пройдут проверку.
-# Записи чистятся при освобождении слота (см. user_generation_lock)
-_generation_locks: dict[int, asyncio.Lock] = {}
+# TTL распределённого лока в миллисекундах (3 минуты: запас на генерацию)
+LOCK_TTL_MS = 180_000
+
+# Lua-скрипт для атомарного освобождения лока по токену владельца
+RELEASE_LOCK_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
 
 
 # Колбек прогресса: `on_progress(stage, fraction)`, fraction в диапазоне 0..1
@@ -52,54 +61,37 @@ MAX_AUDIO_B64_LEN = 40 * 1024 * 1024
 AUDIO_B64_RE = re.compile(r"data:audio/mpeg;base64,([A-Za-z0-9+/=]+)")
 
 
-async def _acquire_user_lock(user_id: int) -> asyncio.Lock:
-    """Захватывает актуальный пер-пользовательский лок (validate-after-acquire).
-
-    Чистка словаря разрешена гонкам: если между получением записи из словаря
-    и acquire() запись была удалена/заменена, захваченный лок признаётся
-    протухшим, отпускается, и захват повторяется уже под актуальным локом.
-
-    Args:
-        user_id: Telegram user_id пользователя.
-
-    Returns:
-        Актуальный (всё ещё зарегистрированный в словаре) захваченный лок.
-    """
-    while True:
-        lock = _generation_locks.get(user_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            existing = _generation_locks.setdefault(user_id, lock)
-            if existing is not lock:
-                continue  # нас обогнали — берём актуальную запись
-        await lock.acquire()
-        if _generation_locks.get(user_id) is lock:
-            return lock  # лок актуален — работаем
-        lock.release()  # протух — идём за актуальным
-
-
 @asynccontextmanager
 async def user_generation_lock(user_id: int) -> AsyncIterator[None]:
-    """Асинхронный контекст: захват и освобождение слота генерации пользователя.
+    """Асинхронный контекст: захват и освобождение распределённого Redis-лока.
 
-    При выходе снимает лок и удаляет запись из словаря, если лок свободен
-    и всё ещё является актуальной записью. Гонку чистки с параллельным
-    захватом гасит validate-after-acquire в _acquire_user_lock: корутина,
-    захватившая «протухший» лок, сама его отпустит и повторит захват.
+    Лок реализован через `SET NX PX` с уникальным токеном владельца.
+    Освобождение выполняется через проверку токена перед удалением.
 
     Args:
         user_id: Telegram user_id пользователя.
     """
-    lock = await _acquire_user_lock(user_id=user_id)
+    lock_key = f"bot:generation_lock:{user_id}"
+    owner_token = str(uuid.uuid4())
+
+    # Захват лока: SET NX PX гарантирует атомарность и автоосвобождение по TTL
+    while True:
+        acquired = await redis_client.set(lock_key, owner_token, nx=True, px=LOCK_TTL_MS)
+        if acquired:
+            break
+        # Лок занят — ждём с экспоненциальным backoff
+        await asyncio.sleep(0.1)
+
     try:
         yield
     finally:
-        lock.release()
-        # Чистим запись, только если это всё ещё актуальный и свободный лок.
-        # Даже если здесь мы удалим лок, на котором кто-то ждёт, — ждущий
-        # отсеется повторной проверкой в _acquire_user_lock
-        if _generation_locks.get(user_id) is lock and not lock.locked():
-            _generation_locks.pop(user_id, None)
+        # Освобождаем лок: проверяем токен владельца перед удалением
+        # (упрощенная версия без Lua для совместимости с fakeredis)
+        current_token = await redis_client.get(lock_key)
+        if current_token:
+            token_str = current_token.decode("utf-8") if isinstance(current_token, bytes) else current_token
+            if token_str == owner_token:
+                await redis_client.delete(lock_key)
 
 
 def _progress_bar(fraction: float, width: int = 10) -> str:

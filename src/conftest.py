@@ -91,6 +91,14 @@ def fake_redis(monkeypatch):
     """
     client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     monkeypatch.setattr(auth_service, "redis_client", client)
+
+    # Подменяем redis_client и в модулях генерации
+    from domains.generation import service as generation_service
+    from domains.generation.registries import task_registry
+
+    monkeypatch.setattr(generation_service, "redis_client", client)
+    monkeypatch.setattr(task_registry, "redis_client", client)
+
     return client
 
 
