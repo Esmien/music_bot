@@ -13,6 +13,16 @@ from core.utils.error_notify import notify_owner
 from core.utils.exceptions import APINotSet
 from domains.auth.handlers import _require_auth
 from domains.base.keyboards import get_main_keyboard
+from domains.credits.credits_messages import (
+    API_KEY_NOT_CONFIGURED_CONTEXT,
+    API_KEY_NOT_SET_ERROR,
+    CREDITS_API_ERROR,
+    CREDITS_API_KEY_NOT_CONFIGURED,
+    CREDITS_CHECK_FAILED,
+    CREDITS_CHECK_FAILED_LOG,
+    CREDITS_CHECK_FAILED_OWNER_CONTEXT,
+    CREDITS_SUMMARY,
+)
 from domains.credits.service import get_credits_summary
 
 log = logging.getLogger(__name__)
@@ -37,10 +47,10 @@ async def cmd_credits(message: Message, state: FSMContext) -> None:
     if not api_key:
         await notify_owner(
             bot=message.bot,
-            context="Не настроен ключ API",
-            err=APINotSet("Provider key not set."),
+            context=API_KEY_NOT_CONFIGURED_CONTEXT,
+            err=APINotSet(API_KEY_NOT_SET_ERROR),
         )
-        await message.answer(text="⚠️ Бот не настроен, владелец уже уведомлен.")
+        await message.answer(text=CREDITS_API_KEY_NOT_CONFIGURED)
         return
 
     try:
@@ -49,23 +59,22 @@ async def cmd_credits(message: Message, state: FSMContext) -> None:
             song_price=settings.generation.SONG_PRICE,
         )
         if summary.status_code != 200:
-            await message.answer(text=f"❌ Ошибка запроса: {summary.status_code}")
+            await message.answer(text=CREDITS_API_ERROR.format(status_code=summary.status_code))
             return
 
         await message.answer(
-            text=(
-                f"💳 Баланс песен:\n"
-                f"Всего доступно генераций: {summary.total_songs}\n"
-                f"Сгенерировано композиций: {summary.used_songs}\n"
-                f"Доступное количество генераций: {summary.remaining_songs}"
+            text=CREDITS_SUMMARY.format(
+                total_songs=summary.total_songs,
+                used_songs=summary.used_songs,
+                remaining_songs=summary.remaining_songs,
             ),
             reply_markup=get_main_keyboard(),
         )
     except httpx.HTTPError as error:
-        log.error("Failed to check OpenRouter credits (user=%s)", message.from_user.id)
+        log.error(CREDITS_CHECK_FAILED_LOG, message.from_user.id)
         await notify_owner(
             bot=message.bot,
-            context=f"Проверка кредитов упала (user={message.from_user.id})",
+            context=CREDITS_CHECK_FAILED_OWNER_CONTEXT.format(user_id=message.from_user.id),
             err=error,
         )
-        await message.answer(text="❌ Не получилось проверить остатки. Владелец уведомлен.")
+        await message.answer(text=CREDITS_CHECK_FAILED)
