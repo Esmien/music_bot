@@ -29,50 +29,8 @@
 
 ## Структура проекта
 
-~~~text
-src/
-├── bot.py               # точка входа: Bot, Dispatcher, регистрация роутеров, on_error
-├── core/
-│   ├── config.py        # конфигурация через pydantic Settings
-│   ├── redis.py         # единый async-клиент Redis (FSM, реестры)
-│   ├── database/
-│   │   ├── engine.py    # async-движок, фабрика сессий, init_db()
-│   │   └── models.py    # ORM-модели (User, GenerationFeedback)
-│   └── utils/
-│       ├── error_notify.py   # уведомления владельцу об ошибках
-│       ├── exceptions.py     # кастомные исключения
-│       └── stream_parser.py  # парсер SSE-потока OpenRouter
-├── handlers/
-│   ├── auth.py                 # /start, ввод ключа доступа, /logout, fallback
-│   ├── base_handlers.py        # /cancel и отмена текущей операции
-│   ├── credits_handlers.py     # /credits: остаток генераций
-│   ├── filters.py              # кастомные фильтры (IsPendingAuth, NotCommand)
-│   ├── enricher_handlers.py    # FSM-диалог обогащения промпта
-│   ├── evaluation_handlers.py  # FSM-обработка inline-оценки после генерации
-│   ├── feedback_handlers.py    # FSM-сбор текстового фидбека после генерации
-│   ├── generation_handlers.py  # точка входа генерации, приём названия, повтор после сбоя
-│   └── generation_pipeline.py  # конвейер генерации: прогресс, отмена, сбои, отправка аудио, сохранение названия
-├── fsm/
-│   ├── enricher_fsm.py         # состояния сценария обогащения промпта
-│   ├── evaluation_fsm.py       # состояния оценки/фидбека
-│   ├── generation_fsm.py       # состояния и лимиты диалога генерации
-│   ├── generation_flags.py     # чистка «осиротевших» флагов после рестарта
-│   └── registries/             # служебные реестры (auth_registry, task_registry)
-├── keyboards/
-│   ├── default_keyboards.py     # reply-клавиатуры
-│   ├── enricher_keyboards.py    # inline-клавиатуры обогащения промпта
-│   ├── evaluation_keyboards.py  # inline-клавиатура оценки после генерации
-│   └── feedback_keyboards.py    # inline-клавиатуры сценария фидбека
-├── services/
-│   ├── enricher.py           # обогащение промпта через LLM, сохранение пары «исходный → обогащённый»
-│   ├── enricher_validator.py # разбор и валидация JSON-контракта обогащения
-│   ├── feedback.py           # сохранение оценки/отзыва в последнюю запись генерации
-│   ├── generation.py         # запрос к OpenRouter (SSE) и мок-режим
-│   └── pipeline.py           # оркестрация: пер-пользовательский лок, прогресс-бар, троттлинг
-migrations/             # миграции Alembic
-tests/                  # юнит- и интеграционные тесты
-pyproject.toml · poetry.lock · infra/Dockerfile · infra/docker-compose.yml · infra/entrypoint.sh · .github/workflows (CI/CD)
-~~~
+
+#### Подробная архитектура и структура проекта описаны [здесь](docs/ARCHITECTURE.md). 
 
 ## Переменные окружения
 
