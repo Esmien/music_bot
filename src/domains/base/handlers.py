@@ -7,6 +7,7 @@ from aiogram.types import Message
 
 from core.config import UIConfig
 from domains.auth.service import add_pending_auth, discard_pending_auth, is_authorized
+from domains.base import base_messasges
 from domains.base.keyboards import get_main_keyboard
 from domains.base.service import get_last_generated_title
 from domains.generation.registries.task_registry import get_active_task
@@ -29,25 +30,21 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         await discard_pending_auth(uid=uid)
         last_title = await get_last_generated_title(uid=uid)
         if last_title:
-            tg_name = message.from_user.first_name or message.from_user.username or "друг"
+            tg_name = message.from_user.first_name or message.from_user.username or base_messasges.START_NAME_FALLBACK
             await message.answer(
-                text=(
-                    f"👋 С возвращением, {tg_name}!\n"
-                    f"Последняя генерация: {last_title}\n"
-                    "Используйте кнопки ниже для управления."
-                ),
+                text=base_messasges.START_RETURNING.format(tg_name=tg_name, last_title=last_title),
                 reply_markup=get_main_keyboard(),
             )
         else:
             await message.answer(
-                text="👋 Привет! Я бот для генерации песен.\nИспользуйте кнопки ниже для управления.",
+                text=base_messasges.START_FIRST_VISIT,
                 reply_markup=get_main_keyboard(),
             )
         return
 
     await add_pending_auth(uid=uid)
     await message.answer(
-        text="👋 Привет! Для использования бота отправьте ключ доступа.",
+        text=base_messasges.START_AUTH_REQUIRED,
         reply_markup=None,
     )
 
@@ -65,4 +62,4 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
     if task is not None and not task.done():
         task.cancel()
     await state.clear()
-    await message.answer(text="❌ Действие отменено.", reply_markup=get_main_keyboard())
+    await message.answer(text=base_messasges.CANCEL_ACTION, reply_markup=get_main_keyboard())

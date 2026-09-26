@@ -3,7 +3,10 @@
 from aiogram.types import ReplyKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
-from core.config import UIConfig
+GENERATE_BUTTON = "🎵 Сгенерировать"
+CREDITS_BUTTON = "💳 Кредиты"
+LOGOUT_BUTTON = "🚪 Выйти"
+CANCEL_BUTTON = "❌ Отмена"
 
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
@@ -14,9 +17,9 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
         и кнопкой выхода во втором.
     """
     builder = ReplyKeyboardBuilder()
-    builder.button(text=UIConfig.GENERATE_BUTTON)
-    builder.button(text=UIConfig.CREDITS_BUTTON)
-    builder.button(text=UIConfig.LOGOUT_BUTTON)
+    builder.button(text=GENERATE_BUTTON)
+    builder.button(text=CREDITS_BUTTON)
+    builder.button(text=LOGOUT_BUTTON)
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
 
@@ -28,5 +31,5 @@ def get_cancel_keyboard() -> ReplyKeyboardMarkup:
         ReplyKeyboardMarkup с кнопкой отмены.
     """
     builder = ReplyKeyboardBuilder()
-    builder.button(text=UIConfig.CANCEL_BUTTON)
+    builder.button(text=CANCEL_BUTTON)
     return builder.as_markup(resize_keyboard=True)
