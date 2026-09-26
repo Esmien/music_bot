@@ -70,7 +70,7 @@ class NotCommand(Filter):
         return not text.startswith("/")
 
 
-async def _require_auth(message: Message) -> bool:
+async def require_auth(message: Message) -> bool:
     """Гарантирует авторизацию перед действием.
 
     Args:

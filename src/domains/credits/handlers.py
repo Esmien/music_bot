@@ -11,7 +11,7 @@ from aiogram.types import Message
 from core.config import settings
 from core.utils.error_notify import notify_owner
 from core.utils.exceptions import APINotSet
-from domains.auth.handlers import _require_auth
+from domains.auth.handlers import require_auth
 from domains.base.keyboards import CREDITS_BUTTON, get_main_keyboard
 from domains.credits.credits_messages import (
     API_KEY_NOT_CONFIGURED_CONTEXT,
@@ -39,7 +39,7 @@ async def cmd_credits(message: Message, state: FSMContext) -> None:
         message: Входящее сообщение.
         state: FSM-контекст; очищается для отмены незавершённого сценария.
     """
-    if not await _require_auth(message):
+    if not await require_auth(message):
         return
     await state.clear()
 

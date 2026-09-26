@@ -6,7 +6,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from domains.auth.handlers import _require_auth
+from domains.auth.handlers import require_auth
 from domains.auth.service import is_authorized
 from domains.base.keyboards import GENERATE_BUTTON, get_cancel_keyboard, get_main_keyboard
 from domains.enricher.enricher_messages import PROMPT_HINT, PROMPT_TEMPLATE
@@ -37,7 +37,7 @@ async def cmd_generate(message: Message, state: FSMContext):
         message: Входящее сообщение (кнопка генерации).
         state: FSM-контекст текущего пользователя.
     """
-    if not await _require_auth(message):
+    if not await require_auth(message):
         return
 
     data = await state.get_data()

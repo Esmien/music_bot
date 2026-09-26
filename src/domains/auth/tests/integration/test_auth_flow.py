@@ -162,11 +162,11 @@ async def test_cmd_start_puts_unauthorized_into_pending(patched_auth_db, clean_a
 
 
 async def test_require_auth_hints_unauthorized(patched_auth_db, clean_auth_state, make_message):
-    """_require_auth отклоняет ожидающего ключ и подсказывает, что делать."""
+    """require_auth отклоняет ожидающего ключ и подсказывает, что делать."""
     await auth_service.add_pending_auth(uid=44)
     msg = make_message(uid=44)
 
-    assert await auth_handlers._require_auth(msg) is False
+    assert await auth_handlers.require_auth(msg) is False
     assert "Требуется ключ доступа. Нажмите /start, чтобы ввести" in msg.answers[-1]
 
 
