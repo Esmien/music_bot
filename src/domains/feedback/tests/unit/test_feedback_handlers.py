@@ -11,6 +11,7 @@ from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 from core.config import UIConfig, settings
 from domains.base.keyboards import get_main_keyboard
+from domains.evaluation.evaluation_messages import FEEDBACK_CHOICE_TEXT
 from domains.feedback import handlers as feedback_handlers
 from domains.feedback.fsm import FeedbackStates
 from domains.feedback.keyboards import get_feedback_finish_keyboard, get_feedback_keyboard
@@ -153,7 +154,7 @@ async def test_handle_feedback_choice_message_reminds_to_use_buttons(make_feedba
 
     await feedback_handlers.handle_feedback_choice_message(message=message)
 
-    assert message.answers == [UIConfig.FEEDBACK_CHOICE_TEXT]
+    assert message.answers == [FEEDBACK_CHOICE_TEXT]
     assert _inline_button_texts(message.answered_markups[0]) == _inline_button_texts(get_feedback_keyboard())
 
 

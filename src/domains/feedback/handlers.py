@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, Message
 
 from core.config import UIConfig, settings
 from domains.base.keyboards import get_main_keyboard
+from domains.evaluation.evaluation_messages import FEEDBACK_CHOICE_TEXT
 from domains.feedback.fsm import FeedbackStates
 from domains.feedback.keyboards import (
     CB_FEEDBACK_FINISH,
@@ -51,7 +52,7 @@ async def handle_feedback_choice_message(message: Message) -> None:
         message: Входящее сообщение пользователя.
     """
     await message.answer(
-        text=UIConfig.FEEDBACK_CHOICE_TEXT,
+        text=FEEDBACK_CHOICE_TEXT,
         reply_markup=get_feedback_keyboard(),
     )
 

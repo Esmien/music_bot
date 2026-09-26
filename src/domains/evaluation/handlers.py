@@ -6,7 +6,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from core.config import UIConfig
+from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT, FEEDBACK_CHOICE_TEXT
 from domains.evaluation.keyboards import CB_FEEDBACK_DISLIKE, CB_FEEDBACK_LIKE, get_evaluation_keyboard
 from domains.feedback.fsm import FeedbackStates
 from domains.feedback.keyboards import get_feedback_keyboard
@@ -22,7 +22,7 @@ async def handle_evaluate_prompt(message: Message) -> None:
         message: Входящее сообщение пользователя.
     """
     await message.answer(
-        text=UIConfig.EVALUATION_PROMPT_TEXT,
+        text=EVALUATION_PROMPT_TEXT,
         reply_markup=get_evaluation_keyboard(),
     )
 
@@ -43,7 +43,7 @@ async def handle_evaluate(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.message.edit_reply_markup(reply_markup=None)
 
     await callback.message.answer(
-        text=UIConfig.FEEDBACK_CHOICE_TEXT,
+        text=FEEDBACK_CHOICE_TEXT,
         reply_markup=get_feedback_keyboard(),
     )
     await callback.answer()

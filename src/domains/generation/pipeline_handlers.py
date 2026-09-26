@@ -16,9 +16,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, Message
 from sqlalchemy import select
 
-from core.config import UIConfig
 from core.database.engine import get_session
 from core.utils.error_notify import notify_owner
+from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT
 from domains.evaluation.fsm import FeedbackStates
 from domains.evaluation.keyboards import get_evaluation_keyboard
 from domains.generation import service as generation_service
@@ -233,7 +233,7 @@ async def _deliver_result(gen_context: GenerationContext, status: Message, audio
         await gen_context.state.update_data(generating=False)
         await gen_context.state.set_state(FeedbackStates.waiting_evaluation)
         await gen_context.message.answer(
-            text=UIConfig.EVALUATION_PROMPT_TEXT,
+            text=EVALUATION_PROMPT_TEXT,
             reply_markup=get_evaluation_keyboard(),
         )
 
