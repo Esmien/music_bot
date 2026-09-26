@@ -108,45 +108,6 @@ class RedisConfig(BaseModelConfig):
         return str(url)
 
 
-class UIConfig:
-    """Тексты кнопок интерфейса: единая панель управления.
-
-    Единственный источник истины для текстов кнопок: клавиатуры
-    собирают их отсюда, хендлеры фильтруют по этим же константам —
-    текст и его «ловушка» не разъезжаются при правках.
-    Не pydantic-настройки: тексты не приходят из окружения, а меняются в коде.
-
-    Attributes:
-        GENERATE_BUTTON: Кнопка запуска генерации.
-        CREDITS_BUTTON: Кнопка проверки кредитов.
-        LOGOUT_BUTTON: Кнопка выхода.
-        CANCEL_BUTTON: Кнопка отмены текущей операции.
-        PROMPT_APPROVE_BUTTON: Кнопка аппрува сгенерированного промпта.
-        PROMPT_EDIT_BUTTON: Кнопка правки сгенерированного промпта.
-        PROMPT_CANCEL_BUTTON: Кнопка отмены сценария обогащения.
-        PROMPT_RETRY_BUTTON: Кнопка повтора обогащения после сбоя.
-        PROMPT_FALLBACK_BUTTON: Кнопка продолжения сценария без обогащения.
-        DEFAULT_TITLE: Название песни по умолчанию.
-        EVALUATION_LIKE_BUTTON: Кнопка «нравится» при оценке генерации.
-        EVALUATION_DISLIKE_BUTTON: Кнопка «не нравится» при оценке генерации.
-        FEEDBACK_SEND_BUTTON: Кнопка отправки фидбека.
-        FEEDBACK_FINISH_BUTTON: Кнопка завершения сценария фидбека.
-        FEEDBACK_CHOICE_TEXT: Текст просьбы выбрать действие после оценки.
-        EVALUATION_PROMPT_TEXT: Текст просьбы оценить сгенерированную композицию.
-        FEEDBACK_PROMPT_TEXT: Текст просьбы написать отзыв.
-        FEEDBACK_RECEIVED_TEXT: Текст подтверждения приёма отзыва в FSM.
-        FEEDBACK_THANKS_TEXT: Текст благодарности после сохранения оценки/отзыва.
-    """
-
-    GENERATE_BUTTON = "🎵 Сгенерировать"
-    CREDITS_BUTTON = "💳 Кредиты"
-    LOGOUT_BUTTON = "🚪 Выйти"
-    CANCEL_BUTTON = "❌ Отмена"
-
-    DEFAULT_TITLE = "Lyria's_Generated_song"
-
-
-
 class Settings(BaseModelConfig):
     MIN_FEEDBACK_TEXT: int = 20
     bot: BotConfig = BotConfig()

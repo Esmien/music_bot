@@ -8,11 +8,11 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from core.config import UIConfig, settings
+from core.config import settings
 from core.utils.error_notify import notify_owner
 from core.utils.exceptions import APINotSet
 from domains.auth.handlers import _require_auth
-from domains.base.keyboards import get_main_keyboard
+from domains.base.keyboards import CREDITS_BUTTON, get_main_keyboard
 from domains.credits.credits_messages import (
     API_KEY_NOT_CONFIGURED_CONTEXT,
     API_KEY_NOT_SET_ERROR,
@@ -31,7 +31,7 @@ router = Router(name="credits")
 
 
 @router.message(Command("credits"))
-@router.message(F.text == UIConfig.CREDITS_BUTTON)
+@router.message(F.text == CREDITS_BUTTON)
 async def cmd_credits(message: Message, state: FSMContext) -> None:
     """Показывает остаток генераций по данным API OpenRouter.
 

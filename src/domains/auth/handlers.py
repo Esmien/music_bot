@@ -10,7 +10,7 @@ from aiogram.types import Message, ReplyKeyboardRemove
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from core.config import UIConfig, settings
+from core.config import settings
 from core.database import User
 from core.database.engine import get_session
 from core.utils.error_notify import notify_owner
@@ -31,7 +31,7 @@ from domains.auth.service import (
     is_pending_auth,
     mark_user_authorized,
 )
-from domains.base.keyboards import get_main_keyboard
+from domains.base.keyboards import LOGOUT_BUTTON, get_main_keyboard
 from domains.generation.registries.task_registry import get_active_task
 
 log = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ async def _logout_user(uid: int) -> None:
 
 
 @router.message(Command("logout"))
-@router.message(F.text == UIConfig.LOGOUT_BUTTON)
+@router.message(F.text == LOGOUT_BUTTON)
 async def cmd_logout(message: Message, state: FSMContext) -> None:
     """Отзывает доступ, очищает состояние и отменяет активную генерацию.
 

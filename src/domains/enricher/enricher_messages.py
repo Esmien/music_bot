@@ -1,6 +1,6 @@
 import re
 
-from core.config import UIConfig
+from domains.generation.generation_messages import DEFAULT_TITLE
 
 PROMPT_HINT = (
     "✍️ <b>Опишите песню, которую хотите услышать.</b>\n\n"
@@ -71,7 +71,7 @@ ENRICH_CANCELED = "Сценарий обогащения отменён."
 RETURN_TO_START = "Возвращаю в главное меню."
 
 # Название песни
-WAITING_TITLE_MSG = f"🎤 Введите название песни или нажмите «Оставить как есть»:\n({UIConfig.DEFAULT_TITLE})"
+WAITING_TITLE_MSG = f"🎤 Введите название песни или нажмите «Оставить как есть»:\n({DEFAULT_TITLE})"
 
 # Контексты уведомлений владельцу
 NOTIFY_ENRICHER_NOT_CONFIGURED_CTX = "Обогатитель не сконфигурирован (user={uid})"

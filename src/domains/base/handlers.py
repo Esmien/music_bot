@@ -5,10 +5,9 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from core.config import UIConfig
 from domains.auth.service import add_pending_auth, discard_pending_auth, is_authorized
 from domains.base import base_messasges
-from domains.base.keyboards import get_main_keyboard
+from domains.base.keyboards import CANCEL_BUTTON, get_main_keyboard
 from domains.base.service import get_last_generated_title
 from domains.generation.registries.task_registry import get_active_task
 
@@ -50,7 +49,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
 
 @router.message(Command("cancel"))
-@router.message(F.text == UIConfig.CANCEL_BUTTON)
+@router.message(F.text == CANCEL_BUTTON)
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     """Отменяет текущий сценарий и возвращает пользователя в главное меню.
 
