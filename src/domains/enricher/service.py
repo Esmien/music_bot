@@ -1,6 +1,5 @@
 """HTTP-клиент обогащения промптов и сохранение результата в БД."""
 
-import json
 import logging
 
 import httpx
@@ -83,7 +82,7 @@ def format_enriched_prompt(raw: str) -> str:
     """
     try:
         data = parse_enricher_json(raw=raw)
-    except (ValueError, json.JSONDecodeError) as error:
+    except ValueError as error:
         logger.warning("Enricher response is not valid JSON, showing raw text: %s", error)
         return raw.strip()
 
@@ -115,7 +114,7 @@ def _enriched_prompt_to_dict(enriched_prompt: str) -> dict:
     """
     try:
         parsed_prompt = parse_enricher_json(raw=enriched_prompt)
-    except (ValueError, json.JSONDecodeError):
+    except ValueError:
         return {"text": enriched_prompt}
 
     return parsed_prompt if isinstance(parsed_prompt, dict) else {"text": enriched_prompt}

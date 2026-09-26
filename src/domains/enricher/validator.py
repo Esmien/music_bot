@@ -112,7 +112,7 @@ def validate_enriched_prompt(raw: str) -> str:
     try:
         data = parse_enricher_json(raw=raw)
         prompt = EnrichedSongPrompt.model_validate(data)
-    except (ValueError, json.JSONDecodeError, ValidationError) as exc:
+    except (ValueError, ValidationError) as exc:
         logger.warning("Enricher response does not match contract, keeping raw text: %s", exc)
         return _strip_forbidden_diacritics(raw)
     return prompt.model_dump_json()
