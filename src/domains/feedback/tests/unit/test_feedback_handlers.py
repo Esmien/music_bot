@@ -9,10 +9,11 @@ from types import SimpleNamespace
 import pytest
 from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
 
-from core.config import UIConfig, settings
+from core.config import settings
 from domains.base.keyboards import get_main_keyboard
 from domains.evaluation.evaluation_messages import FEEDBACK_CHOICE_TEXT
 from domains.feedback import handlers as feedback_handlers
+from domains.feedback.feedback_messages import FEEDBACK_PROMPT_TEXT, FEEDBACK_THANKS_TEXT
 from domains.feedback.fsm import FeedbackStates
 from domains.feedback.keyboards import get_feedback_finish_keyboard, get_feedback_keyboard
 
@@ -176,7 +177,7 @@ async def test_handle_feedback_message_saves_text_and_clears_state(
     assert patched_save_feedback == [(77, "отличный трек", True)]
     assert state.cleared is True
     assert message.edited_reply_markups == [(77, 456, None)]
-    assert message.answers == [UIConfig.FEEDBACK_THANKS_TEXT]
+    assert message.answers == [FEEDBACK_THANKS_TEXT]
     assert _reply_button_texts(message.answered_markups[0]) == _reply_button_texts(get_main_keyboard())
 
 
@@ -235,7 +236,7 @@ async def test_handle_feedback_message_suppresses_markup_edit_failure(
     await feedback_handlers.handle_feedback_message(message=message, state=state)
 
     assert patched_save_feedback == [(1, "текст", False)]
-    assert message.answers == [UIConfig.FEEDBACK_THANKS_TEXT]
+    assert message.answers == [FEEDBACK_THANKS_TEXT]
 
 
 async def test_handle_feedback_send_choice_switches_to_waiting_feedback(make_callback, fake_state) -> None:
@@ -246,7 +247,7 @@ async def test_handle_feedback_send_choice_switches_to_waiting_feedback(make_cal
 
     await feedback_handlers.handle_feedback_send_choice(callback=callback, state=state)
 
-    assert callback.message.edit_calls[0][0] == UIConfig.FEEDBACK_PROMPT_TEXT
+    assert callback.message.edit_calls[0][0] == FEEDBACK_PROMPT_TEXT
     assert _inline_button_texts(callback.message.edit_calls[0][1]) == _inline_button_texts(
         get_feedback_finish_keyboard()
     )
@@ -266,7 +267,7 @@ async def test_handle_feedback_send_in_waiting_feedback_shows_prompt_again(make_
 
     await feedback_handlers.handle_feedback_send(callback=callback, state=state)
 
-    assert callback.message.edit_calls[0][0] == UIConfig.FEEDBACK_PROMPT_TEXT
+    assert callback.message.edit_calls[0][0] == FEEDBACK_PROMPT_TEXT
     assert state.state == FeedbackStates.waiting_feedback
     data = await state.get_data()
     assert data["feedback_prompt_message_id"] == callback.message.message_id
@@ -290,7 +291,7 @@ async def test_handle_feedback_finish_choice_saves_evaluation_from_state(
     assert callback.message.reply_markup_edits == [None]
     assert patched_save_feedback == [(20, "нормальный отзыв", True)]
     assert state.cleared is True
-    assert callback.message.answers == [UIConfig.FEEDBACK_THANKS_TEXT]
+    assert callback.message.answers == [FEEDBACK_THANKS_TEXT]
     assert _reply_button_texts(callback.message.answered_markups[0]) == _reply_button_texts(get_main_keyboard())
     assert callback.answered == [(None, False)]
 

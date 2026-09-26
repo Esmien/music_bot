@@ -6,9 +6,10 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from core.config import UIConfig, settings
+from core.config import settings
 from domains.base.keyboards import get_main_keyboard
 from domains.evaluation.evaluation_messages import FEEDBACK_CHOICE_TEXT
+from domains.feedback.feedback_messages import FEEDBACK_PROMPT_TEXT, FEEDBACK_THANKS_TEXT
 from domains.feedback.fsm import FeedbackStates
 from domains.feedback.keyboards import (
     CB_FEEDBACK_FINISH,
@@ -79,7 +80,7 @@ async def handle_feedback_message(message: Message, state: FSMContext) -> None:
             )
 
     await message.answer(
-        text=UIConfig.FEEDBACK_THANKS_TEXT,
+        text=FEEDBACK_THANKS_TEXT,
         reply_markup=get_main_keyboard(),
     )
 
@@ -92,7 +93,7 @@ async def _show_feedback_prompt(callback: CallbackQuery, state: FSMContext) -> N
         state: FSM-контекст пользователя.
     """
     await callback.message.edit_text(
-        text=UIConfig.FEEDBACK_PROMPT_TEXT,
+        text=FEEDBACK_PROMPT_TEXT,
         reply_markup=get_feedback_finish_keyboard(),
     )
     await state.set_state(FeedbackStates.waiting_feedback)
@@ -137,7 +138,7 @@ async def _finish_from_callback(callback: CallbackQuery, state: FSMContext) -> N
 
     await _finish_feedback(user_id=callback.from_user.id, state=state)
     await callback.message.answer(
-        text=UIConfig.FEEDBACK_THANKS_TEXT,
+        text=FEEDBACK_THANKS_TEXT,
         reply_markup=get_main_keyboard(),
     )
     await callback.answer()
