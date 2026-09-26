@@ -22,6 +22,12 @@ from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT
 from domains.evaluation.fsm import FeedbackStates
 from domains.evaluation.keyboards import get_evaluation_keyboard
 from domains.generation import service as generation_service
+from domains.generation.generation_messages import (
+    GENERATION_FAILURE_TEXT,
+    GENERATION_IN_PROGRESS_TEXT,
+    GENERATION_OWNER_ERROR_CONTEXT,
+    GENERATION_SUCCESS_CAPTION,
+)
 from domains.generation.keyboards import get_retry_keyboard
 from domains.generation.models import Generation, GenerationStatus
 from domains.generation.registries.task_registry import register_active_task, unregister_active_task
@@ -151,7 +157,7 @@ async def _start_status(gen_context: GenerationContext) -> Message:
         chat_id=gen_context.message.chat.id, action=ChatAction.UPLOAD_DOCUMENT
     )
 
-    return await gen_context.message.answer(text="🎼 Генерирую… Это может занять до 1–2 минут.")
+    return await gen_context.message.answer(text=GENERATION_IN_PROGRESS_TEXT)
 
 
 def _make_progress_reporter(status: Message) -> ProgressCallback:
@@ -201,7 +207,10 @@ async def _handle_failure(gen_context: GenerationContext, status: Message, error
     with contextlib.suppress(Exception):
         await notify_owner(
             bot=gen_context.message.bot,
-            context=f"Генерация упала (user={gen_context.user_id}, title={gen_context.title!r})",
+            context=GENERATION_OWNER_ERROR_CONTEXT.format(
+                user_id=gen_context.user_id,
+                title=gen_context.title,
+            ),
             err=error,
         )
 
@@ -210,7 +219,7 @@ async def _handle_failure(gen_context: GenerationContext, status: Message, error
 
     with contextlib.suppress(Exception):
         await status.edit_text(
-            "😔 Не получилось сгенерировать. Попробуйте ещё раз чуть позже.",
+            GENERATION_FAILURE_TEXT,
             reply_markup=get_retry_keyboard(),
         )
 
@@ -227,7 +236,7 @@ async def _deliver_result(gen_context: GenerationContext, status: Message, audio
     safe_title = "".join(c if c.isalnum() or c in "_-." else "_" for c in gen_context.title)[:80] or "song"
 
     file = BufferedInputFile(file=audio_bytes, filename=f"{safe_title}.mp3")
-    await gen_context.message.answer_audio(audio=file, caption="🎵 Готово!")
+    await gen_context.message.answer_audio(audio=file, caption=GENERATION_SUCCESS_CAPTION)
 
     if is_actual:
         await gen_context.state.update_data(generating=False)
