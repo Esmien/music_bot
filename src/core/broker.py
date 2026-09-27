@@ -1,5 +1,6 @@
 """Общий конфигуратор брокеров TaskIQ на базе RabbitMQ."""
 
+from taskiq import InMemoryBroker
 from taskiq.serializers import JSONSerializer
 from taskiq_aio_pika import AioPikaBroker
 
@@ -35,6 +36,17 @@ def _create_broker(domain: str) -> AioPikaBroker:
             "x-dead-letter-routing-key": dead_letter_queue,
         },
     ).with_serializer(JSONSerializer())
+
+
+def _create_inmemory_broker() -> InMemoryBroker:
+    """Создаёт in-memory брокер для тестов.
+
+    Задачи выполняются синхронно в процессе теста без реального брокера.
+
+    Returns:
+        InMemoryBroker с JSON-сериализацией.
+    """
+    return InMemoryBroker().with_serializer(JSONSerializer())
 
 
 enricher_broker = _create_broker("enricher")

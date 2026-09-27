@@ -26,7 +26,17 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def clean_generation_registry(fake_redis, monkeypatch):
+def test_brokers(inmemory_broker):
+    """Подключает InMemoryBroker для всех тестов генерации.
+
+    InMemoryBroker выполняет задачи синхронно в процессе теста,
+    сохраняя существующий стиль тестирования с патчами.
+    """
+    return inmemory_broker
+
+
+@pytest.fixture
+def clean_generation_registry(fake_redis, monkeypatch, test_brokers):
     """Пустой реестр активных задач генерации до и после теста.
 
     task_registry теперь тоже ходит в Redis — подменяем его клиент

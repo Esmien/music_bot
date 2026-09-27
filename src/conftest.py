@@ -200,3 +200,25 @@ def fake_state():
             self.state = state
 
     return FakeState
+
+
+@pytest.fixture
+def inmemory_broker(monkeypatch):
+    """InMemoryBroker для тестов — задачи выполняются синхронно в процессе.
+
+    Подменяет все брокеры из core.broker на InMemoryBroker,
+    сохраняя существующий стиль интеграционных тестов.
+    """
+    from core import broker as broker_module
+
+    test_broker = broker_module._create_inmemory_broker()
+
+    # Подменяем все брокеры на in-memory версию
+    monkeypatch.setattr(broker_module, "enricher_broker", test_broker)
+    monkeypatch.setattr(broker_module, "generation_broker", test_broker)
+    monkeypatch.setattr(broker_module, "credits_broker", test_broker)
+    monkeypatch.setitem(broker_module.brokers, "enricher", test_broker)
+    monkeypatch.setitem(broker_module.brokers, "generation", test_broker)
+    monkeypatch.setitem(broker_module.brokers, "credits", test_broker)
+
+    return test_broker

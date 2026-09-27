@@ -17,7 +17,6 @@ kanban-plugin: board
 
 ## Backlog
 
-- [ ] [[3.3 InMemoryBroker для тестов]]
 - [ ] [[4.1 credits → воркер]]
 - [ ] [[4.2 enricher → воркер]]
 - [ ] [[4.3 generation → воркер]]
@@ -31,7 +30,6 @@ kanban-plugin: board
 
 ## In progress
 
-- [ ] [[3.2 Порты телеметрии в воркерах]]
 
 
 ## Testing
@@ -45,6 +43,8 @@ kanban-plugin: board
 - [ ] [[2.1 Переключение polling → webhook за флагом]]
 - [ ] [[2.2 Graceful shutdown и lifecycle]]
 - [ ] [[3.1 Пакет контрактов shared contracts]]
+- [ ] [[3.2 Порты телеметрии в воркерах]]
+- [ ] [[3.3 InMemoryBroker для тестов]]
 
 
 ## Done
