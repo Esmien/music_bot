@@ -1,4 +1,4 @@
-"""Общий конфигуратор брокера TaskIQ на базе RabbitMQ."""
+"""Общий конфигуратор брокеров TaskIQ на базе RabbitMQ."""
 
 from taskiq import InMemoryBroker
 from taskiq.serializers import JSONSerializer
@@ -6,31 +6,36 @@ from taskiq_aio_pika import AioPikaBroker
 
 from core.config import settings
 
-# Единый брокер для всех доменов
-broker = AioPikaBroker(
-    url=settings.rabbitmq.RABBITMQ_URL,
-    exchange_name="songai_events",
-    prefetch_count=settings.rabbitmq.RABBITMQ_PREFETCH,
-    # Общая Dead Letter Queue (DLQ) для всех невыполненных/упавших задач
-    queue_arguments={
-        "x-dead-letter-exchange": "",
-        "x-dead-letter-routing-key": "songai_dead_letters",
-    },
-).with_serializer(JSONSerializer())
+
+def _create_broker(domain: str) -> AioPikaBroker:
+    """Создаёт брокер TaskIQ для полностью изолированной очереди домена."""
+    return AioPikaBroker(
+        url=settings.rabbitmq.RABBITMQ_URL,
+        exchange_name=f"songai_{domain}_exchange",  # У каждого домена свой обменник!
+        queue_name=settings.rabbitmq.queue_name(domain),
+        prefetch_count=settings.rabbitmq.RABBITMQ_PREFETCH,
+        queue_arguments={
+            "x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": "songai_dead_letters",
+        },
+    ).with_serializer(JSONSerializer())
 
 
 def _create_inmemory_broker() -> InMemoryBroker:
-    """Создаёт in-memory брокер для тестов."""
     return InMemoryBroker().with_serializer(JSONSerializer())
 
 
-# Временные алиасы, чтобы не переписывать импорты прямо сейчас во всех воркерах.
-# Позже, можно будет заменить везде на `from core.broker import broker`.
-enricher_broker = broker
-generation_broker = broker
-evaluation_broker = broker
-feedback_broker = broker
-credits_broker = broker
+enricher_broker = _create_broker("enricher")
+generation_broker = _create_broker("generation")
+evaluation_broker = _create_broker("evaluation")
+feedback_broker = _create_broker("feedback")
+credits_broker = _create_broker("credits")
 
-# Словарь brokers теперь тоже ссылается на один инстанс (нужен для запуска .startup() в bot.py)
-brokers = {"main": broker}
+# Реестр для точки запуска
+brokers = {
+    "enricher": enricher_broker,
+    "generation": generation_broker,
+    "evaluation": evaluation_broker,
+    "feedback": feedback_broker,
+    "credits": credits_broker,
+}

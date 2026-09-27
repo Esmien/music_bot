@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from taskiq import TaskiqDepends, TaskiqState
 
-from core.broker import broker
+from core.broker import feedback_broker
 from core.config import settings
 from core.utils.error_notify import notify_owner
 from domains.evaluation.evaluation_messages import FEEDBACK_CHOICE_TEXT
@@ -19,22 +19,20 @@ from shared.ports.telegram import TelegramPort
 log = logging.getLogger(__name__)
 
 
-@broker.task(task_name="request_feedback_handler", queue_name=settings.rabbitmq.queue_name("feedback"))
+@feedback_broker.task(task_name="request_feedback_handler", queue_name=settings.rabbitmq.queue_name("feedback"))
 async def request_feedback_handler(
     event: EvaluationCompleted,
     state: TaskiqState = TaskiqDepends(),
 ) -> None:
-    """Обрабатывает событие успешной оценки и запрашивает текстовый отзыв.
+    """Обрабатывает событие успешной оценки и запрашивает текстовый отзыв."""
 
-    Args:
-        event: Событие с данными о проставленной оценке.
-        state: Состояние TaskIQ с доступом к зависимостям.
-    """
+    # 1. Выносим безопасное извлечение зависимостей за пределы try
+    telegram_port: TelegramPort = state["telegram_port"]
+    storage = state["storage"]
+    bot = state["bot"]
+
     try:
-        telegram_port: TelegramPort = state["telegram_port"]
-        storage = state["storage"]
-        bot = state["bot"]
-
+        # 2. Внутри try остается только бизнес-логика
         fsm_context = FSMContext(
             storage=storage,
             key=StorageKey(bot_id=bot.id, chat_id=event.chat_id, user_id=event.user_id),
@@ -50,6 +48,11 @@ async def request_feedback_handler(
         )
 
         log.info("Feedback request sent (user=%s, gen_id=%s)", event.user_id, event.gen_id)
-    except Exception:
+
+    except Exception as err:  # Ловим саму ошибку
         log.exception("Failed to request feedback (user=%s, gen_id=%s)", event.user_id, event.gen_id)
-        await notify_owner(context=f"request_feedback user={event.user_id} gen_id={event.gen_id}")
+        await notify_owner(
+            telegram_port=telegram_port,
+            context=f"request_feedback user={event.user_id} gen_id={event.gen_id}",
+            err=err,  # Передаем реальный трейсбек, а не новый Exception
+        )

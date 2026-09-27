@@ -26,22 +26,18 @@ class EnrichmentCompleted(BaseModel):
 
 
 class GenerationSucceeded(BaseModel):
-    """Событие успешной генерации песни.
+    """Событие успешной генерации и отправки песни пользователю.
 
     Args:
         user_id: Telegram ID пользователя.
         chat_id: ID чата для отправки результата.
         gen_id: ID записи генерации в БД.
-        title: Название песни.
-        audio_file_path: Путь к сгенерированному аудио-файлу (временный).
         status_message_id: ID сообщения прогресса для удаления.
     """
 
     user_id: int = Field(..., description="Telegram ID пользователя")
     chat_id: int = Field(..., description="ID чата для отправки результата")
     gen_id: int = Field(..., description="ID записи генерации в БД")
-    title: str = Field(..., description="Название песни")
-    audio_file_path: str = Field(..., description="Путь к сгенерированному аудио-файлу")
     status_message_id: int | None = Field(default=None, description="ID сообщения прогресса для удаления")
 
 

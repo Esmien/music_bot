@@ -125,8 +125,8 @@ async def test_request_feedback_handler_swallows_telegram_error(taskiq_state, ca
 
     notify_calls = []
 
-    async def fake_notify_owner(context: str):
-        notify_calls.append(context)
+    async def fake_notify_owner(**kwargs):
+        notify_calls.append(kwargs.get("context", ""))
 
     monkeypatch.setattr(feedback_worker, "notify_owner", fake_notify_owner)
 

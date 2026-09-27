@@ -5,7 +5,7 @@ import logging
 import httpx
 from taskiq import Context, TaskiqDepends
 
-from core.broker import broker
+from core.broker import credits_broker
 from core.config import settings
 from domains.credits.credits_messages import (
     API_KEY_NOT_CONFIGURED_CONTEXT,
@@ -24,7 +24,7 @@ from shared.ports.telegram import TelegramPort
 log = logging.getLogger(__name__)
 
 
-@broker.task(task_name="credits.get_credits", queue_name=settings.rabbitmq.queue_name("credits"))
+@credits_broker.task(task_name="credits.get_credits", queue_name=settings.rabbitmq.queue_name("credits"))
 async def handle_get_credits(
     command: GetCredits,
     context: Context = TaskiqDepends(),

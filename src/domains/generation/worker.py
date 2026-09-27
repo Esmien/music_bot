@@ -2,8 +2,6 @@
 
 import asyncio
 import logging
-import tempfile
-from pathlib import Path
 
 from taskiq import Context, TaskiqDepends
 
@@ -12,10 +10,11 @@ from core.config import settings
 from core.database.engine import get_session
 from core.redis import clear_generation_cancel, is_generation_cancelled
 from core.utils.error_notify import notify_owner
+from domains.evaluation.worker import request_evaluation_handler
 from domains.generation.models import Generation, GenerationStatus
 from domains.generation.service import run_generation
 from shared.contracts.commands import RunGeneration
-from shared.contracts.events import GenerationFailed, GenerationSucceeded
+from shared.contracts.events import GenerationSucceeded
 from shared.ports.telegram import TelegramPort
 
 log = logging.getLogger(__name__)
@@ -64,22 +63,21 @@ async def run_generation_task(
         if await is_generation_cancelled(gen_id=command.gen_id):
             raise asyncio.CancelledError
 
-        with tempfile.NamedTemporaryFile(
-            prefix=f"generation-{command.gen_id}-", suffix=".mp3", delete=False
-        ) as audio_file:
-            audio_file.write(audio_bytes)
-            audio_path = Path(audio_file.name)
+        await telegram.send_audio(
+            chat_id=command.chat_id,
+            audio=audio_bytes,
+            title=command.title,
+            caption="🎵 Готово!",
+        )
 
         succeeded_event = GenerationSucceeded(
             user_id=command.user_id,
             chat_id=command.chat_id,
             gen_id=command.gen_id,
-            title=command.title,
-            audio_file_path=str(audio_path),
             status_message_id=command.status_message_id,
         )
 
-        await generation_broker.kicker(task_name="handle_generation_succeeded").kiq(succeeded_event)
+        await request_evaluation_handler.kiq(succeeded_event)
     except asyncio.CancelledError:
         async with get_session() as session:
             generation = await session.get(Generation, command.gen_id)
@@ -88,16 +86,8 @@ async def run_generation_task(
                 await session.commit()
         await clear_generation_cancel(gen_id=command.gen_id)
 
-        failed_event_cancel = GenerationFailed(
-            user_id=command.user_id,
-            chat_id=command.chat_id,
-            gen_id=command.gen_id,
-            error_message="Generation was cancelled",
-            stage="cancelled",
-            status_message_id=command.status_message_id,
-        )
-
-        await generation_broker.kicker(task_name="handle_generation_failed").kiq(failed_event_cancel)
+        if command.status_message_id is not None:
+            await telegram.send_message(chat_id=command.chat_id, text="Генерация отменена.")
     except Exception as error:
         log.exception("Generation failed (gen_id=%s)", command.gen_id)
         await notify_owner(
@@ -106,73 +96,7 @@ async def run_generation_task(
             err=error,
         )
 
-        failed_event_error = GenerationFailed(
-            user_id=command.user_id,
+        await telegram.send_message(
             chat_id=command.chat_id,
-            gen_id=command.gen_id,
-            error_message=type(error).__name__,
-            stage="generation",
-            status_message_id=command.status_message_id,
+            text="😔 Не получилось сгенерировать. Попробуйте ещё раз чуть позже.",
         )
-
-        await generation_broker.kicker(task_name="handle_generation_failed").kiq(failed_event_error)
-
-
-@generation_broker.task(task_name="handle_generation_succeeded")
-async def handle_generation_succeeded(
-    event: GenerationSucceeded,
-    context: Context = TaskiqDepends(),
-) -> None:
-    """Отправляет результат генерации пользователю.
-
-    Args:
-        event: Событие успешной генерации.
-        context: Контекст TaskIQ с TelegramPort.
-    """
-    telegram: TelegramPort = getattr(context, "state", getattr(context, "dependencies", {}))["telegram_port"]
-
-    async with get_session() as session:
-        generation = await session.get(Generation, event.gen_id)
-        if generation is None or generation.status is not GenerationStatus.PENDING:
-            return
-        generation.status = GenerationStatus.SUCCESS
-        await session.commit()
-
-    await telegram.send_audio(
-        chat_id=event.chat_id,
-        audio=event.audio_file_path,
-        title=event.title,
-        caption="🎵 Готово!",
-    )
-
-    if event.status_message_id is not None:
-        await telegram.edit_message(
-            chat_id=event.chat_id,
-            message_id=event.status_message_id,
-            text="🎵 Готово!",
-        )
-
-    await generation_broker.kicker(task_name="handle_generation_evaluation").kiq(event)
-
-
-@generation_broker.task(task_name="handle_generation_failed")
-async def handle_generation_failed(
-    event: GenerationFailed,
-    context: Context = TaskiqDepends(),
-) -> None:
-    """Показывает пользователю ошибку генерации.
-
-    Args:
-        event: Событие сбоя генерации.
-        context: Контекст TaskIQ с TelegramPort.
-    """
-    telegram: TelegramPort = getattr(context, "state", getattr(context, "dependencies", {}))["telegram_port"]
-
-    if event.stage == "cancelled":
-        await telegram.send_message(chat_id=event.chat_id, text="Генерация отменена.")
-        return
-
-    await telegram.send_message(
-        chat_id=event.chat_id,
-        text=event.user_error_message or "😔 Не получилось сгенерировать. Попробуйте ещё раз чуть позже.",
-    )

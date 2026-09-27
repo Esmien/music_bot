@@ -39,14 +39,21 @@ class FakeBroker:
     def __init__(self) -> None:
         self.events: list[tuple[str, object]] = []
 
-    def kicker(self, *, task_name: str):
-        broker = self
+    def create_fake_task(self, task_name: str):
+        """Создаёт фейковый таск для подмены."""
+        events = self.events
 
-        class Kicker:
+        class FakeTask:
             async def kiq(self, event: object) -> None:
-                broker.events.append((task_name, event))
+                events.append((task_name, event))
 
-        return Kicker()
+        return FakeTask()
+
+
+@pytest.fixture
+def fake_broker():
+    """Фейковый брокер для перехвата событий."""
+    return FakeBroker()
 
 
 def _context(telegram: FakeTelegramPort) -> SimpleNamespace:
@@ -80,8 +87,8 @@ def _command(gen_id: int = 1) -> RunGeneration:
     )
 
 
-async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Успешная генерация публикует событие с путём аудио."""
+async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, fake_broker: FakeBroker) -> None:
+    """Успешная генерация отправляет аудио и публикует событие."""
     generation = Generation(
         id=1,
         user_id=10,
@@ -92,7 +99,6 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch) -
     )
     session = FakeSession(generation)
     telegram = FakeTelegramPort()
-    broker = FakeBroker()
 
     async def fake_run_generation(prompt: str, on_progress) -> bytes:
         await on_progress(stage="Получаю аудио…", fraction=0.5)
@@ -100,16 +106,20 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(worker, "get_session", lambda: session)
     monkeypatch.setattr(worker, "run_generation", fake_run_generation)
-    monkeypatch.setattr(worker, "generation_broker", broker)
     monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
     monkeypatch.setattr(worker, "clear_generation_cancel", AsyncMock())
+    monkeypatch.setattr(
+        worker, "request_evaluation_handler", fake_broker.create_fake_task("request_evaluation_handler")
+    )
 
     await worker.run_generation_task(_command(), _context(telegram))
 
+    assert len(telegram.sent_audio) == 1
+    assert telegram.sent_audio[0]["chat_id"] == 20
+    assert telegram.sent_audio[0]["audio"] == b"audio"
     assert telegram.edited_messages
-    assert broker.events[0][0] == "handle_generation_succeeded"
-    assert broker.events[0][1].gen_id == 1
-    assert broker.events[0][1].title == "Тест"
+    assert fake_broker.events[0][0] == "request_evaluation_handler"
+    assert fake_broker.events[0][1].gen_id == 1
 
 
 async def test_worker_marks_cancelled_generation_and_publishes_failure(
@@ -126,7 +136,6 @@ async def test_worker_marks_cancelled_generation_and_publishes_failure(
     )
     session = FakeSession(generation)
     telegram = FakeTelegramPort()
-    broker = FakeBroker()
 
     async def fake_run_generation(prompt: str, on_progress) -> bytes:
         await on_progress(stage="Получаю аудио…", fraction=0.5)
@@ -134,7 +143,6 @@ async def test_worker_marks_cancelled_generation_and_publishes_failure(
 
     monkeypatch.setattr(worker, "get_session", lambda: session)
     monkeypatch.setattr(worker, "run_generation", fake_run_generation)
-    monkeypatch.setattr(worker, "generation_broker", broker)
     monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=True))
     monkeypatch.setattr(worker, "clear_generation_cancel", AsyncMock())
 
@@ -142,8 +150,8 @@ async def test_worker_marks_cancelled_generation_and_publishes_failure(
 
     assert generation.status is GenerationStatus.CANCELLED
     assert session.committed
-    assert broker.events[0][0] == "handle_generation_failed"
-    assert broker.events[0][1].stage == "cancelled"
+    assert len(telegram.sent_messages) == 1
+    assert "отменена" in telegram.sent_messages[0]["text"]
 
 
 async def test_worker_skips_already_processed_generation(monkeypatch: pytest.MonkeyPatch) -> None:
