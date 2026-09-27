@@ -29,6 +29,7 @@ def _create_inmemory_broker() -> InMemoryBroker:
 enricher_broker = broker
 generation_broker = broker
 evaluation_broker = broker
+feedback_broker = broker
 credits_broker = broker
 
 # Словарь brokers теперь тоже ссылается на один инстанс (нужен для запуска .startup() в bot.py)

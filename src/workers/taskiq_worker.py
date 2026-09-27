@@ -30,6 +30,8 @@ async def run_worker(*, worker_name: str) -> None:
         import domains.evaluation.worker  # noqa
     elif worker_name == "credits":
         import domains.credits.worker  # noqa
+    elif worker_name == "feedback":
+        import domains.feedback.worker  # noqa
 
     broker.is_worker_process = True
 
@@ -74,7 +76,7 @@ async def run_worker(*, worker_name: str) -> None:
 def main() -> None:
     """Разбирает аргументы командной строки и запускает выбранный воркер."""
     parser = argparse.ArgumentParser(description="Запуск TaskIQ-консьюмера")
-    parser.add_argument("worker", choices=("credits", "enricher", "evaluation", "generation"))
+    parser.add_argument("worker", choices=("credits", "enricher", "evaluation", "feedback", "generation"))
     worker_name = parser.parse_args().worker
 
     logging.basicConfig(

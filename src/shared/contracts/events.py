@@ -67,3 +67,17 @@ class GenerationFailed(BaseModel):
         default=None, description="Сообщение об ошибке для пользователя (если None, используется стандартное)"
     )
     status_message_id: int | None = Field(default=None, description="ID сообщения прогресса для удаления")
+
+
+class EvaluationCompleted(BaseModel):
+    """Событие успешного проставления оценки пользователем.
+
+    Args:
+        user_id: Telegram ID пользователя.
+        chat_id: ID чата для отправки запроса отзыва.
+        gen_id: ID записи генерации в БД.
+    """
+
+    user_id: int = Field(..., description="Telegram ID пользователя")
+    chat_id: int = Field(..., description="ID чата для отправки запроса отзыва")
+    gen_id: int = Field(..., description="ID записи генерации в БД")

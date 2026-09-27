@@ -13,6 +13,7 @@ kanban-plugin: board
 - [ ] [[4. Domains migration]]
 - [ ] [[5. Observability, durability]]
 - [ ] [[6. Tests and docs]]
+- [ ] [[7. Refactor]]
 
 
 ## Backlog
@@ -45,6 +46,8 @@ kanban-plugin: board
 - [ ] [[4.2 enricher → воркер]]
 - [ ] [[4.3 generation → воркер]]
 - [ ] [[4.4 Перевод генерации на событие успеха сбоя]]
+- [ ] [[4.5 evaluation - воркер]]
+- [ ] [[4.6 feedback - воркер]]
 
 
 ## Done
