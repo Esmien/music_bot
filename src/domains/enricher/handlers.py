@@ -51,9 +51,9 @@ from domains.enricher.keyboards import (
 from domains.enricher.service import format_enriched_prompt, save_enriched_prompt
 from domains.enricher.state_models import EnrichmentFlowState
 from domains.generation.fsm import MAX_PROMPT_LEN
-from domains.shared.ports import generation_flow_starter
 from shared.contracts.commands import StartEnrichment
 from shared.contracts.events import EnrichmentCompleted, GenerationFailed
+from shared.domain_ports import generation_flow_starter
 
 log = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ async def _publish_enrich_command(command: StartEnrichment) -> None:
     Args:
         command: Команда с параметрами обогащения.
     """
-    from workers.enricher_worker import enrich_prompt_task
+    from domains.enricher.worker import enrich_prompt_task
 
     await enrich_prompt_task.kiq(command.model_dump())
 

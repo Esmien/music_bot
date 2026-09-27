@@ -38,11 +38,11 @@ async def handle_evaluate(callback: CallbackQuery, state: FSMContext) -> None:
         state: FSM-контекст пользователя.
     """
     evaluation = callback.data == CB_FEEDBACK_LIKE
-    
+
     flow_state = await get_fsm_data(state=state, model_class=FeedbackFlowState)
     flow_state.feedback_evaluation = evaluation
     await update_fsm_data(state=state, model=flow_state)
-    
+
     await state.set_state(FeedbackStates.waiting_for_feedback_choice)
 
     with contextlib.suppress(Exception):

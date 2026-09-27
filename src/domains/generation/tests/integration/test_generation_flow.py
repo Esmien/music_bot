@@ -90,12 +90,13 @@ async def test_cmd_generate_starts_enrichment_flow(
     DEVIATION: подсказки теперь шлёт порт enrichment_flow_starter, поэтому
     проверяем делегирование, а не тексты подсказок.
     """
+
     async def fake_start_enrichment(message, state):
         fake_start_enrichment.called_with = (message, state)
 
     fake_start_enrichment.called_with = None
     monkeypatch.setattr(
-        "domains.shared.ports.enrichment_flow_starter.start_enrichment",
+        "shared.domain_ports.enrichment_flow_starter.start_enrichment",
         fake_start_enrichment,
     )
 
@@ -112,11 +113,12 @@ async def test_cmd_generate_blocked_while_generating(
     patched_auth_db, clean_auth_state, make_message, fake_state, monkeypatch
 ):
     """«🎵 Сгенерировать» заблокирована во время идущей генерации."""
+
     async def unexpected_start(message, state):
         raise AssertionError("start_enrichment не должен вызываться при активной генерации")
 
     monkeypatch.setattr(
-        "domains.shared.ports.enrichment_flow_starter.start_enrichment",
+        "shared.domain_ports.enrichment_flow_starter.start_enrichment",
         unexpected_start,
     )
 
@@ -131,15 +133,14 @@ async def test_cmd_generate_blocked_while_generating(
     assert state.state is None
 
 
-async def test_cmd_generate_requires_auth(
-    patched_auth_db, clean_auth_state, make_message, fake_state, monkeypatch
-):
+async def test_cmd_generate_requires_auth(patched_auth_db, clean_auth_state, make_message, fake_state, monkeypatch):
     """Неавторизованный пользователь не попадает в диалог генерации."""
+
     async def unexpected_start(message, state):
         raise AssertionError("start_enrichment не должен вызываться без авторизации")
 
     monkeypatch.setattr(
-        "domains.shared.ports.enrichment_flow_starter.start_enrichment",
+        "shared.domain_ports.enrichment_flow_starter.start_enrichment",
         unexpected_start,
     )
 
@@ -300,9 +301,7 @@ async def test_generate_and_send_blocked_inside_lock(
     assert recording_broker.kicked == []
 
 
-async def test_handle_title_rejects_empty_title(
-    patched_auth_db, clean_auth_state, make_message, fake_state
-):
+async def test_handle_title_rejects_empty_title(patched_auth_db, clean_auth_state, make_message, fake_state):
     """Название из одних пробелов отклоняется."""
     state = fake_state()
     await state.update_data(prompt="промпт")
@@ -314,9 +313,7 @@ async def test_handle_title_rejects_empty_title(
     assert state.state is None
 
 
-async def test_handle_title_rejects_too_long_title(
-    patched_auth_db, clean_auth_state, make_message, fake_state
-):
+async def test_handle_title_rejects_too_long_title(patched_auth_db, clean_auth_state, make_message, fake_state):
     """Слишком длинное название отклоняется."""
     state = fake_state()
     await state.update_data(prompt="промпт")
@@ -330,9 +327,7 @@ async def test_handle_title_rejects_too_long_title(
     assert state.state is None
 
 
-async def test_handle_title_blocked_while_generating(
-    patched_auth_db, clean_auth_state, make_message, fake_state
-):
+async def test_handle_title_blocked_while_generating(patched_auth_db, clean_auth_state, make_message, fake_state):
     """handle_title не запускает генерацию при активной генерации."""
     state = fake_state()
     await state.update_data(prompt="промпт", generating=True)

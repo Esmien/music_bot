@@ -19,13 +19,13 @@ async def test_enrich_prompt_task_success(monkeypatch):
     async def mock_enrich(prompt: str, history: list[dict[str, str]] | None = None) -> str:
         return '{"enriched_prompt": "Test enriched prompt"}'
 
-    monkeypatch.setattr("workers.enricher_worker.enrich_prompt", mock_enrich)
+    monkeypatch.setattr("domains.enricher.worker.enrich_prompt", mock_enrich)
 
     # Мокаем validate_enriched_prompt
     def mock_validate(raw: str) -> str:
         return "Test enriched prompt"
 
-    monkeypatch.setattr("workers.enricher_worker.validate_enriched_prompt", mock_validate)
+    monkeypatch.setattr("domains.enricher.worker.validate_enriched_prompt", mock_validate)
 
     # Список опубликованных событий
     published_events = []
@@ -35,13 +35,14 @@ async def test_enrich_prompt_task_success(monkeypatch):
             class FakeKicker:
                 async def kiq(_, event):
                     published_events.append((event, task_name))
+
             return FakeKicker()
 
     # Импортируем воркер после применения патчей
-    import workers.enricher_worker
-    from workers.enricher_worker import enrich_prompt_task
+    import domains.enricher.worker
+    from domains.enricher.worker import enrich_prompt_task
 
-    monkeypatch.setattr(workers.enricher_worker, "broker", FakeBroker())
+    monkeypatch.setattr(domains.enricher.worker, "broker", FakeBroker())
 
     # Создаём команду
     command = StartEnrichment(
@@ -80,7 +81,7 @@ async def test_enrich_prompt_task_failure(monkeypatch):
     async def mock_enrich_error(prompt: str, history: list[dict[str, str]] | None = None) -> str:
         raise ValueError("API error")
 
-    monkeypatch.setattr("workers.enricher_worker.enrich_prompt", mock_enrich_error)
+    monkeypatch.setattr("domains.enricher.worker.enrich_prompt", mock_enrich_error)
 
     # Список опубликованных событий
     published_events = []
@@ -90,6 +91,7 @@ async def test_enrich_prompt_task_failure(monkeypatch):
             class FakeKicker:
                 async def kiq(_, event):
                     published_events.append((event, task_name))
+
             return FakeKicker()
 
     # Мокаем notify_owner
@@ -98,13 +100,13 @@ async def test_enrich_prompt_task_failure(monkeypatch):
     async def mock_notify(telegram_port=None, error=None, err=None, context=""):
         notified.append((err or error, context))
 
-    monkeypatch.setattr("workers.enricher_worker.notify_owner", mock_notify)
+    monkeypatch.setattr("domains.enricher.worker.notify_owner", mock_notify)
 
     # Импортируем воркер после применения патчей
-    import workers.enricher_worker
-    from workers.enricher_worker import enrich_prompt_task
+    import domains.enricher.worker
+    from domains.enricher.worker import enrich_prompt_task
 
-    monkeypatch.setattr(workers.enricher_worker, "broker", FakeBroker())
+    monkeypatch.setattr(domains.enricher.worker, "broker", FakeBroker())
 
     # Создаём команду
     command = StartEnrichment(
@@ -149,13 +151,13 @@ async def test_enrich_prompt_task_invalid_response(monkeypatch):
     async def mock_enrich_invalid(prompt: str, history: list[dict[str, str]] | None = None) -> str:
         return "not json"
 
-    monkeypatch.setattr("workers.enricher_worker.enrich_prompt", mock_enrich_invalid)
+    monkeypatch.setattr("domains.enricher.worker.enrich_prompt", mock_enrich_invalid)
 
     # Мокаем validate_enriched_prompt с ошибкой
     def mock_validate_error(raw: str) -> str:
         raise ValueError("Invalid JSON")
 
-    monkeypatch.setattr("workers.enricher_worker.validate_enriched_prompt", mock_validate_error)
+    monkeypatch.setattr("domains.enricher.worker.validate_enriched_prompt", mock_validate_error)
 
     # Список опубликованных событий
     published_events = []
@@ -165,6 +167,7 @@ async def test_enrich_prompt_task_invalid_response(monkeypatch):
             class FakeKicker:
                 async def kiq(_, event):
                     published_events.append((event, task_name))
+
             return FakeKicker()
 
     # Мокаем notify_owner
@@ -173,13 +176,13 @@ async def test_enrich_prompt_task_invalid_response(monkeypatch):
     async def mock_notify(telegram_port=None, error=None, err=None, context=""):
         notified.append((err or error, context))
 
-    monkeypatch.setattr("workers.enricher_worker.notify_owner", mock_notify)
+    monkeypatch.setattr("domains.enricher.worker.notify_owner", mock_notify)
 
     # Импортируем воркер после применения патчей
-    import workers.enricher_worker
-    from workers.enricher_worker import enrich_prompt_task
+    import domains.enricher.worker
+    from domains.enricher.worker import enrich_prompt_task
 
-    monkeypatch.setattr(workers.enricher_worker, "broker", FakeBroker())
+    monkeypatch.setattr(domains.enricher.worker, "broker", FakeBroker())
 
     # Создаём команду
     command = StartEnrichment(

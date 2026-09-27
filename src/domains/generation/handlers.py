@@ -26,7 +26,7 @@ from domains.generation.generation_messages import (
 )
 from domains.generation.pipeline_handlers import generate_and_send
 from domains.generation.state_models import GenerationFlowState
-from domains.shared.ports import enrichment_flow_starter
+from shared.domain_ports import enrichment_flow_starter
 
 router = Router(name="generation")
 
@@ -44,7 +44,7 @@ async def cmd_generate(message: Message, state: FSMContext):
 
     gen_state = await get_fsm_data(state=state, model_class=GenerationFlowState)
     enrich_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
-    
+
     if gen_state.generating:
         await message.answer(text=GENERATION_CANCEL_WAIT_TEXT)
         return

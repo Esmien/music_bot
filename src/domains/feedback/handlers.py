@@ -99,12 +99,12 @@ async def _show_feedback_prompt(callback: CallbackQuery, state: FSMContext) -> N
         reply_markup=get_feedback_finish_keyboard(),
     )
     await state.set_state(FeedbackStates.waiting_feedback)
-    
+
     flow_state = await get_fsm_data(state=state, model_class=FeedbackFlowState)
     flow_state.feedback_text = None
     flow_state.feedback_prompt_message_id = callback.message.message_id
     await update_fsm_data(state=state, model=flow_state)
-    
+
     await callback.answer()
 
 
