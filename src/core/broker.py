@@ -53,6 +53,9 @@ enricher_broker = _create_broker("enricher")
 generation_broker = _create_broker("generation")
 credits_broker = _create_broker("credits")
 
+# Главный брокер для credits домена
+broker = credits_broker
+
 brokers = {
     "enricher": enricher_broker,
     "generation": generation_broker,

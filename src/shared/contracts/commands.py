@@ -51,11 +51,7 @@ class GetCredits(BaseModel):
     """Команда на получение баланса кредитов пользователя.
 
     Args:
-        user_id: Telegram ID пользователя.
         chat_id: ID чата для отправки результата.
-        message_id: ID сообщения с запросом (для reply).
     """
 
-    user_id: int = Field(..., description="Telegram ID пользователя")
     chat_id: int = Field(..., description="ID чата для отправки результата")
-    message_id: int = Field(..., description="ID сообщения с запросом (для reply)")
