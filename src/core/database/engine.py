@@ -1,5 +1,6 @@
 """Подключение к базе данных, фабрика сессий и инициализация схемы."""
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -7,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from core.config import settings
 from core.database.models import Base
+
+log = logging.getLogger(__name__)
 
 # Драйвер определяется URL: PostgreSQL (asyncpg) в бою,
 # aiosqlite — в тестах с in-memory БД
@@ -38,3 +41,15 @@ async def init_db() -> None:
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+async def shutdown_db() -> None:
+    """Закрывает движок базы данных и освобождает пул соединений.
+
+    Идемпотентна: повторный вызов безопасен.
+    """
+    try:
+        await engine.dispose()
+    except Exception as e:
+        log.error("Failed to dispose database engine: %s", e)
+        raise

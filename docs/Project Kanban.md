@@ -17,7 +17,6 @@ kanban-plugin: board
 
 ## Backlog
 
-- [ ] [[2.2 Graceful shutdown и lifecycle]]
 - [ ] [[3.1 Пакет контрактов shared contracts]]
 - [ ] [[3.2 Порты телеметрии в воркерах]]
 - [ ] [[3.3 InMemoryBroker для тестов]]
@@ -34,7 +33,6 @@ kanban-plugin: board
 
 ## In progress
 
-- [ ] [[2.1 Переключение polling → webhook за флагом]]
 
 
 ## Testing
@@ -45,6 +43,8 @@ kanban-plugin: board
 - [ ] [[0.4 Реестр и локи в Redis]]
 - [ ] [[1.1 RabbitMQ и taskiq в проект]]
 - [ ] [[1.2 Конфигурация брокера и сериализация]]
+- [ ] [[2.1 Переключение polling → webhook за флагом]]
+- [ ] [[2.2 Graceful shutdown и lifecycle]]
 
 
 ## Done
