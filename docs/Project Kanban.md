@@ -17,7 +17,6 @@ kanban-plugin: board
 
 ## Backlog
 
-- [ ] [[3.1 Пакет контрактов shared contracts]]
 - [ ] [[3.2 Порты телеметрии в воркерах]]
 - [ ] [[3.3 InMemoryBroker для тестов]]
 - [ ] [[4.1 credits → воркер]]
@@ -33,6 +32,7 @@ kanban-plugin: board
 
 ## In progress
 
+- [ ] [[3.1 Пакет контрактов shared contracts]]
 
 
 ## Testing
