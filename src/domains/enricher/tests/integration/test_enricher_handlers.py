@@ -27,20 +27,13 @@ def patched_enricher_db(db_sessionmaker, monkeypatch):
 
 @pytest.fixture
 def patched_broker(monkeypatch):
-    """Мокает broker.kiq в хендлерах, копя вызовы."""
+    """Мокает _publish_enrich_command, копя вызовы."""
     calls = []
 
-    class FakeBroker:
-        def kicker(self, task_name):
-            kicker_obj = type('obj', (object,), {
-                'kiq': lambda _, command:
-                calls.append({"command": command, "task_name": task_name})
-                or
-                __import__('asyncio').sleep(0)
-            })()
-            return kicker_obj
+    async def fake_publish(command):
+        calls.append(command)
 
-    monkeypatch.setattr(enricher_handlers, "broker", FakeBroker())
+    monkeypatch.setattr(enricher_handlers, "_publish_enrich_command", fake_publish)
     return calls
 
 
@@ -107,8 +100,7 @@ async def test_full_enrichment_flow_saves_generation(
 
     # Проверяем, что команда опубликована
     assert len(patched_broker) == 1
-    assert patched_broker[0]["task_name"] == "enrich_prompt"
-    assert patched_broker[0]["command"].prompt == "грустная песня о дожде"
+    assert patched_broker[0].prompt == "грустная песня о дожде"
 
     # Имитируем получение результата обогащения
     await state.update_data(enriched_prompt="обогащённый: грустная песня о дожде", enriching=False)

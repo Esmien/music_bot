@@ -8,7 +8,7 @@ import logging
 
 from taskiq import Context, TaskiqDepends
 
-from core.broker import broker
+from core.broker import enricher_broker
 from core.utils.error_notify import notify_owner
 from core.utils.exceptions import EnricherResponseInvalidError
 from domains.enricher.service import enrich_prompt
@@ -19,10 +19,32 @@ from shared.ports.telegram import TelegramPort
 
 logger = logging.getLogger(__name__)
 
+broker = enricher_broker
 
-@broker.task(task_name="enrich_prompt")
+
+async def _publish_event(*, task_name: str, event: EnrichmentCompleted | GenerationFailed, task: object) -> None:
+    """Публикует событие через брокер или зарегистрированную задачу.
+
+    Args:
+        task_name: Имя задачи TaskIQ.
+        event: Событие для публикации.
+        task: Зарегистрированная задача TaskIQ с методом kiq.
+    """
+    broker_kicker = getattr(broker, "kicker", None)
+    if callable(broker_kicker):
+        await broker_kicker(task_name=task_name).kiq(event)
+        return
+
+    task_kiq = getattr(task, "kiq", None)
+    if not callable(task_kiq):
+        raise TypeError(f"Task {task_name!r} does not expose kiq")
+
+    await task_kiq(event)
+
+
+@enricher_broker.task(task_name="enrich_prompt")
 async def enrich_prompt_task(
-    command: StartEnrichment,
+    command: StartEnrichment | dict | str,
     context: Context = TaskiqDepends(),
 ) -> None:
     """Обогащает промпт пользователя через внешний API.
@@ -31,7 +53,17 @@ async def enrich_prompt_task(
         command: Команда с user_id, chat_id, prompt и историей диалога.
         context: Контекст TaskIQ с зависимостями (telegram_port).
     """
-    telegram_port: TelegramPort = context.dependencies["telegram_port"]
+    if isinstance(command, str):
+        command = StartEnrichment.model_validate_json(command)
+    elif not isinstance(command, StartEnrichment):
+        command = StartEnrichment.model_validate(command)
+
+    telegram_port: TelegramPort | None = None
+    state = getattr(context, "state", None) or getattr(context, "dependencies", None) or {}
+    get_state = getattr(state, "get", None)
+    if callable(get_state):
+        telegram_port = get_state("telegram_port")
+
     user_id = command.user_id
     chat_id = command.chat_id
 
@@ -57,7 +89,11 @@ async def enrich_prompt_task(
             enriched_prompt=enriched_prompt,
             status_message_id=command.status_message_id,
         )
-        await broker.kicker(task_name="handle_enrichment_completed").kiq(event)
+        await _publish_event(
+            task_name="handle_enrichment_completed",
+            event=event,
+            task=handle_enrichment_completed_task,
+        )
 
     except Exception as exc:
         logger.error(f"Enrichment failed for user_id={user_id}: {exc}", exc_info=True)
@@ -78,4 +114,42 @@ async def enrich_prompt_task(
             stage="enrichment",
             status_message_id=command.status_message_id,
         )
-        await broker.kicker(task_name="handle_generation_failed").kiq(failure_event)
+        await _publish_event(
+            task_name="handle_generation_failed",
+            event=failure_event,
+            task=handle_generation_failed_task,
+        )
+
+
+@enricher_broker.task(task_name="handle_enrichment_completed")
+async def handle_enrichment_completed_task(event: EnrichmentCompleted | dict | str) -> None:
+    """Передаёт событие успешного обогащения обработчику бота.
+
+    Args:
+        event: Событие с результатом обогащения.
+    """
+    if isinstance(event, str):
+        event = EnrichmentCompleted.model_validate_json(event)
+    elif not isinstance(event, EnrichmentCompleted):
+        event = EnrichmentCompleted.model_validate(event)
+
+    from domains.enricher.handlers import handle_enrichment_completed_event
+
+    await handle_enrichment_completed_event(event=event)
+
+
+@enricher_broker.task(task_name="handle_generation_failed")
+async def handle_generation_failed_task(event: GenerationFailed | dict | str) -> None:
+    """Передаёт событие сбоя обработчику бота.
+
+    Args:
+        event: Событие с описанием ошибки.
+    """
+    if isinstance(event, str):
+        event = GenerationFailed.model_validate_json(event)
+    elif not isinstance(event, GenerationFailed):
+        event = GenerationFailed.model_validate(event)
+
+    from domains.enricher.handlers import handle_generation_failed_event
+
+    await handle_generation_failed_event(event=event)

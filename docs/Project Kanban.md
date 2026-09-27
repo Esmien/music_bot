@@ -6,10 +6,10 @@ kanban-plugin: board
 
 ## Epics
 
-- [ ] [[0. Clean-up]]
-- [ ] [[1. Infrastructure]]
-- [ ] [[2. Webhooks]]
-- [ ] [[3. TaskIQ Core]]
+- [x] [[0. Clean-up]]
+- [x] [[1. Infrastructure]]
+- [x] [[2. Webhooks]]
+- [x] [[3. TaskIQ Core]]
 - [ ] [[4. Domains migration]]
 - [ ] [[5. Observability, durability]]
 - [ ] [[6. Tests and docs]]
@@ -17,7 +17,6 @@ kanban-plugin: board
 
 ## Backlog
 
-- [ ] [[4.4 Перевод генерации на событие успеха сбоя]]
 - [ ] [[5.1 Отмена сквозь очередь]]
 - [ ] [[5.2 Retry, DLQ, наблюдаемость]]
 - [ ] [[5.3 Порядок деплоя]]
@@ -45,6 +44,7 @@ kanban-plugin: board
 - [ ] [[4.1 credits → воркер]]
 - [ ] [[4.2 enricher → воркер]]
 - [ ] [[4.3 generation → воркер]]
+- [ ] [[4.4 Перевод генерации на событие успеха сбоя]]
 
 
 ## Done

@@ -6,8 +6,8 @@
 Никаких объектов aiogram (Message, FSMContext) — они не переживут JSON-сериализацию.
 """
 
-from src.shared.contracts.commands import GetCredits, RunGeneration, StartEnrichment
-from src.shared.contracts.events import EnrichmentCompleted, GenerationFailed, GenerationSucceeded
+from shared.contracts.commands import GetCredits, RunGeneration, StartEnrichment
+from shared.contracts.events import EnrichmentCompleted, GenerationFailed, GenerationSucceeded
 
 __version__ = "1.0.0"
 

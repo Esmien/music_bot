@@ -20,9 +20,6 @@ from core.broker import generation_broker
 from core.database.engine import get_session
 from core.utils.error_notify import notify_owner
 from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
-from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT
-from domains.evaluation.fsm import FeedbackStates
-from domains.evaluation.keyboards import get_evaluation_keyboard
 from domains.generation.generation_messages import (
     GENERATION_FAILURE_TEXT,
     GENERATION_IN_PROGRESS_TEXT,
@@ -132,7 +129,17 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
             title=title,
             status_message_id=getattr(status, "message_id", None),
         )
-        await generation_broker.kicker(task_name="run_generation").kiq(command)
+
+        broker_kicker = getattr(generation_broker, "kicker", None)
+        if callable(broker_kicker):
+            await broker_kicker(task_name="run_generation").kiq(command)
+        else:
+            try:
+                from domains.generation.worker import run_generation_task as target_task
+            except ImportError:
+                from domains.generation.worker import run_generation as target_task
+
+            await target_task.kiq(command)
 
 
 async def _acquire_slot(gen_context: GenerationContext) -> bool:
@@ -256,11 +263,6 @@ async def _deliver_result(gen_context: GenerationContext, status: Message, audio
         flow_state = await get_fsm_data(state=gen_context.state, model_class=GenerationFlowState)
         flow_state.generating = False
         await update_fsm_data(state=gen_context.state, model=flow_state)
-        await gen_context.state.set_state(FeedbackStates.waiting_evaluation)
-        await gen_context.message.answer(
-            text=EVALUATION_PROMPT_TEXT,
-            reply_markup=get_evaluation_keyboard(),
-        )
 
     await _persist_generated_title(gen_context=gen_context)
 

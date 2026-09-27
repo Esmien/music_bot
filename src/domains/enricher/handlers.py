@@ -11,7 +11,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.exc import SQLAlchemyError
 
-from core.broker import broker
 from core.config import settings
 from core.redis import redis_client
 from core.utils.error_notify import notify_owner
@@ -132,6 +131,17 @@ async def _save_feedback_best_effort(status: Message, uid: int, initial_prompt: 
             )
 
 
+async def _publish_enrich_command(command: StartEnrichment) -> None:
+    """Публикует команду обогащения в очередь брокера.
+
+    Args:
+        command: Команда с параметрами обогащения.
+    """
+    from workers.enricher_worker import enrich_prompt_task
+
+    await enrich_prompt_task.kiq(command.model_dump())
+
+
 async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str, uid: int, chat_id: int) -> None:
     """Публикует команду обогащения в очередь.
 
@@ -164,7 +174,7 @@ async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str
         prompt=prompt_to_send,
         history=history,
     )
-    await broker.kicker(task_name="enrich_prompt").kiq(command)
+    await _publish_enrich_command(command)
     log.info("Enrichment command published (user=%s, has_history=%s)", uid, bool(history))
 
 
@@ -415,7 +425,6 @@ async def handle_prompt_cancel(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(text=RETURN_TO_START, reply_markup=get_main_keyboard())
 
 
-@broker.task(task_name="handle_enrichment_completed")
 async def handle_enrichment_completed_event(event: EnrichmentCompleted) -> None:
     """Обрабатывает событие успешного обогащения промпта.
 
@@ -423,6 +432,7 @@ async def handle_enrichment_completed_event(event: EnrichmentCompleted) -> None:
         event: Событие с обогащённым промптом.
     """
     from aiogram import Bot
+    from aiogram.fsm.storage.base import StorageKey
     from aiogram.fsm.storage.redis import RedisStorage
 
     # DEVIATION: создаём Bot и FSMContext для отправки сообщения из воркера
@@ -432,14 +442,17 @@ async def handle_enrichment_completed_event(event: EnrichmentCompleted) -> None:
     try:
         # Получаем FSM-контекст пользователя
         fsm_context = FSMContext(
-            bot=bot,
             storage=storage,
-            key={"chat_id": event.chat_id, "user_id": event.user_id, "bot_id": bot.id},
+            key=StorageKey(bot_id=bot.id, chat_id=event.chat_id, user_id=event.user_id),
         )
 
         # Проверяем, что пользователь всё ещё в процессе обогащения
         current_state = await fsm_context.get_state()
-        if current_state != PromptEnricherStates.waiting_for_idea.state:
+        valid_states = (
+            PromptEnricherStates.waiting_for_idea.state,
+            PromptEnricherStates.waiting_for_edits.state,
+        )
+        if current_state not in valid_states:
             log.info("Enrichment result dropped: state changed (user=%s)", event.user_id)
             return
 
@@ -465,7 +478,6 @@ async def handle_enrichment_completed_event(event: EnrichmentCompleted) -> None:
         await bot.session.close()
 
 
-@broker.task(task_name="handle_generation_failed")
 async def handle_generation_failed_event(event: GenerationFailed) -> None:
     """Обрабатывает событие сбоя генерации или обогащения.
 
@@ -473,6 +485,7 @@ async def handle_generation_failed_event(event: GenerationFailed) -> None:
         event: Событие с описанием ошибки.
     """
     from aiogram import Bot
+    from aiogram.fsm.storage.base import StorageKey
     from aiogram.fsm.storage.redis import RedisStorage
 
     bot = Bot(token=settings.bot.BOT_TOKEN)
@@ -480,9 +493,8 @@ async def handle_generation_failed_event(event: GenerationFailed) -> None:
 
     try:
         fsm_context = FSMContext(
-            bot=bot,
             storage=storage,
-            key={"chat_id": event.chat_id, "user_id": event.user_id, "bot_id": bot.id},
+            key=StorageKey(bot_id=bot.id, chat_id=event.chat_id, user_id=event.user_id),
         )
 
         # Проверяем стадию ошибки

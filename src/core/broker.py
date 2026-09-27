@@ -29,6 +29,7 @@ def _create_broker(domain: str) -> AioPikaBroker:
 
     return AioPikaBroker(
         url=settings.rabbitmq.RABBITMQ_URL,
+        exchange_name=f"taskiq_{domain}",
         queue_name=queue_name,
         prefetch_count=settings.rabbitmq.RABBITMQ_PREFETCH,
         queue_arguments={

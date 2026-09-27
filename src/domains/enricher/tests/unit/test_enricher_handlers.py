@@ -35,22 +35,14 @@ def auth_stub(monkeypatch):
 
 @pytest.fixture
 def broker_stub(monkeypatch):
-    """Подменяет broker.kiq в хендлерах на заглушку, копящую вызовы."""
+    """Подменяет _publish_enrich_command на заглушку, копящую вызовы."""
+    published = []
 
-    class BrokerStub:
-        def __init__(self):
-            self.published = []
+    async def fake_publish(command):
+        published.append(command)
 
-        def kicker(self, task_name):
-            stub = self
-            class FakeKicker:
-                async def kiq(_, command):
-                    stub.published.append({"command": command, "task_name": task_name})
-            return FakeKicker()
-
-    stub = BrokerStub()
-    monkeypatch.setattr(enricher_handlers, "broker", stub)
-    return stub
+    monkeypatch.setattr(enricher_handlers, "_publish_enrich_command", fake_publish)
+    return published
 
 
 @pytest.fixture
@@ -148,10 +140,9 @@ async def test_handle_idea_success(make_message, fake_state, broker_stub):
     data = await state.get_data()
     assert data["prompt"] == "грустная песня о дожде"
     assert data["enriching"] is True
-    assert len(broker_stub.published) == 1
-    assert broker_stub.published[0]["task_name"] == "enrich_prompt"
-    assert broker_stub.published[0]["command"].prompt == "грустная песня о дожде"
-    assert broker_stub.published[0]["command"].history is None
+    assert len(broker_stub) == 1
+    assert broker_stub[0].prompt == "грустная песня о дожде"
+    assert broker_stub[0].history is None
     assert len(message.sent) == 1
     assert "обогащаю" in message.answers[0].lower()
 
@@ -163,7 +154,7 @@ async def test_handle_idea_empty_text(make_message, fake_state, broker_stub):
     await enricher_handlers.handle_idea(message=message, state=state)
 
     assert "непустой текст" in message.answers[0]
-    assert broker_stub.published == []
+    assert broker_stub == []
 
 
 async def test_handle_idea_too_long(make_message, fake_state, broker_stub):
@@ -173,7 +164,7 @@ async def test_handle_idea_too_long(make_message, fake_state, broker_stub):
     await enricher_handlers.handle_idea(message=message, state=state)
 
     assert "Слишком длинный текст" in message.answers[0]
-    assert broker_stub.published == []
+    assert broker_stub == []
 
 
 async def test_handle_idea_empty_template(make_message, fake_state, broker_stub):
@@ -183,7 +174,7 @@ async def test_handle_idea_empty_template(make_message, fake_state, broker_stub)
     await enricher_handlers.handle_idea(message=message, state=state)
 
     assert "Шаблон пришёл пустым" in message.answers[0]
-    assert broker_stub.published == []
+    assert broker_stub == []
 
 
 async def test_handle_idea_while_enriching(make_message, fake_state, broker_stub):
@@ -194,7 +185,7 @@ async def test_handle_idea_while_enriching(make_message, fake_state, broker_stub
     await enricher_handlers.handle_idea(message=message, state=state)
 
     assert "Дождитесь окончания обогащения" in message.answers[0]
-    assert broker_stub.published == []
+    assert broker_stub == []
 
 
 # --- handle_prompt_approve ---
@@ -276,8 +267,8 @@ async def test_prompt_edits_success_sends_history(make_message, fake_state, brok
 
     await enricher_handlers.handle_prompt_edits(message=message, state=state)
 
-    assert len(broker_stub.published) == 1
-    cmd = broker_stub.published[0]["command"]
+    assert len(broker_stub) == 1
+    cmd = broker_stub[0]
     assert cmd.prompt == "сделай веселее"
     assert cmd.history == [
         {"role": "user", "content": "идея"},
@@ -295,7 +286,7 @@ async def test_prompt_edits_empty(make_message, fake_state, broker_stub):
     await enricher_handlers.handle_prompt_edits(message=message, state=state)
 
     assert "непустые правки" in message.answers[0]
-    assert broker_stub.published == []
+    assert broker_stub == []
 
 
 async def test_prompt_edits_too_long(make_message, fake_state, broker_stub):
@@ -306,7 +297,7 @@ async def test_prompt_edits_too_long(make_message, fake_state, broker_stub):
     await enricher_handlers.handle_prompt_edits(message=message, state=state)
 
     assert "Слишком длинный текст" in message.answers[0]
-    assert broker_stub.published == []
+    assert broker_stub == []
 
 
 async def test_prompt_edits_lost_session(make_message, fake_state, broker_stub):
@@ -317,7 +308,7 @@ async def test_prompt_edits_lost_session(make_message, fake_state, broker_stub):
 
     assert "потерялась" in message.answers[0]
     assert state.cleared
-    assert broker_stub.published == []
+    assert broker_stub == []
 
 
 async def test_prompt_edits_while_enriching(make_message, fake_state, broker_stub):
@@ -328,7 +319,7 @@ async def test_prompt_edits_while_enriching(make_message, fake_state, broker_stu
     await enricher_handlers.handle_prompt_edits(message=message, state=state)
 
     assert "Дождитесь окончания обогащения" in message.answers[0]
-    assert broker_stub.published == []
+    assert broker_stub == []
 
 
 # --- handle_prompt_retry ---
@@ -353,7 +344,7 @@ async def test_retry_while_enriching(make_callback, fake_state, auth_stub, broke
     await enricher_handlers.handle_prompt_retry(callback=callback, state=state)
 
     assert callback.answered == [("Обогащение уже выполняется.", True)]
-    assert broker_stub.published == []
+    assert broker_stub == []
 
 
 async def test_retry_without_prompt_prompts_restart(make_callback, fake_state, auth_stub):
@@ -373,9 +364,9 @@ async def test_retry_first_run_enriches_idea(make_callback, make_callback_messag
 
     await enricher_handlers.handle_prompt_retry(callback=callback, state=state)
 
-    assert len(broker_stub.published) == 1
-    assert broker_stub.published[0]["command"].prompt == "идея"
-    assert broker_stub.published[0]["command"].history is None
+    assert len(broker_stub) == 1
+    assert broker_stub[0].prompt == "идея"
+    assert broker_stub[0].history is None
     assert (await state.get_data())["enriching"] is True
     assert "обогащаю" in callback.message.edits[-1].lower()
 
@@ -389,8 +380,8 @@ async def test_retry_after_edits_sends_history(
 
     await enricher_handlers.handle_prompt_retry(callback=callback, state=state)
 
-    assert len(broker_stub.published) == 1
-    cmd = broker_stub.published[0]["command"]
+    assert len(broker_stub) == 1
+    cmd = broker_stub[0]
     assert cmd.prompt == "правки"
     assert cmd.history == [
         {"role": "user", "content": "идея"},

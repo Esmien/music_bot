@@ -112,38 +112,16 @@ async def test_cmd_credits_network_failure(patched_auth_db, clean_auth_state, ma
 
 
 async def test_cmd_credits_without_api_key(patched_auth_db, clean_auth_state, make_message, fake_state, monkeypatch):
-    """Без OPENROUTER_API_KEY команда публикует GetCredits в очередь.
-
-    Воркер проверит отсутствие ключа и отправит сообщение пользователю.
-    """
-    from taskiq import InMemoryBroker
+    """Без OPENROUTER_API_KEY хендлер сразу отправляет сообщение об ошибке."""
+    from core.config import settings
 
     await _make_authorized_user(patched_auth_db, tg_id=11)
 
-    # Инициализируем InMemoryBroker для теста
-    test_broker = InMemoryBroker()
-    await test_broker.startup()
+    # Очищаем ключ API
+    monkeypatch.setattr(settings.bot, "OPENROUTER_API_KEY", None)
 
-    # Регистрируем задачу в тестовом брокере
-    from domains.credits import worker
+    msg = make_message(uid=11)
+    await handlers_credits.cmd_credits(msg, fake_state())
 
-    test_broker.register_task(
-        worker.handle_get_credits.original_func,
-        task_name="credits.get_credits",
-        labels={"queue_name": "dev.credits.tasks"},
-    )
-
-    # Подменяем брокер в воркере
-    original_broker = worker.handle_get_credits.broker
-    worker.handle_get_credits.broker = test_broker
-
-    try:
-        msg = make_message(uid=11)
-        await handlers_credits.cmd_credits(msg, fake_state())
-
-        # Хендлер только публикует команду, не отправляет сообщений
-        assert len(msg.answers) == 0
-    finally:
-        # Восстанавливаем оригинальный брокер
-        worker.handle_get_credits.broker = original_broker
-        await test_broker.shutdown()
+    assert len(msg.answers) == 1
+    assert "бот не настроен" in msg.answers[0].lower()

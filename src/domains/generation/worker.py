@@ -35,7 +35,7 @@ async def run_generation_task(
         command: Команда генерации.
         context: Контекст TaskIQ с TelegramPort.
     """
-    telegram: TelegramPort = context.dependencies["telegram_port"]
+    telegram: TelegramPort = getattr(context, "state", getattr(context, "dependencies", {}))["telegram_port"]
 
     async with get_session() as session:
         generation = await session.get(Generation, command.gen_id)
@@ -49,10 +49,13 @@ async def run_generation_task(
         if await is_generation_cancelled(gen_id=command.gen_id):
             raise asyncio.CancelledError
         if command.status_message_id is not None:
+            filled = "█" * round(fraction * 10)
+            empty = "░" * (10 - round(fraction * 10))
+            percent = round(fraction * 100)
             await telegram.edit_message(
                 chat_id=command.chat_id,
                 message_id=command.status_message_id,
-                text=f"🎼 {stage}\n{'█' * round(fraction * 10)}{'░' * (10 - round(fraction * 10))} {round(fraction * 100)}%",
+                text=f"🎼 {stage}\n{filled}{empty} {percent}%",
             )
 
     try:
@@ -61,20 +64,26 @@ async def run_generation_task(
         if await is_generation_cancelled(gen_id=command.gen_id):
             raise asyncio.CancelledError
 
-        with tempfile.NamedTemporaryFile(prefix=f"generation-{command.gen_id}-", suffix=".mp3", delete=False) as audio_file:
+        with tempfile.NamedTemporaryFile(
+            prefix=f"generation-{command.gen_id}-", suffix=".mp3", delete=False
+        ) as audio_file:
             audio_file.write(audio_bytes)
             audio_path = Path(audio_file.name)
 
-        await generation_broker.kicker(task_name="handle_generation_succeeded").kiq(
-            GenerationSucceeded(
-                user_id=command.user_id,
-                chat_id=command.chat_id,
-                gen_id=command.gen_id,
-                title=command.title,
-                audio_file_path=str(audio_path),
-                status_message_id=command.status_message_id,
-            )
+        succeeded_event = GenerationSucceeded(
+            user_id=command.user_id,
+            chat_id=command.chat_id,
+            gen_id=command.gen_id,
+            title=command.title,
+            audio_file_path=str(audio_path),
+            status_message_id=command.status_message_id,
         )
+
+        broker_kicker = getattr(generation_broker, "kicker", None)
+        if callable(broker_kicker):
+            await broker_kicker(task_name="handle_generation_succeeded").kiq(succeeded_event)
+        else:
+            await handle_generation_succeeded.kiq(succeeded_event)
     except asyncio.CancelledError:
         async with get_session() as session:
             generation = await session.get(Generation, command.gen_id)
@@ -82,16 +91,21 @@ async def run_generation_task(
                 generation.status = GenerationStatus.CANCELLED
                 await session.commit()
         await clear_generation_cancel(gen_id=command.gen_id)
-        await generation_broker.kicker(task_name="handle_generation_failed").kiq(
-            GenerationFailed(
-                user_id=command.user_id,
-                chat_id=command.chat_id,
-                gen_id=command.gen_id,
-                error_message="Generation was cancelled",
-                stage="cancelled",
-                status_message_id=command.status_message_id,
-            )
+
+        failed_event_cancel = GenerationFailed(
+            user_id=command.user_id,
+            chat_id=command.chat_id,
+            gen_id=command.gen_id,
+            error_message="Generation was cancelled",
+            stage="cancelled",
+            status_message_id=command.status_message_id,
         )
+
+        broker_kicker = getattr(generation_broker, "kicker", None)
+        if callable(broker_kicker):
+            await broker_kicker(task_name="handle_generation_failed").kiq(failed_event_cancel)
+        else:
+            await handle_generation_failed.kiq(failed_event_cancel)
     except Exception as error:
         log.exception("Generation failed (gen_id=%s)", command.gen_id)
         await notify_owner(
@@ -99,16 +113,21 @@ async def run_generation_task(
             context=f"Ошибка генерации gen_id={command.gen_id}",
             err=error,
         )
-        await generation_broker.kicker(task_name="handle_generation_failed").kiq(
-            GenerationFailed(
-                user_id=command.user_id,
-                chat_id=command.chat_id,
-                gen_id=command.gen_id,
-                error_message=type(error).__name__,
-                stage="generation",
-                status_message_id=command.status_message_id,
-            )
+
+        failed_event_error = GenerationFailed(
+            user_id=command.user_id,
+            chat_id=command.chat_id,
+            gen_id=command.gen_id,
+            error_message=type(error).__name__,
+            stage="generation",
+            status_message_id=command.status_message_id,
         )
+
+        broker_kicker = getattr(generation_broker, "kicker", None)
+        if callable(broker_kicker):
+            await broker_kicker(task_name="handle_generation_failed").kiq(failed_event_error)
+        else:
+            await handle_generation_failed.kiq(failed_event_error)
 
 
 @generation_broker.task(task_name="handle_generation_succeeded")
@@ -122,7 +141,7 @@ async def handle_generation_succeeded(
         event: Событие успешной генерации.
         context: Контекст TaskIQ с TelegramPort.
     """
-    telegram: TelegramPort = context.dependencies["telegram_port"]
+    telegram: TelegramPort = getattr(context, "state", getattr(context, "dependencies", {}))["telegram_port"]
 
     async with get_session() as session:
         generation = await session.get(Generation, event.gen_id)
@@ -145,6 +164,17 @@ async def handle_generation_succeeded(
             text="🎵 Готово!",
         )
 
+    broker_kicker = getattr(generation_broker, "kicker", None)
+    if callable(broker_kicker):
+        await broker_kicker(task_name="handle_generation_evaluation").kiq(event)
+    else:
+        try:
+            from domains.evaluation.worker import handle_generation_evaluation as eval_task
+        except ImportError:
+            from domains.evaluation.worker import handle_generation_evaluation_task as eval_task
+
+        await eval_task.kiq(event)
+
 
 @generation_broker.task(task_name="handle_generation_failed")
 async def handle_generation_failed(
@@ -157,7 +187,7 @@ async def handle_generation_failed(
         event: Событие сбоя генерации.
         context: Контекст TaskIQ с TelegramPort.
     """
-    telegram: TelegramPort = context.dependencies["telegram_port"]
+    telegram: TelegramPort = getattr(context, "state", getattr(context, "dependencies", {}))["telegram_port"]
 
     if event.stage == "cancelled":
         await telegram.send_message(chat_id=event.chat_id, text="Генерация отменена.")

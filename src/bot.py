@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import signal
+from contextlib import AsyncExitStack
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -13,6 +14,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from aiohttp import web
 
 from core import router
+from core.broker import brokers
 from core.config import settings
 from core.lifecycle import shutdown_all
 from core.utils.error_notify import notify_owner
@@ -162,11 +164,16 @@ async def main() -> None:
         storage = RedisStorage.from_url(settings.redis.redis_url)
         dp = create_dispatcher(storage=storage)
 
-        if settings.bot.WEBHOOK_MODE:
-            await run_webhook(bot=bot, dispatcher=dp, shutdown_event=shutdown_event)
-        else:
-            # start_polling сам обрабатывает graceful shutdown при получении сигнала
-            await dp.start_polling(bot, handle_signals=False)
+        async with AsyncExitStack() as broker_lifecycle:
+            for task_broker in brokers.values():
+                await task_broker.startup()
+                broker_lifecycle.push_async_callback(task_broker.shutdown)
+
+            if settings.bot.WEBHOOK_MODE:
+                await run_webhook(bot=bot, dispatcher=dp, shutdown_event=shutdown_event)
+            else:
+                # start_polling сам обрабатывает graceful shutdown при получении сигнала
+                await dp.start_polling(bot, handle_signals=False)
 
     except Exception as e:
         log.exception("Fatal error during bot execution: %s", e)
