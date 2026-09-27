@@ -9,6 +9,8 @@ services:
       - ../.env
     environment:
       - REDIS_URL=redis://${REDIS_HOST}:${REDIS_PORT}/0
+    ports:
+      - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy

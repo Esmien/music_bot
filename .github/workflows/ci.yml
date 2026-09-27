@@ -41,6 +41,9 @@ jobs:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
       POSTGRES_DB: ci_test_db
+      WEBHOOK_MODE: "0"
+      WEBHOOK_BASE_URL: https://example.test
+      WEBHOOK_SECRET: ci-webhook-secret
 
     steps:
       - name: Checkout
@@ -67,5 +70,8 @@ jobs:
       - name: Run migrations
         run: poetry run alembic upgrade head
 
-      - name: Run tests
-        run: poetry run pytest
+      - name: Run tests in polling mode
+        run: WEBHOOK_MODE=0 poetry run pytest
+
+      - name: Run tests in webhook mode
+        run: WEBHOOK_MODE=1 poetry run pytest

@@ -8,6 +8,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import ErrorEvent
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 
 from core import router
 from core.config import settings
@@ -36,8 +38,78 @@ async def on_error(event: ErrorEvent, bot: Bot) -> bool:
     return True
 
 
+def create_dispatcher(storage: RedisStorage) -> Dispatcher:
+    """Создаёт Dispatcher и подключает роутеры приложения.
+
+    Args:
+        storage: Хранилище FSM-состояний.
+
+    Returns:
+        Настроенный Dispatcher.
+    """
+    dispatcher = Dispatcher(storage=storage)
+    dispatcher.include_router(router)
+    dispatcher.errors.register(on_error)
+    return dispatcher
+
+
+def create_webhook_app(*, bot: Bot, dispatcher: Dispatcher) -> web.Application:
+    """Создаёт aiohttp-приложение для обработки Telegram webhook-запросов.
+
+    Args:
+        bot: Экземпляр Telegram-бота.
+        dispatcher: Dispatcher приложения.
+
+    Returns:
+        Настроенное aiohttp-приложение.
+
+    Raises:
+        ValueError: Если не задан базовый URL webhook.
+        ValueError: Если не задан секрет webhook.
+    """
+    if not settings.bot.WEBHOOK_BASE_URL:
+        raise ValueError("WEBHOOK_BASE_URL is required in webhook mode")
+    if not settings.bot.WEBHOOK_SECRET:
+        raise ValueError("WEBHOOK_SECRET is required in webhook mode")
+
+    application = web.Application()
+    SimpleRequestHandler(
+        dispatcher=dispatcher,
+        bot=bot,
+        secret_token=settings.bot.WEBHOOK_SECRET,
+    ).register(application, path="/webhook")
+    setup_application(application, dispatcher, bot=bot)
+    return application
+
+
+async def run_webhook(*, bot: Bot, dispatcher: Dispatcher) -> None:
+    """Запускает webhook-сервер на всех интерфейсах контейнера.
+
+    Args:
+        bot: Экземпляр Telegram-бота.
+        dispatcher: Dispatcher приложения.
+    """
+    webhook_url = f"{settings.bot.WEBHOOK_BASE_URL.rstrip('/')}/webhook"
+    await bot.set_webhook(
+        url=webhook_url,
+        secret_token=settings.bot.WEBHOOK_SECRET,
+        drop_pending_updates=True,
+    )
+
+    application = create_webhook_app(bot=bot, dispatcher=dispatcher)
+    runner = web.AppRunner(application)
+    await runner.setup()
+    site = web.TCPSite(runner, host="0.0.0.0", port=8000)
+    await site.start()
+
+    try:
+        await asyncio.Event().wait()
+    finally:
+        await runner.cleanup()
+
+
 async def main() -> None:
-    """Точка входа: настраивает логирование, БД, Bot и Dispatcher, запускает polling.
+    """Точка входа: настраивает логирование, Bot и Dispatcher, запускает выбранный режим.
 
     Сессия бота закрывается в finally, чтобы при любой ошибке
     не оставлять открытые HTTP-соединения.
@@ -66,12 +138,13 @@ async def main() -> None:
     )
     # FSM-состояния храним в Redis: данные переживают рестарт контейнера
     storage = RedisStorage.from_url(settings.redis.redis_url)
-    dp = Dispatcher(storage=storage)
-    dp.include_router(router)  # все хендлеры собраны в один роутер пакета handlers
-    dp.errors.register(on_error)
+    dp = create_dispatcher(storage=storage)
 
     try:
-        await dp.start_polling(bot)
+        if settings.bot.WEBHOOK_MODE:
+            await run_webhook(bot=bot, dispatcher=dp)
+        else:
+            await dp.start_polling(bot)
     finally:
         await storage.close()
         await redis_client.aclose()

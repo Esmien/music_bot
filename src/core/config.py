@@ -20,6 +20,9 @@ class BotConfig(BaseModelConfig):
     """Токены и идентификаторы, связанные с ботом и внешними API."""
 
     BOT_TOKEN: str
+    WEBHOOK_MODE: bool = False
+    WEBHOOK_BASE_URL: str = ""
+    WEBHOOK_SECRET: str = ""
     OPENROUTER_API_KEY: str = ""
     MODEL_ID: str = "google/lyria-3-pro-preview"
     BOT_ACCESS_KEY: str = ""
