@@ -31,7 +31,7 @@ async def run_worker(*, worker_name: str) -> None:
     broker.is_worker_process = True
 
     if worker_name == "enricher":
-        from workers import enricher_worker as _enricher_worker  # noqa: F401
+        from domains.enricher import worker as _enricher_worker  # noqa: F401
     elif worker_name == "generation":
         from domains.generation import worker as _generation_worker  # noqa: F401
     elif worker_name == "credits":
