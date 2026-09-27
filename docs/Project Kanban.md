@@ -17,7 +17,6 @@ kanban-plugin: board
 
 ## Backlog
 
-- [ ] [[4.3 generation → воркер]]
 - [ ] [[4.4 Перевод генерации на событие успеха сбоя]]
 - [ ] [[5.1 Отмена сквозь очередь]]
 - [ ] [[5.2 Retry, DLQ, наблюдаемость]]
@@ -45,6 +44,7 @@ kanban-plugin: board
 - [ ] [[3.3 InMemoryBroker для тестов]]
 - [ ] [[4.1 credits → воркер]]
 - [ ] [[4.2 enricher → воркер]]
+- [ ] [[4.3 generation → воркер]]
 
 
 ## Done

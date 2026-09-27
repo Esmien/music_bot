@@ -16,4 +16,4 @@ class GenerationFlowState(BaseModel):
     prompt: str | None = None
     title: str | None = None
     generating: bool = False
-    gen_id: str | None = None
+    gen_id: int | None = None

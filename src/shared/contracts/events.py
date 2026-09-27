@@ -60,9 +60,8 @@ class GenerationFailed(BaseModel):
 
     user_id: int = Field(..., description="Telegram ID пользователя")
     chat_id: int = Field(..., description="ID чата для отправки сообщения об ошибке")
-    gen_id: int = Field(..., description="ID записи генерации в БД")
-    error_message: str = Field(..., description="Сообщение об ошибке для логирования")
     gen_id: int | None = Field(default=None, description="ID записи генерации в БД, если генерация уже создана")
+    error_message: str = Field(..., description="Сообщение об ошибке для логирования")
     stage: str = Field(..., description="Этап, на котором произошла ошибка")
     user_error_message: str | None = Field(
         default=None, description="Сообщение об ошибке для пользователя (если None, используется стандартное)"
