@@ -13,14 +13,14 @@ class StartEnrichment(BaseModel):
     Args:
         user_id: Telegram ID пользователя.
         chat_id: ID чата для отправки результата.
-        initial_prompt: Исходный промпт от пользователя.
+        prompt: Промпт для обогащения.
         history: История диалога с обогатителем (опционально).
         status_message_id: ID сообщения для обновления статуса.
     """
 
     user_id: int = Field(..., description="Telegram ID пользователя")
     chat_id: int = Field(..., description="ID чата для отправки результата")
-    initial_prompt: str = Field(..., description="Исходный промпт от пользователя")
+    prompt: str = Field(..., description="Промпт для обогащения")
     history: list[dict[str, str]] | None = Field(
         default=None, description="История диалога с обогатителем (role, content)"
     )
