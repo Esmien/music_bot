@@ -79,11 +79,7 @@ async def run_generation_task(
             status_message_id=command.status_message_id,
         )
 
-        broker_kicker = getattr(generation_broker, "kicker", None)
-        if callable(broker_kicker):
-            await broker_kicker(task_name="handle_generation_succeeded").kiq(succeeded_event)
-        else:
-            await handle_generation_succeeded.kiq(succeeded_event)
+        await generation_broker.kicker(task_name="handle_generation_succeeded").kiq(succeeded_event)
     except asyncio.CancelledError:
         async with get_session() as session:
             generation = await session.get(Generation, command.gen_id)
@@ -101,11 +97,7 @@ async def run_generation_task(
             status_message_id=command.status_message_id,
         )
 
-        broker_kicker = getattr(generation_broker, "kicker", None)
-        if callable(broker_kicker):
-            await broker_kicker(task_name="handle_generation_failed").kiq(failed_event_cancel)
-        else:
-            await handle_generation_failed.kiq(failed_event_cancel)
+        await generation_broker.kicker(task_name="handle_generation_failed").kiq(failed_event_cancel)
     except Exception as error:
         log.exception("Generation failed (gen_id=%s)", command.gen_id)
         await notify_owner(
@@ -123,11 +115,7 @@ async def run_generation_task(
             status_message_id=command.status_message_id,
         )
 
-        broker_kicker = getattr(generation_broker, "kicker", None)
-        if callable(broker_kicker):
-            await broker_kicker(task_name="handle_generation_failed").kiq(failed_event_error)
-        else:
-            await handle_generation_failed.kiq(failed_event_error)
+        await generation_broker.kicker(task_name="handle_generation_failed").kiq(failed_event_error)
 
 
 @generation_broker.task(task_name="handle_generation_succeeded")
@@ -164,16 +152,7 @@ async def handle_generation_succeeded(
             text="🎵 Готово!",
         )
 
-    broker_kicker = getattr(generation_broker, "kicker", None)
-    if callable(broker_kicker):
-        await broker_kicker(task_name="handle_generation_evaluation").kiq(event)
-    else:
-        try:
-            from domains.evaluation.worker import handle_generation_evaluation as eval_task
-        except ImportError:
-            from domains.evaluation.worker import handle_generation_evaluation_task as eval_task
-
-        await eval_task.kiq(event)
+    await generation_broker.kicker(task_name="handle_generation_evaluation").kiq(event)
 
 
 @generation_broker.task(task_name="handle_generation_failed")
