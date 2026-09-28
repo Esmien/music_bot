@@ -181,10 +181,10 @@ async with Bot(token=...) as bot:
 ```
 
 **DoD:**
-- [ ] Переписать `handle_enrichment_completed_event()` и `handle_generation_failed_event()` на использование `TelegramPort` из контекста
-- [ ] Удалить ручное создание `Bot()` в event-хендлерах
-- [ ] Добавить в `conftest.py` фикстуру для проверки утечек (например, счётчик открытых сессий)
-- [ ] Прогнать тесты с `pytest-asyncio` и `pytest-aioresponses` для проверки cleanup
+- [x] Переписать `handle_enrichment_completed_event()` и `handle_generation_failed_event()` на использование `TelegramPort` из контекста
+- [x] Удалить ручное создание `Bot()` в event-хендлерах
+- [x] Добавить в `conftest.py` фикстуру для проверки утечек (например, счётчик открытых сессий)
+- [x] Прогнать тесты с `pytest-asyncio` и `pytest-aioresponses` для проверки cleanup
 
 ---
 

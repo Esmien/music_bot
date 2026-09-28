@@ -10,9 +10,8 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.exc import SQLAlchemyError
+from taskiq import Context, TaskiqDepends
 
-from core.config import settings
-from core.redis import redis_client
 from core.utils.error_notify import notify_owner
 from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
 from domains.auth.service import is_authorized
@@ -54,6 +53,7 @@ from domains.generation.fsm import MAX_PROMPT_LEN
 from shared.contracts.commands import StartEnrichment
 from shared.contracts.events import EnrichmentCompleted, GenerationFailed
 from shared.domain_ports import generation_flow_starter
+from shared.ports.telegram import TelegramPort
 
 log = logging.getLogger(__name__)
 
@@ -425,101 +425,94 @@ async def handle_prompt_cancel(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(text=RETURN_TO_START, reply_markup=get_main_keyboard())
 
 
-async def handle_enrichment_completed_event(event: EnrichmentCompleted) -> None:
+async def handle_enrichment_completed_event(
+    event: EnrichmentCompleted,
+    context: Context = TaskiqDepends(),
+) -> None:
     """Обрабатывает событие успешного обогащения промпта.
 
     Args:
         event: Событие с обогащённым промптом.
+        context: Контекст TaskIQ с зависимостями.
     """
-    from aiogram import Bot
     from aiogram.fsm.storage.base import StorageKey
-    from aiogram.fsm.storage.redis import RedisStorage
 
-    # DEVIATION: создаём Bot и FSMContext для отправки сообщения из воркера
-    bot = Bot(token=settings.bot.BOT_TOKEN)
-    storage = RedisStorage(redis=redis_client)
+    telegram: TelegramPort = context["telegram_port"]
+    storage = context["storage"]
+    bot = context["bot"]
 
-    try:
-        # Получаем FSM-контекст пользователя
-        fsm_context = FSMContext(
-            storage=storage,
-            key=StorageKey(bot_id=bot.id, chat_id=event.chat_id, user_id=event.user_id),
-        )
+    # Получаем FSM-контекст пользователя
+    fsm_context = FSMContext(
+        storage=storage,
+        key=StorageKey(bot_id=bot.id, chat_id=event.chat_id, user_id=event.user_id),
+    )
 
-        # Проверяем, что пользователь всё ещё в процессе обогащения
-        current_state = await fsm_context.get_state()
-        valid_states = (
-            PromptEnricherStates.waiting_for_idea.state,
-            PromptEnricherStates.waiting_for_edits.state,
-        )
-        if current_state not in valid_states:
-            log.info("Enrichment result dropped: state changed (user=%s)", event.user_id)
-            return
+    # Проверяем, что пользователь всё ещё в процессе обогащения
+    current_state = await fsm_context.get_state()
+    valid_states = (
+        PromptEnricherStates.waiting_for_idea.state,
+        PromptEnricherStates.waiting_for_edits.state,
+    )
+    if current_state not in valid_states:
+        log.info("Enrichment result dropped: state changed (user=%s)", event.user_id)
+        return
 
-        # Обновляем состояние
-        flow_state = await get_fsm_data(state=fsm_context, model_class=EnrichmentFlowState)
-        flow_state.enriched_prompt = event.enriched_prompt
-        flow_state.enriching = False
-        await update_fsm_data(state=fsm_context, model=flow_state)
-        await fsm_context.set_state(PromptEnricherStates.waiting_for_approval)
+    # Обновляем состояние
+    flow_state = await get_fsm_data(state=fsm_context, model_class=EnrichmentFlowState)
+    flow_state.enriched_prompt = event.enriched_prompt
+    flow_state.enriching = False
+    await update_fsm_data(state=fsm_context, model=flow_state)
+    await fsm_context.set_state(PromptEnricherStates.waiting_for_approval)
 
-        # Отправляем результат пользователю
-        display_text = format_enriched_prompt(raw=event.enriched_prompt)
-        await bot.send_message(
-            chat_id=event.chat_id,
-            text=ENRICH_RESULT_MSG.format(display_text=html.escape(display_text)),
-            reply_markup=get_prompt_approval_keyboard(),
-        )
-        log.info("Enrichment result delivered (user=%s)", event.user_id)
-
-    except Exception as exc:
-        log.error(f"Failed to handle enrichment completed (user={event.user_id}): {exc}", exc_info=True)
-    finally:
-        await bot.session.close()
+    # Отправляем результат пользователю
+    display_text = format_enriched_prompt(raw=event.enriched_prompt)
+    await telegram.send_message(
+        chat_id=event.chat_id,
+        text=ENRICH_RESULT_MSG.format(display_text=html.escape(display_text)),
+        reply_markup=get_prompt_approval_keyboard(),
+    )
+    log.info("Enrichment result delivered (user=%s)", event.user_id)
 
 
-async def handle_generation_failed_event(event: GenerationFailed) -> None:
+async def handle_generation_failed_event(
+    event: GenerationFailed,
+    context: Context = TaskiqDepends(),
+) -> None:
     """Обрабатывает событие сбоя генерации или обогащения.
 
     Args:
         event: Событие с описанием ошибки.
+        context: Контекст TaskIQ с зависимостями.
     """
-    from aiogram import Bot
     from aiogram.fsm.storage.base import StorageKey
-    from aiogram.fsm.storage.redis import RedisStorage
 
-    bot = Bot(token=settings.bot.BOT_TOKEN)
-    storage = RedisStorage(redis=redis_client)
+    telegram: TelegramPort = context["telegram_port"]
+    storage = context["storage"]
+    bot = context["bot"]
 
-    try:
-        fsm_context = FSMContext(
-            storage=storage,
-            key=StorageKey(bot_id=bot.id, chat_id=event.chat_id, user_id=event.user_id),
+    fsm_context = FSMContext(
+        storage=storage,
+        key=StorageKey(bot_id=bot.id, chat_id=event.chat_id, user_id=event.user_id),
+    )
+
+    # Проверяем стадию ошибки
+    if event.stage == "enrichment":
+        # Обновляем флаг enriching
+        flow_state = await get_fsm_data(state=fsm_context, model_class=EnrichmentFlowState)
+        flow_state.enriching = False
+        await update_fsm_data(state=fsm_context, model=flow_state)
+
+        # Отправляем сообщение с кнопкой повтора
+        await telegram.send_message(
+            chat_id=event.chat_id,
+            text=ENRICH_FAIL,
+            reply_markup=get_enrich_failed_keyboard(),
         )
-
-        # Проверяем стадию ошибки
-        if event.stage == "enrichment":
-            # Обновляем флаг enriching
-            flow_state = await get_fsm_data(state=fsm_context, model_class=EnrichmentFlowState)
-            flow_state.enriching = False
-            await update_fsm_data(state=fsm_context, model=flow_state)
-
-            # Отправляем сообщение с кнопкой повтора
-            await bot.send_message(
-                chat_id=event.chat_id,
-                text=ENRICH_FAIL,
-                reply_markup=get_enrich_failed_keyboard(),
-            )
-            log.info("Enrichment failure delivered (user=%s)", event.user_id)
-        else:
-            # Для других стадий просто очищаем состояние
-            await fsm_context.clear()
-            await bot.send_message(
-                chat_id=event.chat_id,
-                text=f"❌ {event.error_message}",
-            )
-
-    except Exception as exc:
-        log.error(f"Failed to handle generation failed (user={event.user_id}): {exc}", exc_info=True)
-    finally:
-        await bot.session.close()
+        log.info("Enrichment failure delivered (user=%s)", event.user_id)
+    else:
+        # Для других стадий просто очищаем состояние
+        await fsm_context.clear()
+        await telegram.send_message(
+            chat_id=event.chat_id,
+            text=f"❌ {event.error_message}",
+        )

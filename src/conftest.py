@@ -230,3 +230,38 @@ def inmemory_broker(monkeypatch):
     monkeypatch.setitem(broker_module.brokers, "credits", test_broker)
 
     return test_broker
+
+
+@pytest.fixture(autouse=True)
+def track_aiohttp_sessions(monkeypatch):
+    """Отслеживает создание aiohttp.ClientSession для обнаружения утечек.
+
+    Этот fixture проверяет, что все созданные сессии были корректно закрыты.
+    Используется для валидации отсутствия утечек в event-хендлерах воркеров.
+    """
+    import aiohttp
+
+    original_init = aiohttp.ClientSession.__init__
+    original_close = aiohttp.ClientSession.close
+    created_sessions = []
+    closed_sessions = []
+
+    def tracked_init(self, *args, **kwargs):
+        created_sessions.append(id(self))
+        return original_init(self, *args, **kwargs)
+
+    async def tracked_close(self):
+        closed_sessions.append(id(self))
+        return await original_close(self)
+
+    monkeypatch.setattr(aiohttp.ClientSession, "__init__", tracked_init)
+    monkeypatch.setattr(aiohttp.ClientSession, "close", tracked_close)
+
+    yield {"created": created_sessions, "closed": closed_sessions}
+
+    # Проверка на утечки после теста
+    leaked = set(created_sessions) - set(closed_sessions)
+    if leaked:
+        import warnings
+
+        warnings.warn(f"Detected {len(leaked)} unclosed aiohttp sessions: {leaked}", ResourceWarning, stacklevel=2)
