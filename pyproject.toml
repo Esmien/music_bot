@@ -21,8 +21,6 @@ alembic = ">=1.14.0,<2.0.0"
 redis = ">=5.2.0,<6.0.0"
 pydantic = "^2.13.5"
 pydantic-settings = "^2.15.0"
-taskiq = ">=0.11.7,<0.12.0"
-taskiq-aio-pika = ">=0.4.1,<0.5.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.4.2,<9.0.0"
@@ -77,7 +75,7 @@ line-ending = "auto"
 
 [tool.ruff.lint.isort]
 # Группировка импортов, чтобы всё было красиво
-known-first-party = ["core", "domains", "fsm", "handlers", "keyboards", "services"] # Модули проекта отделяются пустой строкой
+known-first-party = ["core", "fsm", "handlers", "keyboards", "services"] # Модули проекта отделяются пустой строкой
 
 [tool.pytest.ini_options]
 # Режим "auto" — то самое "always": async-тесты и фикстуры выполняются
@@ -88,7 +86,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # Корень проекта и каталог src в sys.path: тесты импортируют config, models, handlers напрямую
 pythonpath = [".", "src"]
-testpaths = ["src/domains", "tests"]
+testpaths = ["tests"]
 markers = [
     "unit: быстрые изолированные тесты (сеть и БД замоканы)",
     "integration: тесты с реальной in-memory БД",
@@ -100,8 +98,7 @@ addopts = "--cov --cov-report=term-missing:skip-covered"
 # Измеряем только код проекта — тесты и зависимости не считаем.
 # bot.py не включён: это точка входа с polling, в тестах не импортируется,
 # из-за чего coverage предупреждал "Module bot was never imported"
-source = ["core", "domains"]
-omit = ["*/tests/*", "*/test_*.py"]
+source = ["core", "handlers", "services"]
 
 [tool.coverage.report]
 show_missing = true

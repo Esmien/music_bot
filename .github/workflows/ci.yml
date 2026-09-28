@@ -5,13 +5,12 @@ on:
     branches: [main, master, dev]
   pull_request:
     branches: [main, master, dev]
-
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
 
+    # Реальный PostgreSQL для проверки миграций (alembic upgrade head)
     services:
-      # Реальный PostgreSQL для проверки миграций (alembic upgrade head)
       postgres:
         image: postgres:17-alpine
         env:
@@ -20,31 +19,10 @@ jobs:
           POSTGRES_DB: ci_test_db
         ports:
           - 5432:5432
+        # Теперь здесь обычный текст, GitHub ругаться не будет
         options: >-
           --health-cmd "pg_isready -U ci_user -d ci_test_db"
           --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-      # Redis для FSM-состояний и реестров
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
-      # RabbitMQ для TaskIQ брокера
-      rabbitmq:
-        image: rabbitmq:3-management-alpine
-        ports:
-          - 5672:5672
-        options: >-
-          --health-cmd "rabbitmq-diagnostics -q ping"
-          --health-interval 10s
           --health-timeout 5s
           --health-retries 10
 
@@ -56,26 +34,13 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       BOT_ACCESS_KEY: ${{ secrets.BOT_ACCESS_KEY }}
       SONG_PRICE: ${{ secrets.SONG_PRICE }}
-      BOT_OWNER_ID: 0
-      MODEL_ID: google/lyria-3-pro-preview
-      MOCK_MODE: 1
-      REDIS_HOST: 127.0.0.1
-      REDIS_PORT: 6379
-      REDIS_VAULT: 0
-      RABBITMQ_URL: amqp://guest:guest@127.0.0.1:5672/
-      RABBITMQ_PREFETCH: 10
-      RABBITMQ_QUEUE_PREFIX: ci
+      REDIS_HOST: ${{ secrets.REDIS_HOST }}
+      REDIS_PORT: ${{ secrets.REDIS_PORT }}
       POSTGRES_USER: ci_user
       POSTGRES_PASSWORD: ci_password
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
       POSTGRES_DB: ci_test_db
-      WEBHOOK_MODE: "0"
-      WEBHOOK_BASE_URL: https://example.test
-      WEBHOOK_SECRET: ci-webhook-secret
-      ENRICH_URL: ""
-      ENRICH_TOKEN: ""
-      ENRICH_MODEL: ""
 
     steps:
       - name: Checkout
@@ -102,8 +67,5 @@ jobs:
       - name: Run migrations
         run: poetry run alembic upgrade head
 
-      - name: Run tests in polling mode
-        run: WEBHOOK_MODE=0 poetry run pytest
-
-      - name: Run tests in webhook mode
-        run: WEBHOOK_MODE=1 poetry run pytest
+      - name: Run tests
+        run: poetry run pytest

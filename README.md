@@ -29,8 +29,50 @@
 
 ## Структура проекта
 
-
-#### Подробная архитектура и структура проекта описаны [здесь](docs/ARCHITECTURE.md). 
+~~~text
+src/
+├── bot.py               # точка входа: Bot, Dispatcher, регистрация роутеров, on_error
+├── core/
+│   ├── config.py        # конфигурация через pydantic Settings
+│   ├── redis.py         # единый async-клиент Redis (FSM, реестры)
+│   ├── database/
+│   │   ├── engine.py    # async-движок, фабрика сессий, init_db()
+│   │   └── models.py    # ORM-модели (User, GenerationFeedback)
+│   └── utils/
+│       ├── error_notify.py   # уведомления владельцу об ошибках
+│       ├── exceptions.py     # кастомные исключения
+│       └── stream_parser.py  # парсер SSE-потока OpenRouter
+├── handlers/
+│   ├── auth.py                 # /start, ввод ключа доступа, /logout, fallback
+│   ├── base_handlers.py        # /cancel и отмена текущей операции
+│   ├── credits_handlers.py     # /credits: остаток генераций
+│   ├── filters.py              # кастомные фильтры (IsPendingAuth, NotCommand)
+│   ├── enricher_handlers.py    # FSM-диалог обогащения промпта
+│   ├── evaluation_handlers.py  # FSM-обработка inline-оценки после генерации
+│   ├── feedback_handlers.py    # FSM-сбор текстового фидбека после генерации
+│   ├── generation_handlers.py  # точка входа генерации, приём названия, повтор после сбоя
+│   └── generation_pipeline.py  # конвейер генерации: прогресс, отмена, сбои, отправка аудио, сохранение названия
+├── fsm/
+│   ├── enricher_fsm.py         # состояния сценария обогащения промпта
+│   ├── evaluation_fsm.py       # состояния оценки/фидбека
+│   ├── generation_fsm.py       # состояния и лимиты диалога генерации
+│   ├── generation_flags.py     # чистка «осиротевших» флагов после рестарта
+│   └── registries/             # служебные реестры (auth_registry, task_registry)
+├── keyboards/
+│   ├── default_keyboards.py     # reply-клавиатуры
+│   ├── enricher_keyboards.py    # inline-клавиатуры обогащения промпта
+│   ├── evaluation_keyboards.py  # inline-клавиатура оценки после генерации
+│   └── feedback_keyboards.py    # inline-клавиатуры сценария фидбека
+├── services/
+│   ├── enricher.py           # обогащение промпта через LLM, сохранение пары «исходный → обогащённый»
+│   ├── enricher_validator.py # разбор и валидация JSON-контракта обогащения
+│   ├── feedback.py           # сохранение оценки/отзыва в последнюю запись генерации
+│   ├── generation.py         # запрос к OpenRouter (SSE) и мок-режим
+│   └── pipeline.py           # оркестрация: пер-пользовательский лок, прогресс-бар, троттлинг
+migrations/             # миграции Alembic
+tests/                  # юнит- и интеграционные тесты
+pyproject.toml · poetry.lock · infra/Dockerfile · infra/docker-compose.yml · infra/entrypoint.sh · .github/workflows (CI/CD)
+~~~
 
 ## Переменные окружения
 
@@ -46,9 +88,6 @@
 | `DEV_MODE`                                            | — | `False` | Режим разработки: переключает хосты Redis/PostgreSQL на `localhost`; для доступа к контейнерным БД снаружи нужно раскомментировать секции `ports` в `infra/docker-compose.yml` |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | ✅ | — | Пользователь, пароль и имя БД PostgreSQL |
 | `POSTGRES_HOST` / `POSTGRES_PORT`                     | ✅ | — | Хост и порт PostgreSQL (в Docker-сети — `postgres:5432`) |
-| `WEBHOOK_MODE`                                        | — | `False` | `True` — webhook-режим, `False` — локальный polling |
-| `WEBHOOK_BASE_URL`                                    | При `WEBHOOK_MODE=True` | — | Публичный базовый URL для Telegram webhook |
-| `WEBHOOK_SECRET`                                      | При `WEBHOOK_MODE=True` | — | Секретный токен webhook |
 | `MODEL_ID`                                            | — | `google/lyria-3-pro-preview` | Модель OpenRouter |
 | `BOT_OWNER_ID`                                        | — | `0` | Telegram ID владельца: ему уходят отчёты об ошибках |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_VAULT`           | — | `redis` / `6379` / `0` | Хост, порт и номер БД Redis для FSM-хранилища; в Docker-сети — `redis:6379` |
@@ -80,15 +119,7 @@ docker compose up -d --build
 docker compose logs -f
 ~~~
 
-В логах должна появиться строка `Starting bot`. Entrypoint контейнера перед запуском бота применяет миграции (`alembic upgrade head`) и переключается на непривилегированного пользователя `botuser`. В webhook-режиме приложение принимает запросы на `0.0.0.0:8000`, а публичный адрес задаётся через `WEBHOOK_BASE_URL`. Остановка: `docker compose down`. Данные PostgreSQL и Redis хранятся в именованных томах и переживают пересоздание контейнеров.
-
-Для генерации секрета webhook выполните:
-
-```bash
-openssl rand -hex 32
-```
-
-Скопируйте результат в `.env` как значение `WEBHOOK_SECRET`. Никому не передавайте этот секрет.
+В логах должна появиться строка `Starting bot`. Entrypoint контейнера перед запуском бота применяет миграции (`alembic upgrade head`) и переключается на непривилегированного пользователя `botuser`. Остановка: `docker compose down`. Данные PostgreSQL и Redis хранятся в именованных томах и переживают пересоздание контейнеров.
 
 ## CI/CD
 
@@ -96,7 +127,6 @@ GitHub Actions:
 
 - `.github/workflows/ci.yml` — на push/PR в `main`, `master` и `dev`: Ruff (проверка кода и формата), применение миграций Alembic к чистому сервисному PostgreSQL 17, прогон Pytest.
 - `.github/workflows/deploy.yml` — после успешного CI в `main`/`master` деплой на VPS по SSH: `git reset --hard` + `git pull origin master`, `docker compose up -d --build`, очистка старых образов и проверка, что миграции дошли до `head` (`alembic current`).
-- CI запускает тесты отдельно с `WEBHOOK_MODE=0` и `WEBHOOK_MODE=1`.
 
 Требуются секреты репозитория: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_PROJECT_DIR`.
 

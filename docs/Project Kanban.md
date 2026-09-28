@@ -4,26 +4,8 @@ kanban-plugin: board
 
 ---
 
-## Epics
-
-- [x] [[0. Clean-up]]
-- [x] [[1. Infrastructure]]
-- [x] [[2. Webhooks]]
-- [x] [[3. TaskIQ Core]]
-- [ ] [[4. Domains migration]]
-- [ ] [[5. Observability, durability]]
-- [ ] [[6. Tests and docs]]
-- [ ] [[7. Refactor]]
-- [ ] [[8. UX]]
-
-
 ## Backlog
 
-- [ ] [[5.1 Отмена сквозь очередь]]
-- [ ] [[5.2 Retry, DLQ, наблюдаемость]]
-- [ ] [[5.3 Порядок деплоя]]
-- [ ] [[6.1 Обновление тестовой базы]]
-- [ ] [[6.2 Документация]]
 
 
 ## In progress
@@ -32,23 +14,6 @@ kanban-plugin: board
 
 ## Testing
 
-- [ ] [[0.1 Публичные контракты auth вместо приватных импортов]]
-- [ ] [[0.2 Разрыв цикла generation ↔ enricher]]
-- [ ] [[0.3 Типизированные FSM-данные вместо магических строк]]
-- [ ] [[0.4 Реестр и локи в Redis]]
-- [ ] [[1.1 RabbitMQ и taskiq в проект]]
-- [ ] [[1.2 Конфигурация брокера и сериализация]]
-- [ ] [[2.1 Переключение polling → webhook за флагом]]
-- [ ] [[2.2 Graceful shutdown и lifecycle]]
-- [ ] [[3.1 Пакет контрактов shared contracts]]
-- [ ] [[3.2 Порты телеметрии в воркерах]]
-- [ ] [[3.3 InMemoryBroker для тестов]]
-- [ ] [[4.1 credits → воркер]]
-- [ ] [[4.2 enricher → воркер]]
-- [ ] [[4.3 generation → воркер]]
-- [ ] [[4.4 Перевод генерации на событие успеха сбоя]]
-- [ ] [[4.5 evaluation - воркер]]
-- [ ] [[4.6 feedback - воркер]]
 
 
 ## Done
@@ -72,13 +37,12 @@ kanban-plugin: board
 - [x] [[add_feedback_service]]
 - [x] [[add_evaluation_handlers]]
 - [x] [[add_feedback_handlers]]
-- [x] [[add_model_generation]]
 
 
 
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[false,false,false,false,true,true],"show-checkboxes":true,"new-note-folder":"Tasks"}
+{"kanban-plugin":"board","list-collapse":[false,false,false,false,false],"show-checkboxes":true,"new-note-folder":"Tasks"}
 ```
 %%

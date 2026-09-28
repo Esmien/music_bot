@@ -1,27 +1,54 @@
-"""Общая база SQLAlchemy и совместимые реэкспорты доменных моделей."""
+"""ORM-модели SQLAlchemy."""
 
-from sqlalchemy import MetaData
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, Text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
-    """Базовый класс для ORM-моделей проекта."""
+    """Базовый класс для всех ORM-моделей проекта."""
 
-    metadata = MetaData(
-        naming_convention={
-            "ix": "ix_%(table_name)s_%(column_0_name)s",
-            "uq": "uq_%(table_name)s_%(column_0_name)s",
-            "ck": "ck_%(table_name)s_%(constraint_name)s",
-            "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
-            "pk": "pk_%(table_name)s",
-        }
-    )
+    pass
 
 
-# Реэкспорт сохраняет совместимость старых импортов.
-# Сами модели определены в соответствующих доменах.
-from domains.base.models import User  # noqa: E402
-from domains.feedback.models import GenerationFeedback  # noqa: E402
-from domains.generation.models import Generation, GenerationStatus  # noqa: E402
+class User(Base):
+    """Пользователь бота.
 
-__all__ = ["Base", "Generation", "GenerationFeedback", "GenerationStatus", "User"]
+    Attributes:
+        tg_id: Telegram user_id — уникален и индексирован,
+            т.к. по нему идут все поиски пользователя.
+        is_authorized: Прошёл ли пользователь вход по ключу доступа.
+        feedbacks: Отзывы пользователя о сгенерированных песнях.
+    """
+
+    __tablename__ = "users"
+
+    tg_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    is_authorized: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    feedbacks: Mapped[list["GenerationFeedback"]] = relationship(back_populates="user")
+
+
+class GenerationFeedback(Base):
+    """Отзыв пользователя о сгенерированной песне.
+
+    Attributes:
+        id: Суррогатный первичный ключ.
+        user_id: ID пользователя (FK на users.id).
+        user: Связанный объект User.
+        initial_prompt: Промпт от пользователя.
+        enriched_prompt: Обработанный ИИ промпт.
+        title: Название сгенерированной песни.
+        is_liked: Понравилась ли пользователю сгенерированная песня.
+        feedback: Опциональное короткое резюме пользователя о песне.
+    """
+
+    __tablename__ = "generation_feedbacks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.tg_id"), index=True)
+    initial_prompt: Mapped[str] = mapped_column(Text)
+    enriched_prompt: Mapped[str] = mapped_column(Text)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_liked: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    user: Mapped["User"] = relationship("User", back_populates="feedbacks")
