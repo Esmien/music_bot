@@ -232,11 +232,11 @@ def is_retryable_status(exception):
 ```
 
 **DoD:**
-- [ ] Добавить `@retry` декоратор на `generate_song_real()` с экспоненциальным backoff
-- [ ] Настроить retry на: `TimeoutException`, `ConnectError`, 429, 503
-- [ ] Логировать каждую попытку retry с уровнем WARNING
-- [ ] Написать unit-тест с мокированием 503 → 503 → 200
-- [ ] Обновить `CONVENTIONS.md` [15] с правилами retry для внешних API
+- [x] Добавить `@retry` декоратор на `generate_song_real()` с экспоненциальным backoff
+- [x] Настроить retry на: `TimeoutException`, `ConnectError`, 429, 503
+- [x] Логировать каждую попытку retry с уровнем WARNING
+- [x] Написать unit-тест с мокированием 503 → 503 → 200
+- [x] Обновить `CONVENTIONS.md` [15] с правилами retry для внешних API
 
 ---
 

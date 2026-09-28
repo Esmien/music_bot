@@ -250,3 +250,123 @@ async def test_generate_song_real_swallows_progress_errors(patch_openrouter):
     patch_openrouter(FakeStreamResponse([_audio_chunk(_b64(b"ABC")), "data: [DONE]"]))
 
     assert await gen.generate_song_real(prompt="промпт", gen_id=999, on_progress=broken_on_progress) == b"ABC"
+
+
+async def test_generate_song_real_retries_on_503(patch_openrouter, monkeypatch):
+    """Retry-логика должна повторить запрос после 503 и успешно завершиться на третьей попытке."""
+    attempts = []
+
+    class RetryingFakeClient:
+        """Заглушка с последовательностью ответов: 503 → 503 → 200."""
+
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        def stream(self, *args, **kwargs):
+            attempts.append(len(attempts) + 1)
+
+            class _StreamContext:
+                async def __aenter__(self):
+                    if len(attempts) <= 2:
+                        return FakeStreamResponse([], status_code=503)
+                    return FakeStreamResponse([_audio_chunk(_b64(b"SUCCESS"))], status_code=200)
+
+                async def __aexit__(self, *exc_info):
+                    return False
+
+            return _StreamContext()
+
+    monkeypatch.setattr(gen.httpx, "AsyncClient", RetryingFakeClient)
+
+    result = await gen.generate_song_real(prompt="промпт", gen_id=999)
+
+    assert result == b"SUCCESS"
+    assert len(attempts) == 3, "Should retry exactly 3 times (2 failures + 1 success)"
+
+
+async def test_generate_song_real_retries_on_timeout(patch_openrouter, monkeypatch):
+    """Retry-логика должна повторить запрос после TimeoutException."""
+    attempts = []
+
+    class TimeoutFakeClient:
+        """Заглушка с последовательностью: timeout → timeout → 200."""
+
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        def stream(self, *args, **kwargs):
+            attempts.append(len(attempts) + 1)
+
+            class _StreamContext:
+                async def __aenter__(self):
+                    if len(attempts) <= 2:
+                        raise gen.httpx.TimeoutException("Connection timeout")
+                    return FakeStreamResponse([_audio_chunk(_b64(b"RECOVERED"))], status_code=200)
+
+                async def __aexit__(self, *exc_info):
+                    return False
+
+            return _StreamContext()
+
+    monkeypatch.setattr(gen.httpx, "AsyncClient", TimeoutFakeClient)
+
+    result = await gen.generate_song_real(prompt="промпт", gen_id=999)
+
+    assert result == b"RECOVERED"
+    assert len(attempts) == 3
+
+
+async def test_generate_song_real_fails_after_max_retries(patch_openrouter, monkeypatch):
+    """После исчерпания попыток retry должен пробросить исключение."""
+    attempts = []
+
+    class AlwaysFailingClient:
+        """Заглушка, которая всегда возвращает 503."""
+
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        def stream(self, *args, **kwargs):
+            attempts.append(len(attempts) + 1)
+
+            class _StreamContext:
+                async def __aenter__(self):
+                    return FakeStreamResponse([], status_code=503)
+
+                async def __aexit__(self, *exc_info):
+                    return False
+
+            return _StreamContext()
+
+    monkeypatch.setattr(gen.httpx, "AsyncClient", AlwaysFailingClient)
+
+    with pytest.raises(gen.GenerationAPIError, match="OpenRouter 503"):
+        await gen.generate_song_real(prompt="промпт", gen_id=999)
+
+    assert len(attempts) == 3, "Should attempt exactly 3 times before giving up"
+
+
+async def test_generate_song_real_no_retry_on_400(patch_openrouter):
+    """Ошибки 400 не должны повторяться — это ошибка клиента, а не сервера."""
+    patch_openrouter(FakeStreamResponse([], status_code=400))
+
+    with pytest.raises(gen.GenerationAPIError, match="OpenRouter 400"):
+        await gen.generate_song_real(prompt="промпт", gen_id=999)

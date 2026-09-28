@@ -23,6 +23,7 @@ pydantic = "^2.13.5"
 pydantic-settings = "^2.15.0"
 taskiq = ">=0.11.7,<0.12.0"
 taskiq-aio-pika = ">=0.4.1,<0.5.0"
+tenacity = ">=8.0.0,<9.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.4.2,<9.0.0"

@@ -19,6 +19,12 @@ from contextlib import asynccontextmanager
 from typing import Any, Protocol
 
 import httpx
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from core.config import settings
 from core.redis import is_generation_cancelled, redis_client
@@ -46,6 +52,43 @@ else
     return 0
 end
 """
+
+
+def _is_retryable_error(exception: BaseException) -> bool:
+    """Определяет, является ли ошибка повторяемой для retry-логики.
+
+    Args:
+        exception: Исключение для проверки.
+
+    Returns:
+        True, если ошибку можно повторить, False иначе.
+    """
+    # Сетевые ошибки httpx
+    if isinstance(exception, (httpx.TimeoutException, httpx.ConnectError, httpx.ReadTimeout)):
+        return True
+
+    # HTTP-ошибки с кодами 429 (Rate Limit) и 503 (Service Unavailable)
+    if isinstance(exception, GenerationAPIError):
+        error_msg = str(exception)
+        return "429" in error_msg or "503" in error_msg
+
+    return False
+
+
+def _log_retry_attempt(retry_state) -> None:
+    """Логирует попытку повтора запроса.
+
+    Args:
+        retry_state: Состояние retry из tenacity.
+    """
+    attempt = retry_state.attempt_number
+    exception = retry_state.outcome.exception() if retry_state.outcome else None
+    log.warning(
+        "Retry attempt %d for OpenRouter API due to %s: %s",
+        attempt,
+        type(exception).__name__ if exception else "unknown",
+        str(exception)[:200] if exception else "",
+    )
 
 
 # Колбек прогресса: `on_progress(stage, fraction)`, fraction в диапазоне 0..1
@@ -246,6 +289,13 @@ def load_mock_audio() -> bytes:
     raise GenerationAudioMissingError("Audio not found in mock file")
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception(_is_retryable_error),
+    before_sleep=_log_retry_attempt,
+    reraise=True,
+)
 async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCallback | None = None) -> bytes:
     """Генерирует песню через OpenRouter, читая ответ как SSE-поток.
 

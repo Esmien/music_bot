@@ -82,6 +82,35 @@ known-first-party = ["core", "fsm", "handlers", "keyboards", "services"] # Мо�
 Везде, где поднимается исключение, связанное с логикой, используется кастомное, семантически верное исключение.
 Если для данного конкретного проброса исключение не написано (core/exceptions.py), необходимо его создать
 
+# Retry-логика для внешних API
+Все вызовы внешних API (OpenRouter, OpenAI, и т.д.) должны быть обёрнуты в retry с экспоненциальным backoff.
+Используется библиотека tenacity с настройками:
+- Максимум 3 попытки (stop_after_attempt(3))
+- Экспоненциальный backoff: 2, 4, 8, 10 секунд (wait_exponential(multiplier=1, min=2, max=10))
+- Retry только на транзиентные ошибки: TimeoutException, ConnectError, ReadTimeout, HTTP 429, HTTP 503
+- Ошибки клиента (4xx кроме 429) не повторяются
+- Каждая попытка логируется с уровнем WARNING
+Пример:
+```python
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+
+def _is_retryable_error(exception: BaseException) -> bool:
+    if isinstance(exception, (httpx.TimeoutException, httpx.ConnectError, httpx.ReadTimeout)):
+        return True
+    if isinstance(exception, APIError):
+        return "429" in str(exception) or "503" in str(exception)
+    return False
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception(_is_retryable_error),
+    reraise=True,
+)
+async def call_external_api(...):
+    ...
+```
+
 # Kanban и проектная документация
 В работу берутся задачи в статусе in progress. 
 После выполнения задачи в соответствующем md-файле описывается, что было сделано, что изменено, что осталось техдолгом.
