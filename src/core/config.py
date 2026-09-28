@@ -20,6 +20,9 @@ class BotConfig(BaseModelConfig):
     """Токены и идентификаторы, связанные с ботом и внешними API."""
 
     BOT_TOKEN: str
+    WEBHOOK_MODE: bool = False
+    WEBHOOK_BASE_URL: str = ""
+    WEBHOOK_SECRET: str = ""
     OPENROUTER_API_KEY: str = ""
     MODEL_ID: str = "google/lyria-3-pro-preview"
     BOT_ACCESS_KEY: str = ""
@@ -83,6 +86,45 @@ class DatabaseConfig(BaseModelConfig):
         return str(url)
 
 
+class RabbitMQConfig(BaseModelConfig):
+    """Параметры RabbitMQ и именования очередей TaskIQ."""
+
+    RABBITMQ_URL: str = "amqp://guest:guest@localhost:5672/"
+    RABBITMQ_PREFETCH: int = 10
+    RABBITMQ_QUEUE_PREFIX: str = "dev"
+
+    @property
+    def queue_prefix(self) -> str:
+        """Возвращает нормализованный префикс очередей.
+
+        Returns:
+            Префикс без начальных и конечных разделителей.
+        """
+        return self.RABBITMQ_QUEUE_PREFIX.strip(". ")
+
+    def queue_name(self, domain: str) -> str:
+        """Формирует имя очереди домена.
+
+        Args:
+            domain: Имя домена, например `enricher`.
+
+        Returns:
+            Полное имя очереди домена.
+        """
+        return f"{self.queue_prefix}.{domain}.tasks"
+
+    def dead_letter_queue_name(self, domain: str) -> str:
+        """Формирует имя dead-letter очереди домена.
+
+        Args:
+            domain: Имя домена, например `enricher`.
+
+        Returns:
+            Полное имя DLQ домена.
+        """
+        return f"{self.queue_prefix}.{domain}.tasks.dlq"
+
+
 class RedisConfig(BaseModelConfig):
     """Redis: хранение FSM-состояний (переживают рестарт контейнера)."""
 
@@ -108,64 +150,13 @@ class RedisConfig(BaseModelConfig):
         return str(url)
 
 
-class UIConfig:
-    """Тексты кнопок интерфейса: единая панель управления.
-
-    Единственный источник истины для текстов кнопок: клавиатуры
-    собирают их отсюда, хендлеры фильтруют по этим же константам —
-    текст и его «ловушка» не разъезжаются при правках.
-    Не pydantic-настройки: тексты не приходят из окружения, а меняются в коде.
-
-    Attributes:
-        GENERATE_BUTTON: Кнопка запуска генерации.
-        CREDITS_BUTTON: Кнопка проверки кредитов.
-        LOGOUT_BUTTON: Кнопка выхода.
-        CANCEL_BUTTON: Кнопка отмены текущей операции.
-        PROMPT_APPROVE_BUTTON: Кнопка аппрува сгенерированного промпта.
-        PROMPT_EDIT_BUTTON: Кнопка правки сгенерированного промпта.
-        PROMPT_CANCEL_BUTTON: Кнопка отмены сценария обогащения.
-        PROMPT_RETRY_BUTTON: Кнопка повтора обогащения после сбоя.
-        PROMPT_FALLBACK_BUTTON: Кнопка продолжения сценария без обогащения.
-        DEFAULT_TITLE: Название песни по умолчанию.
-        EVALUATION_LIKE_BUTTON: Кнопка «нравится» при оценке генерации.
-        EVALUATION_DISLIKE_BUTTON: Кнопка «не нравится» при оценке генерации.
-        FEEDBACK_SEND_BUTTON: Кнопка отправки фидбека.
-        FEEDBACK_FINISH_BUTTON: Кнопка завершения сценария фидбека.
-        FEEDBACK_CHOICE_TEXT: Текст просьбы выбрать действие после оценки.
-        EVALUATION_PROMPT_TEXT: Текст просьбы оценить сгенерированную композицию.
-        FEEDBACK_PROMPT_TEXT: Текст просьбы написать отзыв.
-        FEEDBACK_RECEIVED_TEXT: Текст подтверждения приёма отзыва в FSM.
-        FEEDBACK_THANKS_TEXT: Текст благодарности после сохранения оценки/отзыва.
-    """
-
-    GENERATE_BUTTON = "🎵 Сгенерировать"
-    CREDITS_BUTTON = "💳 Кредиты"
-    LOGOUT_BUTTON = "🚪 Выйти"
-    CANCEL_BUTTON = "❌ Отмена"
-
-    PROMPT_APPROVE_BUTTON = "✅ Подтвердить"
-    PROMPT_EDIT_BUTTON = "✏️ Изменить"
-    PROMPT_CANCEL_BUTTON = "❌ Отменить"
-    PROMPT_RETRY_BUTTON = "🔄 Попробовать снова"
-    PROMPT_FALLBACK_BUTTON = "⏭ Без обогащения"
-    DEFAULT_TITLE = "Lyria's_Generated_song"
-    EVALUATION_LIKE_BUTTON = "👍"
-    EVALUATION_DISLIKE_BUTTON = "👎"
-    FEEDBACK_SEND_BUTTON = "📝 Отправить фидбек"
-    FEEDBACK_FINISH_BUTTON = "✅ Завершить без отзыва"
-    FEEDBACK_CHOICE_TEXT = "👇 Выберите действие кнопками ниже."
-    EVALUATION_PROMPT_TEXT = "🎧 Оцените сгенерированную композицию"
-    FEEDBACK_PROMPT_TEXT = "✍️ Напишите, что понравилось или нет"
-    FEEDBACK_RECEIVED_TEXT = "💬 Отзыв принят. Нажмите «✅ Завершить без отзыва», чтобы сохранить."
-    FEEDBACK_THANKS_TEXT = "✅ Спасибо, ваша оценка принята!"
-
-
 class Settings(BaseModelConfig):
     MIN_FEEDBACK_TEXT: int = 20
     bot: BotConfig = BotConfig()
     generation: GenerationConfig = GenerationConfig()
     db: DatabaseConfig = DatabaseConfig()
     redis: RedisConfig = RedisConfig()
+    rabbitmq: RabbitMQConfig = RabbitMQConfig()
     enrich: EnrichPromptConfig = EnrichPromptConfig()
 
 
