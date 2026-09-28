@@ -1,4 +1,6 @@
-"""Общий конфигуратор брокеров TaskIQ на базе RabbitMQ."""
+"""Общий конфигуратор брокеров TaskIQ на базе RabbitMQ.
+
+Модуль создаёт изолированные брокеры для каждого домена приложения."""
 
 from taskiq import InMemoryBroker
 from taskiq.serializers import JSONSerializer
@@ -8,7 +10,14 @@ from core.config import settings
 
 
 def _create_broker(domain: str) -> AioPikaBroker:
-    """Создаёт брокер TaskIQ для полностью изолированной очереди домена."""
+    """Создаёт брокер TaskIQ для полностью изолированной очереди домена.
+
+    Args:
+        domain: Имя домена (enricher, generation, evaluation, feedback, credits).
+
+    Returns:
+        AioPikaBroker: Настроенный брокер с JSON-сериализацией и DLQ.
+    """
     return AioPikaBroker(
         url=settings.rabbitmq.RABBITMQ_URL,
         exchange_name=f"songai_{domain}_exchange",  # У каждого домена свой обменник!
@@ -22,6 +31,11 @@ def _create_broker(domain: str) -> AioPikaBroker:
 
 
 def _create_inmemory_broker() -> InMemoryBroker:
+    """Создаёт in-memory брокер для тестов.
+
+    Returns:
+        InMemoryBroker: Брокер с JSON-сериализацией без внешних зависимостей.
+    """
     return InMemoryBroker().with_serializer(JSONSerializer())
 
 

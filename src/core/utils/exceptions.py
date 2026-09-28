@@ -1,7 +1,16 @@
-class APINotSet(Exception): ...
+"""Кастомные исключения приложения.
+
+Все доменные исключения наследуются от базовых классов Python,
+но имеют семантически понятные имена для упрощения обработки ошибок.
+"""
 
 
-class AccessKeyNotSet(Exception): ...
+class APINotSet(Exception):
+    """API-ключ не установлен в конфигурации."""
+
+
+class AccessKeyNotSet(Exception):
+    """Ключ доступа к боту не установлен в конфигурации."""
 
 
 class EnricherNotConfiguredError(ValueError):

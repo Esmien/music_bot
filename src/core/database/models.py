@@ -1,11 +1,21 @@
-"""Общая база SQLAlchemy и совместимые реэкспорты доменных моделей."""
+"""Общая база SQLAlchemy и совместимые реэкспорты доменных моделей.
+
+Модуль определяет Base с настройками naming convention для автогенерации
+имён constraints и индексов в миграциях Alembic.
+
+Доменные модели реэкспортируются для обратной совместимости.
+"""
 
 from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase
 
 
 class Base(DeclarativeBase):
-    """Базовый класс для ORM-моделей проекта."""
+    """Базовый класс для ORM-моделей проекта.
+
+    Определяет naming convention для автоматической генерации имён индексов,
+    foreign keys и constraints в соответствии с best practices PostgreSQL.
+    """
 
     metadata = MetaData(
         naming_convention={
@@ -18,8 +28,8 @@ class Base(DeclarativeBase):
     )
 
 
-# Реэкспорт сохраняет совместимость старых импортов.
-# Сами модели определены в соответствующих доменах.
+# Реэкспорт для обратной совместимости.
+# Модели определены в соответствующих доменах.
 from domains.base.models import User  # noqa: E402
 from domains.feedback.models import GenerationFeedback  # noqa: E402
 from domains.generation.models import Generation, GenerationStatus  # noqa: E402

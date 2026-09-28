@@ -18,6 +18,9 @@ class BaseModelConfig(BaseSettings):
 
 class BotConfig(BaseModelConfig):
     """Токены и идентификаторы, связанные с ботом и внешними API."""
+    """Настройки Telegram-бота и внешних API.
+
+    Содержит токен бота, режим webhook, ключи OpenRouter и access key."""
 
     BOT_TOKEN: str
     WEBHOOK_MODE: bool = False
@@ -32,9 +35,9 @@ class BotConfig(BaseModelConfig):
 class EnrichPromptConfig(BaseModelConfig):
     """Настройки модели обогащения пользовательского промпта.
 
-    Пустые значения допустимы: обогатитель опционален. При незаданных
-    настройках enrich_prompt сигнализирует ValueError, а хендлер
-    предлагает продолжить сценарий с исходным описанием песни.
+    Пустые значения допустимы: обогатитель опционален.
+    При незаданных настройках enrich_prompt сигнализирует ValueError,
+    а хендлер предлагает продолжить сценарий с исходным описанием песни.
     """
 
     ENRICH_URL: str = ""
@@ -45,8 +48,8 @@ class EnrichPromptConfig(BaseModelConfig):
 class GenerationConfig(BaseModelConfig):
     """Настройки генерации песен.
 
-    SONG_PRICE обязательна: без цены генерации расчёт остатков песен
-    невозможен — pydantic упадёт с ValidationError при старте (fail fast).
+    SONG_PRICE обязательна для расчёта остатка генераций.
+    MOCK_MODE позволяет тестировать без реальных API-вызовов.
     """
 
     SONG_PRICE: float
@@ -58,8 +61,9 @@ class GenerationConfig(BaseModelConfig):
 class DatabaseConfig(BaseModelConfig):
     """Параметры подключения к PostgreSQL.
 
-    asyncpg — асинхронный драйвер, обязательный для SQLAlchemy в async-режиме.
-    В Docker переопределяется через docker-compose, aiosqlite остаётся для локальных тестов.
+    asyncpg — асинхронный драйвер для SQLAlchemy в async-режиме.
+    В Docker переопределяется через docker-compose,
+    aiosqlite используется для локальных тестов.
     """
 
     POSTGRES_USER: str
@@ -126,7 +130,7 @@ class RabbitMQConfig(BaseModelConfig):
 
 
 class RedisConfig(BaseModelConfig):
-    """Redis: хранение FSM-состояний (переживают рестарт контейнера)."""
+    """Настройки Redis для FSM и служебных реестров."""
 
     REDIS_HOST: str
     REDIS_PORT: int

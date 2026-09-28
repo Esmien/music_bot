@@ -1,4 +1,11 @@
-"""Пакет работы с БД: доменные модели, подключение и инициализация схемы."""
+"""Пакет работы с БД: доменные модели, подключение и инициализация схемы.
+
+Модуль реэкспортирует:
+- Base: базовый класс для ORM-моделей
+- engine, SessionLocal: подключение к БД
+- init_db: инициализация схемы
+- Доменные модели: User, Generation, GenerationFeedback
+"""
 
 from core.database.engine import SessionLocal, engine, init_db
 from core.database.models import Base

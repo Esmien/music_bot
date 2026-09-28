@@ -1,8 +1,14 @@
-"""Вспомогательные функции."""
+"""Логирование ошибок и уведомление владельца бота.
+
+Модуль обеспечивает централизованную отправку traceback владельцу через Telegram."""
 
 import html
 import logging
 import traceback
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from shared.ports.telegram import TelegramPort
 
 from aiogram import Bot
 
@@ -12,10 +18,11 @@ log = logging.getLogger(__name__)
 
 
 async def notify_owner(
+    *,
     bot: Bot | None = None,
     context: str = "",
     err: Exception | None = None,
-    telegram_port=None,
+    telegram_port: "TelegramPort | None" = None,
 ) -> None:
     """Логирует ошибку и отправляет traceback владельцу бота в Telegram.
 
@@ -24,6 +31,9 @@ async def notify_owner(
         context: Краткое описание, где произошла ошибка.
         err: Пойманное исключение.
         telegram_port: Порт Telegram для отправки из воркеров (опционально).
+
+    Returns:
+        None.
     """
     if err is None:
         log.warning("notify_owner called without error")
