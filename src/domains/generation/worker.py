@@ -58,7 +58,7 @@ async def run_generation_task(
             )
 
     try:
-        audio_bytes = await run_generation(prompt=command.prompt, on_progress=on_progress)
+        audio_bytes = await run_generation(prompt=command.prompt, gen_id=command.gen_id, on_progress=on_progress)
 
         if await is_generation_cancelled(gen_id=command.gen_id):
             raise asyncio.CancelledError
