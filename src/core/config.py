@@ -18,6 +18,7 @@ class BaseModelConfig(BaseSettings):
 
 class BotConfig(BaseModelConfig):
     """Токены и идентификаторы, связанные с ботом и внешними API."""
+
     """Настройки Telegram-бота и внешних API.
 
     Содержит токен бота, режим webhook, ключи OpenRouter и access key."""

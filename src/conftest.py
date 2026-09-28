@@ -93,19 +93,15 @@ def fake_redis(monkeypatch):
     ключи между тестами не перетекают.
     """
     import core.redis as redis_module
+    from domains.auth.registries import auth_registry
+    from domains.generation import service as generation_service
 
     client = fakeredis.aioredis.FakeRedis(decode_responses=True)
 
     # Патчим redis_client в core.redis — источник всех импортов
     monkeypatch.setattr(redis_module, "redis_client", client)
-
-    # Для совместимости с существующими тестами патчим и в конкретных модулях
-    monkeypatch.setattr(auth_service, "redis_client", client)
-    from domains.generation import service as generation_service
-    from domains.generation.registries import task_registry
-
+    monkeypatch.setattr(auth_registry, "redis_client", client)
     monkeypatch.setattr(generation_service, "redis_client", client)
-    monkeypatch.setattr(task_registry, "redis_client", client)
 
     return client
 

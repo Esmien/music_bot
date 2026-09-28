@@ -24,11 +24,10 @@ from domains.auth.auth_messages import (
     LOGOUT_SUCCESS,
     UNKNOWN_MESSAGE,
 )
+from domains.auth.registries.auth_registry import discard_pending_auth, is_pending_auth
 from domains.auth.service import (
     check_key_with_attempts,
-    discard_pending_auth,
     is_authorized,
-    is_pending_auth,
     mark_user_authorized,
 )
 from domains.base.keyboards import LOGOUT_BUTTON, get_main_keyboard
