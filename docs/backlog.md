@@ -31,13 +31,14 @@ if record is None:
 ```python
 from sqlalchemy.dialects.postgresql import insert
 
-stmt = insert(GenerationFeedback).values(
-    generation_id=generation.id,
-    is_liked=evalue,
-    feedback=feedback,
-).on_conflict_do_update(
-    index_elements=['generation_id'],
-    set_={'is_liked': evalue, 'feedback': feedback}
+stmt = (
+    insert(GenerationFeedback)
+    .values(
+        generation_id=generation.id,
+        is_liked=evalue,
+        feedback=feedback,
+    )
+    .on_conflict_do_update(index_elements=["generation_id"], set_={"is_liked": evalue, "feedback": feedback})
 )
 await session.execute(stmt)
 await session.commit()
@@ -46,10 +47,10 @@ await session.commit()
 Альтернатива: оберни в `with_for_update()` при SELECT, но это медленнее и блокирует строку.
 
 **DoD:**
-- [ ] Заменить SELECT+INSERT на upsert через `on_conflict_do_update`
-- [ ] Добавить уникальный индекс на `generation_id` в миграцию (если его нет)
-- [ ] Написать unit-тест с двумя конкурентными вызовами `save_feedback()` для одного `gen_id`
-- [ ] Проверить, что второй вызов не роняет транзакцию
+- [x] Заменить SELECT+INSERT на upsert через `on_conflict_do_update`
+- [x] Добавить уникальный индекс на `generation_id` в миграцию (если его нет)
+- [x] Написать unit-тест с двумя конкурентными вызовами `save_feedback()` для одного `gen_id`
+- [x] Проверить, что второй вызов не роняет транзакцию
 
 ---
 
@@ -78,10 +79,10 @@ select(Generation).where(
 ```python
 # alembic revision
 op.create_index(
-    'ix_generations_user_status_created',
-    'generations',
-    ['user_id', 'status', 'created_at'],
-    postgresql_where=sa.text("status = 'success'")  # partial index
+    "ix_generations_user_status_created",
+    "generations",
+    ["user_id", "status", "created_at"],
+    postgresql_where=sa.text("status = 'success'"),  # partial index
 )
 ```
 
@@ -90,10 +91,10 @@ op.create_index(
 - `generation_feedbacks.generation_id` (уже есть по [1])
 
 **DoD:**
-- [ ] Создать миграцию с композитным индексом `(user_id, status, created_at)`
-- [ ] Добавить partial index на `status='success'` (экономит место)
-- [ ] Прогнать `EXPLAIN ANALYZE` на запрос после миграции — должен быть Index Scan, а не Seq Scan
-- [ ] Обновить документацию по индексам (если есть)
+- [x] Создать миграцию с композитным индексом `(user_id, status, created_at)`
+- [x] ~~Добавить partial index на `status='success'`~~ — убран, т.к. мешает оптимизатору
+- [x] Прогнать `EXPLAIN ANALYZE` на запрос после миграции — должен быть Index Scan, а не Seq Scan
+- [x] Обновить документацию по индексам (если есть)
 
 ---
 
@@ -256,8 +257,8 @@ from typing import TypeAlias
 
 JSONValue: TypeAlias = dict[str, "JSONValue"] | list["JSONValue"] | str | int | float | bool | None
 
-def _find_audio_b64(node: JSONValue) -> str | None:
-    ...
+
+def _find_audio_b64(node: JSONValue) -> str | None: ...
 ```
 
 Для `report`:
@@ -266,8 +267,8 @@ from collections.abc import Callable
 
 ProgressReporter: TypeAlias = Callable[[str], Awaitable[None]]
 
-def make_throttled_progress(report: ProgressReporter) -> ProgressCallback:
-    ...
+
+def make_throttled_progress(report: ProgressReporter) -> ProgressCallback: ...
 ```
 
 **DoD:**
@@ -315,10 +316,12 @@ audio = delta.get("audio") or {}
    ```python
    class OpenRouterDelta(BaseModel):
        audio: dict[str, str] | None = None
-   
+
+
    class OpenRouterChoice(BaseModel):
        delta: OpenRouterDelta
-   
+
+
    class OpenRouterChunk(BaseModel):
        choices: list[OpenRouterChoice]
    ```
@@ -346,14 +349,16 @@ audio = delta.get("audio") or {}
 1. Добавь в воркеры обработчик SIGTERM:
    ```python
    import signal
-   
+
    shutdown_event = asyncio.Event()
-   
+
+
    def handle_sigterm(signum, frame):
        shutdown_event.set()
-   
+
+
    signal.signal(signal.SIGTERM, handle_sigterm)
-   
+
    # В run_generation_task():
    if shutdown_event.is_set():
        raise asyncio.CancelledError
@@ -393,15 +398,16 @@ audio = delta.get("audio") or {}
 1. Добавь Sentry для отлова ошибок:
    ```python
    import sentry_sdk
+
    sentry_sdk.init(dsn=settings.SENTRY_DSN, traces_sample_rate=0.1)
    ```
 
 2. Добавь Prometheus-метрики через `prometheus-client`:
    ```python
    from prometheus_client import Counter, Histogram
-   
-   generation_counter = Counter('generations_total', 'Total generations', ['status'])
-   generation_duration = Histogram('generation_duration_seconds', 'Generation duration')
+
+   generation_counter = Counter("generations_total", "Total generations", ["status"])
+   generation_duration = Histogram("generation_duration_seconds", "Generation duration")
    ```
 
 3. Настрой алерты в Grafana/Alertmanager:
@@ -479,6 +485,7 @@ log.info("Enrichment result delivered (user=%s)", event.user_id)
 Используй `structlog`:
 ```python
 import structlog
+
 log = structlog.get_logger()
 log.info("enrichment_completed", user_id=event.user_id, gen_id=event.gen_id)
 ```
@@ -564,7 +571,6 @@ graph LR
 ### **To Do**
 ```
 🔴 TASK-001: Race condition в save_feedback
-🔴 TASK-002: Отсутствие индексов на горячих запросах
 🔴 TASK-003: Незащищённая отмена генерации
 🟠 TASK-004: Утечка Bot-сессий в event-хендлерах
 🟠 TASK-005: Отсутствие retry-логики для OpenRouter
@@ -582,7 +588,8 @@ graph LR
 
 ### **Done**
 ```
-(после merge в DEV)
+🔴 TASK-001: Race condition в save_feedback — DONE
+🔴 TASK-002: Отсутствие индексов на горячих запросах — DONE
 ```
 
 ---
