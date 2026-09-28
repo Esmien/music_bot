@@ -49,7 +49,7 @@ from domains.base import service as base_service
 database_engine_module = importlib.import_module("core.database.engine")
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 async def db_engine():
     """Реальная in-memory SQLite.
 
@@ -61,7 +61,7 @@ async def db_engine():
     await engine.dispose()
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 async def db_sessionmaker(db_engine, monkeypatch):
     """Фабрика сессий поверх тестовой БД со схемой из database.init_db().
 
@@ -76,7 +76,7 @@ async def db_sessionmaker(db_engine, monkeypatch):
     return async_sessionmaker(db_engine, expire_on_commit=False)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 async def patched_auth_db(db_sessionmaker, monkeypatch):
     """Перенаправляет сервисы авторизации и base на тестовую SQLite."""
     monkeypatch.setattr(auth_service, "get_session", db_sessionmaker)
@@ -85,17 +85,22 @@ async def patched_auth_db(db_sessionmaker, monkeypatch):
     return db_sessionmaker
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def fake_redis(monkeypatch):
     """Подменяет клиент Redis в сервисе авторизации на in-memory fakeredis.
 
     Реальный сервер в тестах не нужен. Клиент чист при создании,
     ключи между тестами не перетекают.
     """
-    client = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    monkeypatch.setattr(auth_service, "redis_client", client)
+    import core.redis as redis_module
 
-    # Подменяем redis_client и в модулях генерации
+    client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+
+    # Патчим redis_client в core.redis — источник всех импортов
+    monkeypatch.setattr(redis_module, "redis_client", client)
+
+    # Для совместимости с существующими тестами патчим и в конкретных модулях
+    monkeypatch.setattr(auth_service, "redis_client", client)
     from domains.generation import service as generation_service
     from domains.generation.registries import task_registry
 
@@ -105,7 +110,7 @@ def fake_redis(monkeypatch):
     return client
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def clean_auth_state(fake_redis):
     """Чистый реестр авторизации.
 
@@ -116,7 +121,7 @@ def clean_auth_state(fake_redis):
     yield fake_redis
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def make_message():
     """Фабрика сообщений-заглушек для хендлеров генерации и авторизации.
 
@@ -175,7 +180,7 @@ def make_message():
     return FakeMessage
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def fake_state():
     """Фабрика FSM-контекстов-заглушек с хранилищем данных в памяти.
 
@@ -205,7 +210,7 @@ def fake_state():
     return FakeState
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def inmemory_broker(monkeypatch):
     """InMemoryBroker для тестов — задачи выполняются синхронно в процессе.
 

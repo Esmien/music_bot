@@ -21,7 +21,7 @@ from typing import Any, Protocol
 import httpx
 
 from core.config import settings
-from core.redis import redis_client
+from core.redis import is_generation_cancelled, redis_client
 from core.utils.exceptions import (
     GenerationAPIError,
     GenerationAudioMissingError,
@@ -246,7 +246,7 @@ def load_mock_audio() -> bytes:
     raise GenerationAudioMissingError("Audio not found in mock file")
 
 
-async def generate_song_real(prompt: str, on_progress: ProgressCallback | None = None) -> bytes:
+async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCallback | None = None) -> bytes:
     """Генерирует песню через OpenRouter, читая ответ как SSE-поток.
 
     Аудио приходит кусками в base64 внутри delta-чанков. Чтобы не держать
@@ -256,6 +256,7 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
 
     Args:
         prompt: Промпт для модели (описание песни / текст).
+        gen_id: ID генерации для проверки отмены.
         on_progress: Опциональная корутина `on_progress(stage, fraction)`,
             вызывается по мере продвижения; fraction в диапазоне 0..1.
 
@@ -263,10 +264,14 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
         Байты готового mp3-файла.
 
     Raises:
+        asyncio.CancelledError: Если генерация отменена пользователем.
         GenerationAPIError: Если сервер вернул не-200.
         GenerationStreamError: Если поток превысил MAX_AUDIO_B64_LEN.
         GenerationAudioMissingError: Если аудио не пришло в потоке.
     """
+    # КРИТИЧНО: проверяем отмену ДО POST-запроса, чтобы не списывать деньги впустую
+    if await is_generation_cancelled(gen_id=gen_id):
+        raise asyncio.CancelledError
 
     async def report(stage: str, fraction: float) -> None:
         if on_progress is None:
@@ -303,6 +308,10 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
 
     # Рисуем заглушку на старте генерации
     await report(stage="Соединяюсь с сервером…", fraction=0.02)
+
+    # Дополнительная проверка перед HTTP-запросом (на случай отмены во время report)
+    if await is_generation_cancelled(gen_id=gen_id):
+        raise asyncio.CancelledError
 
     async with (
         httpx.AsyncClient(timeout=180.0) as client,
@@ -355,19 +364,30 @@ async def generate_song_real(prompt: str, on_progress: ProgressCallback | None =
     return decoded_audio.getvalue()
 
 
-async def run_generation(prompt: str, on_progress: ProgressCallback) -> bytes:
+async def run_generation(prompt: str, gen_id: int, on_progress: ProgressCallback) -> bytes:
     """Запускает генерацию: демо-ветка в MOCK_MODE или реальный сервис.
 
     Args:
         prompt: Промпт для модели (описание песни).
+        gen_id: ID генерации для проверки отмены.
         on_progress: Корутина `on_progress(stage, fraction)`.
 
     Returns:
         Байты готового аудио.
+
+    Raises:
+        asyncio.CancelledError: Если генерация отменена пользователем.
     """
+    # Проверяем отмену перед стартом генерации (работает и для мок-режима)
+    if await is_generation_cancelled(gen_id=gen_id):
+        raise asyncio.CancelledError
+
     if settings.generation.MOCK_MODE:
         # Для демо-режима отображаем прогресс с шагом 30%
         for fraction in (0.2, 0.5, 0.8):
+            # Проверяем отмену между шагами демо-прогресса
+            if await is_generation_cancelled(gen_id=gen_id):
+                raise asyncio.CancelledError
             await on_progress(stage="Генерирую (демо-режим)…", fraction=fraction)
             # Спим дольше интервала правки, иначе демо-прогресс не виден
             await asyncio.sleep(PROGRESS_EDIT_INTERVAL + 0.1)
@@ -377,4 +397,4 @@ async def run_generation(prompt: str, on_progress: ProgressCallback) -> bytes:
         return load_mock_audio()
 
     # Отдаем реально сгенерированный файл, если генерация шла через API
-    return await generate_song_real(prompt=prompt, on_progress=on_progress)
+    return await generate_song_real(prompt=prompt, gen_id=gen_id, on_progress=on_progress)

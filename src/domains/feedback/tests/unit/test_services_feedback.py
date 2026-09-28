@@ -77,15 +77,14 @@ async def _get_feedback_records(
 
 
 async def test_save_feedback_skips_without_touching_db(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Пустой отзыв и дизлайк не должны создавать сессию БД."""
+    """Пустой отзыв и None вместо оценки не должны создавать сессию БД."""
 
     def _fail_get_session() -> None:
         raise AssertionError("get_session should not be called")
 
     monkeypatch.setattr(feedback_service, "get_session", _fail_get_session)
 
-    await feedback_service.save_feedback(user_id=1, feedback=None, evalue=False)
-    await feedback_service.save_feedback(user_id=1, feedback="", evalue=False)
+    await feedback_service.save_feedback(user_id=1, feedback=None, evalue=None)
 
 
 async def test_save_feedback_creates_record_for_like_only(

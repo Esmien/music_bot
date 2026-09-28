@@ -29,6 +29,7 @@ class GenerationFeedback(Base):
         ForeignKey("generations.id"),
         nullable=False,
         index=True,
+        unique=True,
     )
     is_liked: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     feedback: Mapped[str | None] = mapped_column(Text, nullable=True)

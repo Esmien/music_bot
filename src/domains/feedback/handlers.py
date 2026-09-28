@@ -42,8 +42,7 @@ async def _finish_feedback(user_id: int, state: FSMContext, feedback_text: str |
     if feedback is not None and len(feedback) < settings.MIN_FEEDBACK_TEXT:
         feedback = None
 
-    evalue = bool(flow_state.feedback_evaluation)
-    await save_feedback(user_id=user_id, feedback=feedback, evalue=evalue)
+    await save_feedback(user_id=user_id, feedback=feedback, evalue=None)
     await state.clear()
 
 

@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, Message
 from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
 from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT, FEEDBACK_CHOICE_TEXT
 from domains.evaluation.keyboards import CB_FEEDBACK_DISLIKE, CB_FEEDBACK_LIKE, get_evaluation_keyboard
+from domains.evaluation.service import save_evaluation
 from domains.feedback.fsm import FeedbackStates
 from domains.feedback.keyboards import get_feedback_keyboard
 from domains.feedback.state_models import FeedbackFlowState
@@ -38,6 +39,8 @@ async def handle_evaluate(callback: CallbackQuery, state: FSMContext) -> None:
         state: FSM-контекст пользователя.
     """
     evaluation = callback.data == CB_FEEDBACK_LIKE
+
+    await save_evaluation(user_id=callback.from_user.id, is_liked=evaluation)
 
     flow_state = await get_fsm_data(state=state, model_class=FeedbackFlowState)
     flow_state.feedback_evaluation = evaluation

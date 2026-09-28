@@ -3,6 +3,7 @@
 import logging
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.database.engine import get_session
@@ -12,18 +13,25 @@ from domains.generation.models import Generation, GenerationStatus
 log = logging.getLogger(__name__)
 
 
-async def save_feedback(user_id: int, feedback: str | None, evalue: bool) -> None:
-    """Сохраняет оценку и/или текстовый отзыв о последней успешной генерации.
+async def save_feedback(user_id: int, feedback: str | None = None, evalue: bool | None = None) -> None:
+    """Сохраняет оценку и/или текстовый отзыв о последней успешной генерации пользователя.
+
+    Использует PostgreSQL upsert (INSERT ... ON CONFLICT DO UPDATE) для безопасного
+    обновления записи при конкурентных вызовах. Если запись существует, обновляет
+    только переданные поля (is_liked и/или feedback).
 
     Args:
         user_id: Telegram user_id пользователя.
-        feedback: Текст отзыва или None.
-        evalue: True — лайк, False — дизлайк.
+        feedback: Текст отзыва или None (не обновляется, если None).
+        evalue: True — лайк, False — дизлайк, None — не обновляется.
 
     Returns:
         None.
+
+    Raises:
+        SQLAlchemyError: При ошибке записи в БД (логируется, но не пробрасывается).
     """
-    if not feedback and not evalue:
+    if feedback is None and evalue is None:
         return
 
     try:
@@ -42,17 +50,24 @@ async def save_feedback(user_id: int, feedback: str | None, evalue: bool) -> Non
                 log.info("Feedback was not saved because no successful generation exists (user=%s)", user_id)
                 return
 
-            feedback_result = await session.execute(
-                select(GenerationFeedback).where(GenerationFeedback.generation_id == generation.id).limit(1)
-            )
-            record = feedback_result.scalar_one_or_none()
-            if record is None:
-                record = GenerationFeedback(generation_id=generation.id)
-                session.add(record)
+            # Формируем dict только с переданными значениями для upsert
+            values_to_insert = {"generation_id": generation.id}
+            values_to_update = {}
 
-            record.is_liked = evalue
-            if feedback:
-                record.feedback = feedback
+            if evalue is not None:
+                values_to_insert["is_liked"] = evalue
+                values_to_update["is_liked"] = evalue
+            if feedback is not None:
+                values_to_insert["feedback"] = feedback
+                values_to_update["feedback"] = feedback
+
+            stmt = insert(GenerationFeedback).values(**values_to_insert)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["generation_id"],
+                set_=values_to_update,
+            )
+
+            await session.execute(stmt)
             await session.commit()
     except SQLAlchemyError:
         log.exception("Failed to save feedback (user=%s)", user_id, exc_info=True)

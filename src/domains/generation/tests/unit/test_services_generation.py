@@ -198,7 +198,7 @@ def patch_openrouter(monkeypatch):
 async def test_generate_song_real_assembles_audio(patch_openrouter, lines, expected):
     patch_openrouter(FakeStreamResponse(lines))
 
-    assert await gen.generate_song_real("спой про тестирование") == expected
+    assert await gen.generate_song_real(prompt="спой про тестирование", gen_id=999) == expected
 
 
 async def test_generate_song_real_reports_progress(patch_openrouter):
@@ -208,7 +208,7 @@ async def test_generate_song_real_reports_progress(patch_openrouter):
         events.append((stage, fraction))
 
     patch_openrouter(FakeStreamResponse([_audio_chunk(_b64(b"ABC")), "data: [DONE]"]))
-    await gen.generate_song_real("промпт", on_progress)
+    await gen.generate_song_real(prompt="промпт", gen_id=999, on_progress=on_progress)
 
     stages = [stage for stage, _ in events]
     assert stages[0] == "Соединяюсь с сервером…"
@@ -229,7 +229,7 @@ async def test_generate_song_real_failures(patch_openrouter, response, match):
     patch_openrouter(response)
 
     with pytest.raises(RuntimeError, match=match):
-        await gen.generate_song_real("промпт")
+        await gen.generate_song_real(prompt="промпт", gen_id=999)
 
 
 async def test_generate_song_real_rejects_oversized_audio(patch_openrouter, monkeypatch):
@@ -238,7 +238,7 @@ async def test_generate_song_real_rejects_oversized_audio(patch_openrouter, monk
     patch_openrouter(FakeStreamResponse([_audio_chunk(_b64(b"longer-than-four-bytes"))]))
 
     with pytest.raises(RuntimeError, match="exceeds the allowed size"):
-        await gen.generate_song_real("промпт")
+        await gen.generate_song_real(prompt="промпт", gen_id=999)
 
 
 async def test_generate_song_real_swallows_progress_errors(patch_openrouter):
@@ -249,4 +249,4 @@ async def test_generate_song_real_swallows_progress_errors(patch_openrouter):
 
     patch_openrouter(FakeStreamResponse([_audio_chunk(_b64(b"ABC")), "data: [DONE]"]))
 
-    assert await gen.generate_song_real("промпт", broken_on_progress) == b"ABC"
+    assert await gen.generate_song_real(prompt="промпт", gen_id=999, on_progress=broken_on_progress) == b"ABC"

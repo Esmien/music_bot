@@ -100,7 +100,7 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, f
     session = FakeSession(generation)
     telegram = FakeTelegramPort()
 
-    async def fake_run_generation(prompt: str, on_progress) -> bytes:
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
         await on_progress(stage="Получаю аудио…", fraction=0.5)
         return b"audio"
 
@@ -138,7 +138,7 @@ async def test_worker_marks_cancelled_generation_and_publishes_failure(
     session = FakeSession(generation)
     telegram = FakeTelegramPort()
 
-    async def fake_run_generation(prompt: str, on_progress) -> bytes:
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
         await on_progress(stage="Получаю аудио…", fraction=0.5)
         return b"audio"
 

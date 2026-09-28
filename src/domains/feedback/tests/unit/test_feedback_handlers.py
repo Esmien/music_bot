@@ -174,7 +174,7 @@ async def test_handle_feedback_message_saves_text_and_clears_state(
 
     await feedback_handlers.handle_feedback_message(message=message, state=state)
 
-    assert patched_save_feedback == [(77, "отличный трек", True)]
+    assert patched_save_feedback == [(77, "отличный трек", None)]
     assert state.cleared is True
     assert message.edited_reply_markups == [(77, 456, None)]
     assert message.answers == [FEEDBACK_THANKS_TEXT]
@@ -195,7 +195,7 @@ async def test_handle_feedback_message_uses_fsm_text_when_message_text_is_none(
 
     await feedback_handlers.handle_feedback_message(message=message, state=state)
 
-    assert patched_save_feedback == [(3, "текст из FSM", False)]
+    assert patched_save_feedback == [(3, "текст из FSM", None)]
     assert message.edited_reply_markups == []
 
 
@@ -213,7 +213,7 @@ async def test_handle_feedback_message_drops_short_feedback(
 
     await feedback_handlers.handle_feedback_message(message=message, state=state)
 
-    assert patched_save_feedback == [(1, None, True)]
+    assert patched_save_feedback == [(1, None, None)]
 
 
 async def test_handle_feedback_message_suppresses_markup_edit_failure(
@@ -235,7 +235,7 @@ async def test_handle_feedback_message_suppresses_markup_edit_failure(
 
     await feedback_handlers.handle_feedback_message(message=message, state=state)
 
-    assert patched_save_feedback == [(1, "текст", False)]
+    assert patched_save_feedback == [(1, "текст", None)]
     assert message.answers == [FEEDBACK_THANKS_TEXT]
 
 
@@ -289,7 +289,7 @@ async def test_handle_feedback_finish_choice_saves_evaluation_from_state(
     await feedback_handlers.handle_feedback_finish_choice(callback=callback, state=state)
 
     assert callback.message.reply_markup_edits == [None]
-    assert patched_save_feedback == [(20, "нормальный отзыв", True)]
+    assert patched_save_feedback == [(20, "нормальный отзыв", None)]
     assert state.cleared is True
     assert callback.message.answers == [FEEDBACK_THANKS_TEXT]
     assert _reply_button_texts(callback.message.answered_markups[0]) == _reply_button_texts(get_main_keyboard())
@@ -309,7 +309,7 @@ async def test_handle_feedback_finish_saves_without_feedback_text(
 
     await feedback_handlers.handle_feedback_finish(callback=callback, state=state)
 
-    assert patched_save_feedback == [(21, None, False)]
+    assert patched_save_feedback == [(21, None, None)]
     assert state.cleared is True
 
 
@@ -328,4 +328,4 @@ async def test_handle_feedback_finish_choice_treats_non_bool_evaluation_as_true(
 
     await feedback_handlers.handle_feedback_finish_choice(callback=callback, state=state)
 
-    assert patched_save_feedback == [(22, "длинный отзыв", True)]
+    assert patched_save_feedback == [(22, "длинный отзыв", None)]
