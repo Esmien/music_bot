@@ -7,7 +7,7 @@
 - Доменные модели: User, Generation, GenerationFeedback
 """
 
-from core.database.engine import SessionLocal, engine, init_db
+from core.database.engine import SessionLocal, engine, get_session, init_db
 from core.database.models import Base
 from domains.base.models import User
 from domains.feedback.models import GenerationFeedback
@@ -21,5 +21,6 @@ __all__ = [
     "SessionLocal",
     "User",
     "engine",
+    "get_session",
     "init_db",
 ]

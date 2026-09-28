@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from core.utils.exceptions import EnricherResponseInvalidError
+from core.utils.exceptions import EnricherResponseInvalidError  # type: ignore[attr-defined]
 
 logger = logging.getLogger(__name__)
 

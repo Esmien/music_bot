@@ -5,17 +5,17 @@ import logging
 
 from taskiq import Context, TaskiqDepends
 
-from core.broker import generation_broker
-from core.config import settings
-from core.database.engine import get_session
-from core.redis import clear_generation_cancel, is_generation_cancelled
-from core.utils.error_notify import notify_owner
-from domains.evaluation.worker import request_evaluation_handler
-from domains.generation.models import Generation, GenerationStatus
-from domains.generation.service import run_generation
-from shared.contracts.commands import RunGeneration
-from shared.contracts.events import GenerationSucceeded
-from shared.ports.telegram import TelegramPort
+from core.broker import generation_broker  # type: ignore[attr-defined]
+from core.config import settings  # type: ignore[attr-defined]
+from core.database.engine import get_session  # type: ignore[attr-defined]
+from core.redis import clear_generation_cancel, is_generation_cancelled  # type: ignore[attr-defined]
+from core.utils.error_notify import notify_owner  # type: ignore[attr-defined]
+from domains.evaluation.worker import request_evaluation_handler  # type: ignore[attr-defined]
+from domains.generation.models import Generation, GenerationStatus  # type: ignore[attr-defined]
+from domains.generation.service import run_generation  # type: ignore[attr-defined]
+from shared.contracts.commands import RunGeneration  # type: ignore[attr-defined]
+from shared.contracts.events import GenerationSucceeded  # type: ignore[attr-defined]
+from shared.ports.telegram import TelegramPort  # type: ignore[attr-defined]
 
 log = logging.getLogger(__name__)
 

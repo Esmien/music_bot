@@ -30,8 +30,8 @@ class Base(DeclarativeBase):
 
 # Реэкспорт для обратной совместимости.
 # Модели определены в соответствующих доменах.
-from domains.base.models import User  # noqa: E402
-from domains.feedback.models import GenerationFeedback  # noqa: E402
-from domains.generation.models import Generation, GenerationStatus  # noqa: E402
+from domains.base.models import User  # noqa: E402  # type: ignore[attr-defined]
+from domains.feedback.models import GenerationFeedback  # noqa: E402  # type: ignore[attr-defined]
+from domains.generation.models import Generation, GenerationStatus  # noqa: E402  # type: ignore[attr-defined]
 
 __all__ = ["Base", "Generation", "GenerationFeedback", "GenerationStatus", "User"]

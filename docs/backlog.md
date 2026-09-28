@@ -275,7 +275,7 @@ def make_throttled_progress(report: ProgressReporter) -> ProgressCallback: ...
 - [x] Добавить `JSONValue` type alias в `core/types.py` (создать если нет)
 - [x] Пройтись по всем `Any` в проекте и заменить на конкретные типы
 - [x] Включить `mypy` в `pyproject.toml` [15] с `strict = true`
-- [x] Прогнать `mypy src/` и исправить все ошибки
+- [ ] Прогнать `mypy src/` и исправить все ошибки
 - [ ] Добавить pre-commit hook с mypy (если ещё не стоит)
 
 ---

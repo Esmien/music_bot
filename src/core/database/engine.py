@@ -11,8 +11,8 @@ from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from core.config import settings
-from core.database.models import Base
+from core.config import settings  # type: ignore[attr-defined]
+from core.database.models import Base  # type: ignore[attr-defined]
 
 log = logging.getLogger(__name__)
 

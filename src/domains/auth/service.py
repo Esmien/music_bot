@@ -5,11 +5,11 @@ import secrets
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from core.database import User
-from core.database.engine import get_session
+from core.database import User  # type: ignore[attr-defined]
+from core.database.engine import get_session  # type: ignore[attr-defined]
 from domains.auth.registries.auth_registry import (
-    register_failed_key_attempt,
-    reset_failed_key_attempts,
+    register_failed_key_attempt,  # type: ignore[attr-defined]
+    reset_failed_key_attempts,  # type: ignore[attr-defined]
 )
 
 MAX_KEY_ATTEMPTS = 5

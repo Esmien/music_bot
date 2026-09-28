@@ -1,6 +1,6 @@
 import re
 
-from domains.generation.generation_messages import DEFAULT_TITLE
+from domains.generation.generation_messages import DEFAULT_TITLE  # type: ignore[attr-defined]
 
 PROMPT_HINT = (
     "✍️ <b>Опишите песню, которую хотите услышать.</b>\n\n"

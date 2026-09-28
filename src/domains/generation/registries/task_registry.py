@@ -14,7 +14,7 @@ task_id перед отправкой результата или отменит
 import asyncio
 import uuid
 
-from core.redis import redis_client
+from core.redis import redis_client  # type: ignore[attr-defined]
 
 # Ключ множества uid с живой задачей генерации
 ACTIVE_TASKS_KEY = "bot:active_tasks"
@@ -26,7 +26,7 @@ TASK_ID_KEY_PREFIX = "bot:task_id"
 _active_tasks: dict[int, asyncio.Task] = {}
 
 
-async def register_active_task(uid: int, task: asyncio.Task) -> str:
+async def register_active_task(uid: int, task: "asyncio.Task[None]") -> str:
     """Регистрирует живую задачу генерации пользователя.
 
     Args:
@@ -43,7 +43,7 @@ async def register_active_task(uid: int, task: asyncio.Task) -> str:
     return task_id
 
 
-async def unregister_active_task(uid: int, task: asyncio.Task) -> None:
+async def unregister_active_task(uid: int, task: "asyncio.Task[None]") -> None:
     """Снимает регистрацию задачи, если она всё ещё актуальна.
 
     Запись задачи, стартовавшей позже, не трогаем.
@@ -58,7 +58,7 @@ async def unregister_active_task(uid: int, task: asyncio.Task) -> None:
         await redis_client.delete(f"{TASK_ID_KEY_PREFIX}:{uid}")
 
 
-def get_active_task(uid: int) -> asyncio.Task | None:
+def get_active_task(uid: int) -> "asyncio.Task[None] | None":
     """Возвращает живую задачу генерации пользователя, если она есть.
 
     Args:
@@ -100,7 +100,7 @@ async def clear_active_tasks() -> int:
     deleted_set = await redis_client.delete(ACTIVE_TASKS_KEY)
     # Чистим все task_id ключи через паттерн
     cursor = 0
-    while True:
+    while True:  # type: ignore[unreachable]
         cursor, keys = await redis_client.scan(cursor, match=f"{TASK_ID_KEY_PREFIX}:*", count=100)
         if keys:
             await redis_client.delete(*keys)

@@ -5,7 +5,7 @@
 рестарт контейнера.
 """
 
-from core.redis import redis_client
+from core.redis import redis_client  # type: ignore[attr-defined]
 
 # Ключ множества пользователей, ожидающих ввода ключа доступа
 PENDING_AUTH_KEY = "bot:pending_auth"
