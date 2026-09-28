@@ -14,6 +14,7 @@ kanban-plugin: board
 - [ ] [[5. Observability, durability]]
 - [ ] [[6. Tests and docs]]
 - [ ] [[7. Refactor]]
+- [ ] [[8. UX]]
 
 
 ## Backlog

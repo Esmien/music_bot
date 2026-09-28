@@ -116,7 +116,8 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, f
 
     assert len(telegram.sent_audio) == 1
     assert telegram.sent_audio[0]["chat_id"] == 20
-    assert telegram.sent_audio[0]["audio"] == b"audio"
+    assert telegram.sent_audio[0]["audio_type"] == "bytes"
+    assert telegram.sent_audio[0]["title"] == "Тест"
     assert telegram.edited_messages
     assert fake_broker.events[0][0] == "request_evaluation_handler"
     assert fake_broker.events[0][1].gen_id == 1

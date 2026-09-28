@@ -73,12 +73,12 @@ class FakeTelegramPort(TelegramPort):
         message_id = self._next_message_id
         self._next_message_id += 1
 
-        # Для тестов сохраняем тип данных, а не сами данные
         audio_type = "bytes" if isinstance(audio, bytes) else "file" if isinstance(audio, str) else "binary_io"
 
         self.sent_audio.append(
             {
                 "chat_id": chat_id,
+                "audio": audio,
                 "audio_type": audio_type,
                 "title": title,
                 "performer": performer,
