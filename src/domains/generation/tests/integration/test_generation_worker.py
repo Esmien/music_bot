@@ -4,9 +4,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
 
+from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT
+from domains.feedback.fsm import FeedbackStates
 from domains.generation import worker
 from domains.generation.models import Generation, GenerationStatus
+from domains.generation.state_models import GenerationFlowState
 from shared.contracts.commands import RunGeneration
 from shared.ports.fake_telegram import FakeTelegramPort
 
@@ -33,39 +39,23 @@ class FakeSession:
         self.committed = True
 
 
-class FakeBroker:
-    """Перехватывает события, опубликованные worker-ом."""
-
-    def __init__(self) -> None:
-        self.events: list[tuple[str, object]] = []
-
-    def create_fake_task(self, task_name: str):
-        """Создаёт фейковый таск для подмены."""
-        events = self.events
-
-        class FakeTask:
-            async def kiq(self, event: object) -> None:
-                events.append((task_name, event))
-
-        return FakeTask()
-
-
-@pytest.fixture
-def fake_broker():
-    """Фейковый брокер для перехвата событий."""
-    return FakeBroker()
-
-
-def _context(telegram: FakeTelegramPort) -> SimpleNamespace:
-    """Создаёт TaskIQ-контекст с TelegramPort.
+def _context(telegram: FakeTelegramPort, bot=None, storage=None) -> SimpleNamespace:
+    """Создаёт TaskIQ-контекст с TelegramPort, Bot и Storage.
 
     Args:
         telegram: Фейковый Telegram-порт.
+        bot: Фейковый Bot.
+        storage: Фейковое FSM-хранилище.
 
     Returns:
-        Контекст с зарегистрированной зависимостью.
+        Контекст с зарегистрированными зависимостями.
     """
-    return SimpleNamespace(dependencies={"telegram_port": telegram})
+    dependencies = {"telegram_port": telegram}
+    if bot is not None:
+        dependencies["bot"] = bot
+    if storage is not None:
+        dependencies["storage"] = storage
+    return SimpleNamespace(dependencies=dependencies)
 
 
 def _command(gen_id: int = 1) -> RunGeneration:
@@ -87,8 +77,8 @@ def _command(gen_id: int = 1) -> RunGeneration:
     )
 
 
-async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, fake_broker: FakeBroker) -> None:
-    """Успешная генерация отправляет аудио и публикует событие."""
+async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Успешная генерация отправляет аудио и запрашивает оценку."""
     generation = Generation(
         id=1,
         user_id=10,
@@ -99,6 +89,12 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, f
     )
     session = FakeSession(generation)
     telegram = FakeTelegramPort()
+    bot = SimpleNamespace(id=123)
+    storage = MemoryStorage()
+
+    key = StorageKey(bot_id=bot.id, chat_id=20, user_id=10)
+    fsm_context = FSMContext(storage=storage, key=key)
+    await fsm_context.set_data(GenerationFlowState(gen_id=1, generating=True).model_dump())
 
     async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
         await on_progress(stage="Получаю аудио…", fraction=0.5)
@@ -108,19 +104,19 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, f
     monkeypatch.setattr(worker, "run_generation", fake_run_generation)
     monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
     monkeypatch.setattr(worker, "clear_generation_cancel", AsyncMock())
-    monkeypatch.setattr(
-        worker, "request_evaluation_handler", fake_broker.create_fake_task("request_evaluation_handler")
-    )
 
-    await worker.run_generation_task(_command(), _context(telegram))
+    await worker.run_generation_task(_command(), _context(telegram, bot=bot, storage=storage))
 
     assert len(telegram.sent_audio) == 1
     assert telegram.sent_audio[0]["chat_id"] == 20
     assert telegram.sent_audio[0]["audio_type"] == "bytes"
     assert telegram.sent_audio[0]["title"] == "Тест"
     assert telegram.edited_messages
-    assert fake_broker.events[0][0] == "request_evaluation_handler"
-    assert fake_broker.events[0][1].gen_id == 1
+    assert generation.status is GenerationStatus.SUCCESS
+    assert session.committed
+    assert len(telegram.sent_messages) == 1
+    assert telegram.sent_messages[0]["text"] == EVALUATION_PROMPT_TEXT
+    assert await fsm_context.get_state() == FeedbackStates.waiting_evaluation.state
 
 
 async def test_worker_marks_cancelled_generation_and_publishes_failure(

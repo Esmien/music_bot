@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
+from sqlalchemy import select
 from tenacity import (
     retry,
     retry_if_exception,
@@ -27,6 +28,7 @@ from tenacity import (
 )
 
 from core.config import settings
+from core.database.engine import get_session
 from core.redis import is_generation_cancelled, redis_client
 from core.types import JSONValue, ProgressCallback, ProgressReporter
 from core.utils.exceptions import (
@@ -36,6 +38,7 @@ from core.utils.exceptions import (
     GenerationFileError,
     GenerationStreamError,
 )
+from domains.generation.models import Generation, GenerationStatus
 
 log = logging.getLogger(__name__)
 
@@ -444,3 +447,37 @@ async def run_generation(prompt: str, gen_id: int, on_progress: ProgressCallback
 
     # Отдаем реально сгенерированный файл, если генерация шла через API
     return await generate_song_real(prompt=prompt, gen_id=gen_id, on_progress=on_progress)
+
+
+async def persist_generated_title(user_id: int, title: str) -> None:
+    """Сохраняет название и успешный статус в ожидающую запись генерации.
+
+    Args:
+        user_id: Telegram user_id пользователя.
+        title: Название песни.
+
+    Raises:
+        SQLAlchemyError: При ошибке записи в БД.
+    """
+    try:
+        async with get_session() as session:
+            result = await session.execute(
+                select(Generation)
+                .where(
+                    Generation.user_id == user_id,
+                    Generation.status == GenerationStatus.PENDING,
+                )
+                .order_by(Generation.created_at.desc(), Generation.id.desc())
+                .limit(1)
+            )
+            generation = result.scalar_one_or_none()
+            if generation is None:
+                log.warning("Pending generation record not found (user=%s)", user_id)
+                return
+
+            generation.title = title
+            generation.status = GenerationStatus.SUCCESS
+            await session.commit()
+    except Exception:
+        log.exception("Failed to persist generated title (user=%s)", user_id, exc_info=True)
+        raise

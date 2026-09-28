@@ -25,12 +25,8 @@ async def run_worker(*, worker_name: str) -> None:
         import domains.enricher.worker  # noqa
     elif worker_name == "generation":
         import domains.generation.worker  # noqa
-    elif worker_name == "evaluation":
-        import domains.evaluation.worker  # noqa
-    elif worker_name == "credits":
-        import domains.credits.worker  # noqa
-    elif worker_name == "feedback":
-        import domains.feedback.worker  # noqa
+    else:
+        raise ValueError(f"Unknown worker: {worker_name}")
 
     # Это брокер, который будет СЛУШАТЬ входящие задачи
     main_broker = brokers[worker_name]
@@ -80,7 +76,7 @@ async def run_worker(*, worker_name: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Запуск TaskIQ-консьюмера")
-    parser.add_argument("worker", choices=("credits", "enricher", "evaluation", "feedback", "generation"))
+    parser.add_argument("worker", choices=("enricher", "generation"))
     worker_name = parser.parse_args().worker
 
     logging.basicConfig(

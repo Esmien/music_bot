@@ -1,5 +1,7 @@
 """Юнит-тесты для event-хендлеров обогащения."""
 
+from types import SimpleNamespace
+
 import pytest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
@@ -54,12 +56,12 @@ def fake_storage():
 
 @pytest.fixture
 def taskiq_state(fake_bot, fake_storage):
-    """TaskIQ state с фейковыми зависимостями."""
+    """TaskIQ context с объектом state и фейковыми зависимостями."""
     state = TaskiqState()
     state["bot"] = fake_bot
     state["storage"] = fake_storage
     state["telegram_port"] = FakeTelegramPort()
-    return state
+    return SimpleNamespace(state=state)
 
 
 async def test_enrichment_completed_uses_port_from_context(taskiq_state, fake_storage, fake_bot):
@@ -93,7 +95,7 @@ async def test_enrichment_completed_uses_port_from_context(taskiq_state, fake_st
     await handle_enrichment_completed_event(event=event, context=taskiq_state)
 
     # Проверяем, что использовался TelegramPort из контекста
-    telegram_port: FakeTelegramPort = taskiq_state["telegram_port"]
+    telegram_port: FakeTelegramPort = taskiq_state.state["telegram_port"]
     assert len(telegram_port.sent_messages) == 1
     assert telegram_port.sent_messages[0]["chat_id"] == chat_id
     assert enriched_prompt in telegram_port.sent_messages[0]["text"]
@@ -123,7 +125,7 @@ async def test_enrichment_completed_drops_outdated_event(taskiq_state, fake_stor
     await handle_enrichment_completed_event(event=event, context=taskiq_state)
 
     # Сообщение не должно быть отправлено
-    telegram_port: FakeTelegramPort = taskiq_state["telegram_port"]
+    telegram_port: FakeTelegramPort = taskiq_state.state["telegram_port"]
     assert len(telegram_port.sent_messages) == 0
 
 
@@ -154,7 +156,7 @@ async def test_generation_failed_uses_port_from_context(taskiq_state, fake_stora
     await handle_generation_failed_event(event=event, context=taskiq_state)
 
     # Проверяем, что использовался TelegramPort из контекста
-    telegram_port: FakeTelegramPort = taskiq_state["telegram_port"]
+    telegram_port: FakeTelegramPort = taskiq_state.state["telegram_port"]
     assert len(telegram_port.sent_messages) == 1
     assert telegram_port.sent_messages[0]["chat_id"] == chat_id
 
@@ -219,9 +221,22 @@ async def test_no_bot_session_leak_on_exception(taskiq_state, fake_storage, fake
     await handle_enrichment_completed_event(event=event, context=taskiq_state)
 
     # TelegramPort из контекста был использован, новый Bot не создавался
-    telegram_port: FakeTelegramPort = taskiq_state["telegram_port"]
+    telegram_port: FakeTelegramPort = taskiq_state.state["telegram_port"]
     assert len(telegram_port.sent_messages) == 1
     assert telegram_port.sent_messages[0]["chat_id"] == chat_id
 
     # Даже если бы хендлер упал с исключением, утечки не было бы,
     # потому что Bot управляется на уровне воркера, а не создаётся в хендлере
+
+
+async def test_enrichment_context_missing_state_raises_key_error():
+    """Проверяет возникновение KeyError при отсутствии нужной зависимости."""
+    empty_context = SimpleNamespace(state={})
+    event = EnrichmentCompleted(
+        user_id=123,
+        chat_id=123,
+        initial_prompt="Тест",
+        enriched_prompt="Тест",
+    )
+    with pytest.raises(KeyError):
+        await handle_enrichment_completed_event(event=event, context=empty_context)

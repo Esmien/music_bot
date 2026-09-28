@@ -3,6 +3,10 @@
 import asyncio
 import logging
 
+from aiogram import Bot
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.redis import RedisStorage
 from taskiq import Context, TaskiqDepends
 
 from core.broker import generation_broker  # type: ignore[attr-defined]
@@ -10,11 +14,14 @@ from core.config import settings  # type: ignore[attr-defined]
 from core.database.engine import get_session  # type: ignore[attr-defined]
 from core.redis import clear_generation_cancel, is_generation_cancelled  # type: ignore[attr-defined]
 from core.utils.error_notify import notify_owner  # type: ignore[attr-defined]
-from domains.evaluation.worker import request_evaluation_handler  # type: ignore[attr-defined]
+from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
+from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT
+from domains.evaluation.keyboards import get_evaluation_keyboard
+from domains.feedback.fsm import FeedbackStates
 from domains.generation.models import Generation, GenerationStatus  # type: ignore[attr-defined]
 from domains.generation.service import run_generation  # type: ignore[attr-defined]
+from domains.generation.state_models import GenerationFlowState
 from shared.contracts.commands import RunGeneration  # type: ignore[attr-defined]
-from shared.contracts.events import GenerationSucceeded  # type: ignore[attr-defined]
 from shared.ports.telegram import TelegramPort  # type: ignore[attr-defined]
 
 log = logging.getLogger(__name__)
@@ -34,7 +41,8 @@ async def run_generation_task(
         command: Команда генерации.
         context: Контекст TaskIQ с TelegramPort.
     """
-    telegram: TelegramPort = getattr(context, "state", getattr(context, "dependencies", {}))["telegram_port"]
+    state_dict = getattr(context, "state", getattr(context, "dependencies", {}))
+    telegram: TelegramPort = state_dict["telegram_port"]
 
     async with get_session() as session:
         generation = await session.get(Generation, command.gen_id)
@@ -70,14 +78,47 @@ async def run_generation_task(
             caption="🎵 Готово!",
         )
 
-        succeeded_event = GenerationSucceeded(
-            user_id=command.user_id,
-            chat_id=command.chat_id,
-            gen_id=command.gen_id,
-            status_message_id=command.status_message_id,
-        )
+        # Обновляем статус генерации в БД
+        async with get_session() as session:
+            generation = await session.get(Generation, command.gen_id)
+            if generation is None or generation.status is not GenerationStatus.PENDING:
+                return
+            generation.status = GenerationStatus.SUCCESS
+            await session.commit()
 
-        await request_evaluation_handler.kiq(succeeded_event)
+        # Редактируем статусное сообщение
+        if command.status_message_id is not None:
+            await telegram.edit_message(
+                chat_id=command.chat_id,
+                message_id=command.status_message_id,
+                text="🎵 Готово!",
+            )
+
+        # Обновляем FSM и запрашиваем оценку
+        bot: Bot | None = state_dict.get("bot")
+        storage: RedisStorage | None = state_dict.get("storage")
+        if bot is not None and storage is not None:
+            fsm_context = FSMContext(
+                storage=storage,
+                key=StorageKey(bot_id=bot.id, chat_id=command.chat_id, user_id=command.user_id),
+            )
+
+            flow_state = await get_fsm_data(state=fsm_context, model_class=GenerationFlowState)
+            if flow_state.gen_id != command.gen_id:
+                log.info("Evaluation skipped for outdated generation (gen_id=%s)", command.gen_id)
+                return
+
+            flow_state.generating = False
+            await update_fsm_data(state=fsm_context, model=flow_state)
+            await fsm_context.set_state(FeedbackStates.waiting_evaluation)
+
+            await telegram.send_message(
+                chat_id=command.chat_id,
+                text=EVALUATION_PROMPT_TEXT,
+                reply_markup=get_evaluation_keyboard(),
+            )
+
+            log.info("Evaluation requested (user=%s, gen_id=%s)", command.user_id, command.gen_id)
     except asyncio.CancelledError:
         async with get_session() as session:
             generation = await session.get(Generation, command.gen_id)

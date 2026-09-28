@@ -80,3 +80,20 @@ async def mark_user_authorized(uid: int) -> None:
                 if db_user:
                     db_user.is_authorized = True
         await session.commit()
+
+
+async def logout_user(uid: int) -> None:
+    """Снимает авторизацию пользователя в базе данных.
+
+    Args:
+        uid: Telegram user_id пользователя.
+
+    Raises:
+        SQLAlchemyError: При ошибке записи в БД.
+    """
+    async with get_session() as session:
+        db_user = await session.get(User, uid)
+        if db_user:
+            db_user.is_authorized = False
+            session.add(db_user)
+            await session.commit()

@@ -437,9 +437,10 @@ async def handle_enrichment_completed_event(
     """
     from aiogram.fsm.storage.base import StorageKey
 
-    telegram: TelegramPort = context["telegram_port"]
-    storage = context["storage"]
-    bot = context["bot"]
+    state_dict = getattr(context, "state", getattr(context, "dependencies", {}))
+    telegram: TelegramPort = state_dict["telegram_port"]
+    storage = state_dict["storage"]
+    bot = state_dict["bot"]
 
     # Получаем FSM-контекст пользователя
     fsm_context = FSMContext(
@@ -486,9 +487,10 @@ async def handle_generation_failed_event(
     """
     from aiogram.fsm.storage.base import StorageKey
 
-    telegram: TelegramPort = context["telegram_port"]
-    storage = context["storage"]
-    bot = context["bot"]
+    state_dict = getattr(context, "state", getattr(context, "dependencies", {}))
+    telegram: TelegramPort = state_dict["telegram_port"]
+    storage = state_dict["storage"]
+    bot = state_dict["bot"]
 
     fsm_context = FSMContext(
         storage=storage,

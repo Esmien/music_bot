@@ -48,6 +48,8 @@ async def handle_evaluate(callback: CallbackQuery, state: FSMContext) -> None:
 
     await state.set_state(FeedbackStates.waiting_for_feedback_choice)
 
+    await state.set_state(FeedbackStates.waiting_for_feedback_choice)
+
     with contextlib.suppress(Exception):
         await callback.message.edit_reply_markup(reply_markup=None)
 

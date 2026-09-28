@@ -37,7 +37,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # no
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from core.database import init_db
-from domains.auth import handlers as auth_handlers
 from domains.auth import service as auth_service
 from domains.base import service as base_service
 
@@ -80,7 +79,6 @@ async def db_sessionmaker(db_engine, monkeypatch):
 async def patched_auth_db(db_sessionmaker, monkeypatch):
     """Перенаправляет сервисы авторизации и base на тестовую SQLite."""
     monkeypatch.setattr(auth_service, "get_session", db_sessionmaker)
-    monkeypatch.setattr(auth_handlers, "get_session", db_sessionmaker)
     monkeypatch.setattr(base_service, "get_session", db_sessionmaker)
     return db_sessionmaker
 

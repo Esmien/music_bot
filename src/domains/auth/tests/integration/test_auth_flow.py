@@ -298,7 +298,7 @@ async def test_cmd_logout_db_error_notifies_owner(patched_auth_db, make_message,
     def _failing_session_factory():
         raise SQLAlchemyError("database is down")
 
-    monkeypatch.setattr(auth_handlers, "get_session", _failing_session_factory)
+    monkeypatch.setattr(auth_service, "get_session", _failing_session_factory)
 
     notify_calls = []
 
