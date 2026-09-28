@@ -2,6 +2,7 @@
 
 import json
 import logging
+from typing import Any
 
 from aiogram.fsm.state import State, StatesGroup
 from redis.exceptions import RedisError
@@ -55,11 +56,11 @@ async def clear_orphaned_generation_flags() -> int:
             if raw is None:
                 continue
             try:
-                data = json.loads(raw)
+                data: dict[str, Any] = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
                 log.warning("Skipping non-JSON FSM data under key %s", key)
                 continue
-            if not isinstance(data, dict) or not data.get("generating"):
+            if not data.get("generating"):
                 continue
             data.pop("generating", None)
             data.pop("gen_id", None)

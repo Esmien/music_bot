@@ -3,7 +3,7 @@
 import json
 import logging
 import unicodedata
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -74,7 +74,7 @@ class EnrichedSongPrompt(BaseModel):
         return value
 
 
-def parse_enricher_json(raw: str) -> dict:
+def parse_enricher_json(raw: str) -> dict[str, Any]:
     """Разбирает JSON-ответ обогатителя, снимая markdown-ограждение.
 
     Args:
@@ -97,7 +97,7 @@ def parse_enricher_json(raw: str) -> dict:
     data = json.loads(text)
     if not isinstance(data, dict):
         raise EnricherResponseInvalidError("Enricher JSON payload is not an object")
-    return data
+    return cast(dict[str, Any], data)
 
 
 def validate_enriched_prompt(raw: str) -> str:

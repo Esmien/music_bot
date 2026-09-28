@@ -73,6 +73,7 @@ class DatabaseConfig(BaseModelConfig):
     POSTGRES_PORT: int
     POSTGRES_DB: str
 
+    @computed_field
     @property
     def postgres_host(self) -> str:
         return "localhost" if self.DEV_MODE else self.POSTGRES_HOST
@@ -137,6 +138,7 @@ class RedisConfig(BaseModelConfig):
     REDIS_PORT: int
     REDIS_VAULT: str = "0"
 
+    @computed_field
     @property
     def redis_host(self) -> str:
         return "localhost" if self.DEV_MODE else self.REDIS_HOST

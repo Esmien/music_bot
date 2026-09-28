@@ -1,6 +1,7 @@
 """HTTP-клиент обогащения промптов и сохранение результата в БД."""
 
 import logging
+from typing import Any
 
 import httpx
 from sqlalchemy.exc import SQLAlchemyError
@@ -64,11 +65,11 @@ async def enrich_prompt(prompt: str, history: list[dict[str, str]] | None = None
         logger.exception("Enricher request failed: %s", exc)
         return None
 
-    enriched = _extract_message_content(response.json())
-    if not enriched:
+    data = _extract_message_content(response.json())
+    if not data:
         logger.error("Enricher returned empty or unexpected response body")
         return None
-    return validate_enriched_prompt(enriched)
+    return validate_enriched_prompt(data)
 
 
 def format_enriched_prompt(raw: str) -> str:
@@ -102,7 +103,7 @@ def format_enriched_prompt(raw: str) -> str:
     return "\n\n".join(sections) if sections else raw.strip()
 
 
-def _enriched_prompt_to_dict(enriched_prompt: str) -> dict:
+def _enriched_prompt_to_dict(enriched_prompt: str) -> dict[str, Any]:
     """Преобразует строку обогащённого промпта в JSON-объект для хранения.
 
     Args:
@@ -117,6 +118,7 @@ def _enriched_prompt_to_dict(enriched_prompt: str) -> dict:
     except ValueError:
         return {"text": enriched_prompt}
 
+    # parse_enricher_json возвращает dict, но для type checker явно проверяем
     return parsed_prompt if isinstance(parsed_prompt, dict) else {"text": enriched_prompt}
 
 
@@ -146,7 +148,7 @@ async def save_enriched_prompt(tg_id: int, initial_prompt: str, enriched_prompt:
         raise
 
 
-def _extract_message_content(data: dict) -> str | None:
+def _extract_message_content(data: dict[str, Any]) -> str | None:
     """Извлекает текст из OpenAI-совместимого ответа.
 
     Args:

@@ -52,7 +52,7 @@ class Generation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     enriched_prompt: Mapped[dict] = mapped_column(
-        JSON().with_variant(JSONB(), "postgresql"),
+        JSON().with_variant(JSONB(), "postgresql"),  # type: ignore[arg-type]
         nullable=False,
     )
     title: Mapped[str | None] = mapped_column(String, nullable=True)

@@ -6,7 +6,7 @@
 """
 
 import logging
-from typing import cast
+from typing import TYPE_CHECKING
 
 from redis.asyncio import Redis
 
@@ -15,14 +15,13 @@ from core.config import settings
 log = logging.getLogger(__name__)
 
 # decode_responses: работаем со строками вместо bytes
-# cast для type checker, т.к. Redis не является generic-классом в runtime
-redis_client = cast(
-    "Redis[str]",
-    Redis.from_url(
+if TYPE_CHECKING:
+    redis_client: Redis[str]
+else:
+    redis_client = Redis.from_url(
         url=settings.redis.redis_url,
         decode_responses=True,
-    ),
-)
+    )
 
 GENERATION_CANCEL_KEY_PREFIX = "bot:cancel:gen"
 
@@ -61,7 +60,8 @@ async def is_generation_cancelled(gen_id: int) -> bool:
     Returns:
         True если генерация отменена, иначе False.
     """
-    return bool(await redis_client.exists(generation_cancel_key(gen_id=gen_id)))
+    result: int = await redis_client.exists(generation_cancel_key(gen_id=gen_id))
+    return bool(result)
 
 
 async def clear_generation_cancel(gen_id: int) -> None:

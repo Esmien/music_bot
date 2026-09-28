@@ -14,9 +14,9 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, Protocol
+from typing import Any
 
 import httpx
 from tenacity import (
@@ -28,6 +28,7 @@ from tenacity import (
 
 from core.config import settings
 from core.redis import is_generation_cancelled, redis_client
+from core.types import JSONValue, ProgressCallback, ProgressReporter
 from core.utils.exceptions import (
     GenerationAPIError,
     GenerationAudioMissingError,
@@ -54,7 +55,7 @@ end
 """
 
 
-def _is_retryable_error(exception: BaseException) -> bool:
+def _is_retryable_error(exception: Exception) -> bool:
     """Определяет, является ли ошибка повторяемой для retry-логики.
 
     Args:
@@ -75,7 +76,7 @@ def _is_retryable_error(exception: BaseException) -> bool:
     return False
 
 
-def _log_retry_attempt(retry_state) -> None:
+def _log_retry_attempt(retry_state: Any) -> None:
     """Логирует попытку повтора запроса.
 
     Args:
@@ -89,11 +90,6 @@ def _log_retry_attempt(retry_state) -> None:
         type(exception).__name__ if exception else "unknown",
         str(exception)[:200] if exception else "",
     )
-
-
-# Колбек прогресса: `on_progress(stage, fraction)`, fraction в диапазоне 0..1
-class ProgressCallback(Protocol):
-    async def __call__(self, stage: str, fraction: float) -> None: ...
 
 
 # Максимальный размер аудио в base64-символах (~30 МБ после декодирования).
@@ -165,7 +161,7 @@ def progress_text(stage: str, fraction: float) -> str:
     return f"🎼 {stage}\n{_progress_bar(fraction)} {round(fraction * 100)}%"
 
 
-def make_throttled_progress(report: Callable[[str], Awaitable[None]]) -> ProgressCallback:
+def make_throttled_progress(report: ProgressReporter) -> ProgressCallback:
     """Оборачивает «отрисовку» статуса в троттлинг по времени.
 
     Правки идут не чаще PROGRESS_EDIT_INTERVAL (лимиты Telegram);
@@ -200,7 +196,7 @@ def make_throttled_progress(report: Callable[[str], Awaitable[None]]) -> Progres
     return on_progress
 
 
-def _find_audio_b64(node: Any) -> str | None:
+def _find_audio_b64(node: JSONValue) -> str | None:
     """Рекурсивно ищет base64-аудио в JSON любой структуры.
 
     Структура ответа модели не зафиксирована контрактом, поэтому
@@ -354,7 +350,7 @@ async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCall
     # Счетчик размера файла
     total_b64 = 0
     # Точка отсчета таймера для прогресс-бара
-    started = time.monotonic()
+    started: float = time.monotonic()
 
     # Рисуем заглушку на старте генерации
     await report(stage="Соединяюсь с сервером…", fraction=0.02)
