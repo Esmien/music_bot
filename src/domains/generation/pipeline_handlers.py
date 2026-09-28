@@ -16,12 +16,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, Message
 from sqlalchemy import select
 
+from core.broker import generation_broker
 from core.database.engine import get_session
 from core.utils.error_notify import notify_owner
-from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT
-from domains.evaluation.fsm import FeedbackStates
-from domains.evaluation.keyboards import get_evaluation_keyboard
-from domains.generation import service as generation_service
+from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
 from domains.generation.generation_messages import (
     GENERATION_FAILURE_TEXT,
     GENERATION_IN_PROGRESS_TEXT,
@@ -32,6 +30,8 @@ from domains.generation.keyboards import get_retry_keyboard
 from domains.generation.models import Generation, GenerationStatus
 from domains.generation.registries.task_registry import register_active_task, unregister_active_task
 from domains.generation.service import ProgressCallback, make_throttled_progress, user_generation_lock
+from domains.generation.state_models import GenerationFlowState
+from shared.contracts.commands import RunGeneration
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +46,8 @@ async def _is_actual_gen(state: FSMContext, gen_id: str) -> bool:
     Returns:
         True, если актуальна.
     """
-    return (await state.get_data()).get("gen_id") == gen_id
+    flow_state = await get_fsm_data(state=state, model_class=GenerationFlowState)
+    return flow_state.gen_id == gen_id
 
 
 @dataclass
@@ -74,23 +75,13 @@ class GenerationContext:
 
 
 async def generate_and_send(message: Message, state: FSMContext, prompt: str, title: str, user_id: int) -> None:
-    """Генерирует аудио и отправляет его в чат.
-
-    Запускается как фоновая задача из handle_title и retry_generation.
-    Под локом проверяет и выставляет флаг generating в FSM (защита от
-    параллельных запусков) и регистрирует себя в active_tasks, чтобы
-    генерацию можно было погасить из cmd_cancel_generation / cmd_logout.
-    По ходу дела правит сообщение-статус с прогресс-баром (не чаще
-    PROGRESS_EDIT_INTERVAL). При ошибке оставляет prompt и title в FSM
-    и вешает кнопку повтора; при отмене убирает сообщение прогресса и
-    пробрасывает CancelledError. Успех завершается отправкой аудио и
-    очисткой FSM — но только если генерация всё ещё актуальна.
+    """Создаёт запись генерации и ставит её выполнение в очередь.
 
     Args:
-        message: Сообщение, от имени которого шлются статусы и аудио.
-        state: FSM-контекст текущего пользователя.
-        prompt: Подготовленное описание песни.
-        title: Название трека.
+        message: Сообщение пользователя.
+        state: FSM-контекст пользователя.
+        prompt: Промпт для генерации.
+        title: Название песни.
         user_id: Telegram user_id пользователя.
     """
     task = asyncio.current_task()
@@ -105,27 +96,50 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
         user_id=user_id,
         task=task,
     )
-    try:
-        if not await _acquire_slot(gen_context=gen_context):
+
+    async with user_generation_lock(user_id=user_id):
+        flow_state = await get_fsm_data(state=state, model_class=GenerationFlowState)
+        if flow_state.generating:
+            await message.answer(text=GENERATION_IN_PROGRESS_TEXT)
             return
 
         status = await _start_status(gen_context=gen_context)
-        on_progress = _make_progress_reporter(status=status)
 
-        try:
-            audio_bytes = await generation_service.run_generation(
-                prompt=gen_context.prompt,
-                on_progress=on_progress,
+        async with get_session() as session:
+            generation = Generation(
+                prompt=prompt,
+                enriched_prompt={"text": prompt},
+                title=title,
+                user_id=user_id,
+                status=GenerationStatus.PENDING,
             )
-        except asyncio.CancelledError:
-            await _cleanup_cancelled(gen_context=gen_context, status=status)
-            raise
-        except Exception as error:
-            await _handle_failure(gen_context=gen_context, status=status, error=error)
-            return
-        await _deliver_result(gen_context=gen_context, status=status, audio_bytes=audio_bytes)
-    finally:
-        await _release_slot(gen_context=gen_context)
+            session.add(generation)
+            await session.flush()
+            await session.commit()
+
+        flow_state.generating = True
+        flow_state.gen_id = generation.id
+        await update_fsm_data(state=state, model=flow_state)
+
+        command = RunGeneration(
+            user_id=user_id,
+            chat_id=message.chat.id,
+            gen_id=generation.id,
+            prompt=prompt,
+            title=title,
+            status_message_id=getattr(status, "message_id", None),
+        )
+
+        broker_kicker = getattr(generation_broker, "kicker", None)
+        if callable(broker_kicker):
+            await broker_kicker(task_name="run_generation").kiq(command)
+        else:
+            try:
+                from domains.generation.worker import run_generation_task as target_task
+            except ImportError:
+                from domains.generation.worker import run_generation as target_task
+
+            await target_task.kiq(command)
 
 
 async def _acquire_slot(gen_context: GenerationContext) -> bool:
@@ -141,12 +155,15 @@ async def _acquire_slot(gen_context: GenerationContext) -> bool:
         True, если слот занят и генерацию можно запускать.
     """
     async with user_generation_lock(user_id=gen_context.user_id):
-        if (await gen_context.state.get_data()).get("generating"):
+        flow_state = await get_fsm_data(state=gen_context.state, model_class=GenerationFlowState)
+        if flow_state.generating:
             await gen_context.message.answer(text="⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена».")
             return False
 
         gen_context.gen_id = uuid4().hex
-        await gen_context.state.update_data(generating=True, gen_id=gen_context.gen_id)
+        flow_state.generating = True
+        flow_state.gen_id = gen_context.gen_id
+        await update_fsm_data(state=gen_context.state, model=flow_state)
         await register_active_task(uid=gen_context.user_id, task=gen_context.task)
         return True
 
@@ -193,7 +210,9 @@ async def _cleanup_cancelled(gen_context: GenerationContext, status: Message) ->
         await status.delete()
 
     if await _is_actual_gen(state=gen_context.state, gen_id=gen_context.gen_id):
-        await gen_context.state.update_data(generating=False)
+        flow_state = await get_fsm_data(state=gen_context.state, model_class=GenerationFlowState)
+        flow_state.generating = False
+        await update_fsm_data(state=gen_context.state, model=flow_state)
 
 
 async def _handle_failure(gen_context: GenerationContext, status: Message, error: Exception) -> None:
@@ -215,7 +234,9 @@ async def _handle_failure(gen_context: GenerationContext, status: Message, error
         )
 
     if await _is_actual_gen(state=gen_context.state, gen_id=gen_context.gen_id):
-        await gen_context.state.update_data(generating=False)
+        flow_state = await get_fsm_data(state=gen_context.state, model_class=GenerationFlowState)
+        flow_state.generating = False
+        await update_fsm_data(state=gen_context.state, model=flow_state)
 
     with contextlib.suppress(Exception):
         await status.edit_text(
@@ -239,12 +260,9 @@ async def _deliver_result(gen_context: GenerationContext, status: Message, audio
     await gen_context.message.answer_audio(audio=file, caption=GENERATION_SUCCESS_CAPTION)
 
     if is_actual:
-        await gen_context.state.update_data(generating=False)
-        await gen_context.state.set_state(FeedbackStates.waiting_evaluation)
-        await gen_context.message.answer(
-            text=EVALUATION_PROMPT_TEXT,
-            reply_markup=get_evaluation_keyboard(),
-        )
+        flow_state = await get_fsm_data(state=gen_context.state, model_class=GenerationFlowState)
+        flow_state.generating = False
+        await update_fsm_data(state=gen_context.state, model=flow_state)
 
     await _persist_generated_title(gen_context=gen_context)
 

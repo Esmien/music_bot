@@ -21,6 +21,8 @@ alembic = ">=1.14.0,<2.0.0"
 redis = ">=5.2.0,<6.0.0"
 pydantic = "^2.13.5"
 pydantic-settings = "^2.15.0"
+taskiq = ">=0.11.7,<0.12.0"
+taskiq-aio-pika = ">=0.4.1,<0.5.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.4.2,<9.0.0"
@@ -86,7 +88,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # Корень проекта и каталог src в sys.path: тесты импортируют config, models, handlers напрямую
 pythonpath = [".", "src"]
-testpaths = ["src/domains"]
+testpaths = ["src/domains", "tests"]
 markers = [
     "unit: быстрые изолированные тесты (сеть и БД замоканы)",
     "integration: тесты с реальной in-memory БД",

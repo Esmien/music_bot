@@ -10,9 +10,8 @@ from aiogram.types import Message
 
 from core.config import settings
 from core.utils.error_notify import notify_owner
-from core.utils.exceptions import APINotSet
-from domains.auth.handlers import _require_auth
-from domains.base.keyboards import CREDITS_BUTTON, get_main_keyboard
+from domains.auth.handlers import require_auth
+from domains.base.keyboards import CREDITS_BUTTON
 from domains.credits.credits_messages import (
     API_KEY_NOT_CONFIGURED_CONTEXT,
     API_KEY_NOT_SET_ERROR,
@@ -33,13 +32,13 @@ router = Router(name="credits")
 @router.message(Command("credits"))
 @router.message(F.text == CREDITS_BUTTON)
 async def cmd_credits(message: Message, state: FSMContext) -> None:
-    """Показывает остаток генераций по данным API OpenRouter.
+    """Проверяет кредиты OpenRouter и отправляет результат пользователю.
 
     Args:
         message: Входящее сообщение.
         state: FSM-контекст; очищается для отмены незавершённого сценария.
     """
-    if not await _require_auth(message):
+    if not await require_auth(message):
         return
     await state.clear()
 
@@ -48,7 +47,7 @@ async def cmd_credits(message: Message, state: FSMContext) -> None:
         await notify_owner(
             bot=message.bot,
             context=API_KEY_NOT_CONFIGURED_CONTEXT,
-            err=APINotSet(API_KEY_NOT_SET_ERROR),
+            err=ValueError(API_KEY_NOT_SET_ERROR),
         )
         await message.answer(text=CREDITS_API_KEY_NOT_CONFIGURED)
         return
@@ -59,7 +58,9 @@ async def cmd_credits(message: Message, state: FSMContext) -> None:
             song_price=settings.generation.SONG_PRICE,
         )
         if summary.status_code != 200:
-            await message.answer(text=CREDITS_API_ERROR.format(status_code=summary.status_code))
+            await message.answer(
+                text=CREDITS_API_ERROR.format(status_code=summary.status_code),
+            )
             return
 
         await message.answer(
@@ -68,13 +69,12 @@ async def cmd_credits(message: Message, state: FSMContext) -> None:
                 used_songs=summary.used_songs,
                 remaining_songs=summary.remaining_songs,
             ),
-            reply_markup=get_main_keyboard(),
         )
     except httpx.HTTPError as error:
-        log.error(CREDITS_CHECK_FAILED_LOG, message.from_user.id)
+        log.error(CREDITS_CHECK_FAILED_LOG, message.chat.id)
         await notify_owner(
             bot=message.bot,
-            context=CREDITS_CHECK_FAILED_OWNER_CONTEXT.format(user_id=message.from_user.id),
+            context=CREDITS_CHECK_FAILED_OWNER_CONTEXT.format(user_id=message.chat.id),
             err=error,
         )
         await message.answer(text=CREDITS_CHECK_FAILED)

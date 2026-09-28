@@ -34,24 +34,15 @@ def auth_stub(monkeypatch):
 
 
 @pytest.fixture
-def enrich_stub(monkeypatch):
-    """Подменяет enrich_prompt в хендлерах на заглушку с настраиваемым результатом."""
+def broker_stub(monkeypatch):
+    """Подменяет _publish_enrich_command на заглушку, копящую вызовы."""
+    published = []
 
-    class EnrichStub:
-        def __init__(self):
-            self.result = "обогащённый промпт"
-            self.error = None
-            self.calls = []
+    async def fake_publish(command):
+        published.append(command)
 
-        async def __call__(self, prompt, history=None):
-            self.calls.append({"prompt": prompt, "history": history})
-            if self.error is not None:
-                raise self.error
-            return self.result
-
-    stub = EnrichStub()
-    monkeypatch.setattr(enricher_handlers, "enrich_prompt", stub)
-    return stub
+    monkeypatch.setattr(enricher_handlers, "_publish_enrich_command", fake_publish)
+    return published
 
 
 @pytest.fixture
@@ -140,7 +131,7 @@ def test_build_generation_prompt_plain_lyrics():
 # --- handle_idea ---
 
 
-async def test_handle_idea_success(make_message, fake_state, enrich_stub):
+async def test_handle_idea_success(make_message, fake_state, broker_stub):
     message = make_message(text="грустная песня о дожде")
     state = fake_state()
 
@@ -148,46 +139,45 @@ async def test_handle_idea_success(make_message, fake_state, enrich_stub):
 
     data = await state.get_data()
     assert data["prompt"] == "грустная песня о дожде"
-    assert data["enriching"] is False
-    assert data["enriched_prompt"] == "обогащённый промпт"
-    assert enrich_stub.calls[0]["prompt"] == "грустная песня о дожде"
-    assert enrich_stub.calls[0]["history"] is None
-    assert state.state == PromptEnricherStates.waiting_for_approval
+    assert data["enriching"] is True
+    assert len(broker_stub) == 1
+    assert broker_stub[0].prompt == "грустная песня о дожде"
+    assert broker_stub[0].history is None
     assert len(message.sent) == 1
-    assert "Я подготовил описание песни" in message.sent[0].edits[0]
+    assert "обогащаю" in message.answers[0].lower()
 
 
-async def test_handle_idea_empty_text(make_message, fake_state, enrich_stub):
+async def test_handle_idea_empty_text(make_message, fake_state, broker_stub):
     message = make_message(text="   ")
     state = fake_state()
 
     await enricher_handlers.handle_idea(message=message, state=state)
 
     assert "непустой текст" in message.answers[0]
-    assert enrich_stub.calls == []
+    assert broker_stub == []
 
 
-async def test_handle_idea_too_long(make_message, fake_state, enrich_stub):
+async def test_handle_idea_too_long(make_message, fake_state, broker_stub):
     message = make_message(text="а" * (MAX_PROMPT_LEN + 1))
     state = fake_state()
 
     await enricher_handlers.handle_idea(message=message, state=state)
 
     assert "Слишком длинный текст" in message.answers[0]
-    assert enrich_stub.calls == []
+    assert broker_stub == []
 
 
-async def test_handle_idea_empty_template(make_message, fake_state, enrich_stub):
+async def test_handle_idea_empty_template(make_message, fake_state, broker_stub):
     message = make_message(text=PROMPT_TEMPLATE)
     state = fake_state()
 
     await enricher_handlers.handle_idea(message=message, state=state)
 
     assert "Шаблон пришёл пустым" in message.answers[0]
-    assert enrich_stub.calls == []
+    assert broker_stub == []
 
 
-async def test_handle_idea_while_enriching(make_message, fake_state, enrich_stub):
+async def test_handle_idea_while_enriching(make_message, fake_state, broker_stub):
     message = make_message(text="идея")
     state = fake_state()
     await state.update_data(enriching=True)
@@ -195,48 +185,7 @@ async def test_handle_idea_while_enriching(make_message, fake_state, enrich_stub
     await enricher_handlers.handle_idea(message=message, state=state)
 
     assert "Дождитесь окончания обогащения" in message.answers[0]
-    assert enrich_stub.calls == []
-
-
-async def test_handle_idea_enrich_failed_shows_retry(make_message, fake_state, enrich_stub):
-    enrich_stub.result = None
-    message = make_message(text="идея")
-    state = fake_state()
-
-    await enricher_handlers.handle_idea(message=message, state=state)
-
-    assert "Не получилось обогатить" in message.sent[0].edits[0]
-    assert state.state is None
-
-
-async def test_handle_idea_not_configured_notifies_owner(make_message, fake_state, enrich_stub, notify_stub):
-    enrich_stub.error = ValueError("Enricher URL or model is not configured")
-    message = make_message(text="идея")
-    state = fake_state()
-
-    await enricher_handlers.handle_idea(message=message, state=state)
-
-    assert len(notify_stub.calls) == 1
-    assert "не сконфигурирован" in notify_stub.calls[0]["context"]
-    assert "Сервис обогащения не настроен" in message.sent[0].edits[0]
-    assert (await state.get_data())["enriching"] is False
-
-
-async def test_handle_idea_drops_stale_result(make_message, fake_state, monkeypatch):
-    message = make_message(text="идея")
-    state = fake_state()
-
-    async def fake_enrich(prompt, history=None):
-        # Сценарий отменили, пока обогащение работало
-        await state.clear()
-        return "обогащённый промпт"
-
-    monkeypatch.setattr(enricher_handlers, "enrich_prompt", fake_enrich)
-
-    await enricher_handlers.handle_idea(message=message, state=state)
-
-    assert len(message.sent[0].edits) == 0
-    assert state.cleared
+    assert broker_stub == []
 
 
 # --- handle_prompt_approve ---
@@ -279,7 +228,7 @@ async def test_approve_finalizes_prompt_and_saves_feedback(
     assert state.state == GenerationStates.waiting_for_title
     assert save_stub == [{"tg_id": 7, "initial_prompt": "идея", "enriched_prompt": "обогащённый промпт"}]
     assert callback.message.reply_markup_removed
-    assert "Введите название песни" in callback.message.answers[0]
+    assert "название песни" in callback.message.answers[0]
     assert callback.answered == [(None, False)]
 
 
@@ -311,25 +260,25 @@ async def test_edit_sets_waiting_for_edits(make_callback, make_callback_message,
 # --- handle_prompt_edits ---
 
 
-async def test_prompt_edits_success_sends_history(make_message, fake_state, enrich_stub):
+async def test_prompt_edits_success_sends_history(make_message, fake_state, broker_stub):
     message = make_message(text="сделай веселее")
     state = fake_state()
     await state.update_data(prompt="идея", enriched_prompt="прошлый вариант")
 
     await enricher_handlers.handle_prompt_edits(message=message, state=state)
 
-    assert enrich_stub.calls[0] == {
-        "prompt": "сделай веселее",
-        "history": [
-            {"role": "user", "content": "идея"},
-            {"role": "assistant", "content": "прошлый вариант"},
-        ],
-    }
+    assert len(broker_stub) == 1
+    cmd = broker_stub[0]
+    assert cmd.prompt == "сделай веселее"
+    assert cmd.history == [
+        {"role": "user", "content": "идея"},
+        {"role": "assistant", "content": "прошлый вариант"},
+    ]
     assert (await state.get_data())["pending_edits"] == "сделай веселее"
-    assert state.state == PromptEnricherStates.waiting_for_approval
+    assert (await state.get_data())["enriching"] is True
 
 
-async def test_prompt_edits_empty(make_message, fake_state, enrich_stub):
+async def test_prompt_edits_empty(make_message, fake_state, broker_stub):
     message = make_message(text="   ")
     state = fake_state()
     await state.update_data(prompt="идея")
@@ -337,10 +286,10 @@ async def test_prompt_edits_empty(make_message, fake_state, enrich_stub):
     await enricher_handlers.handle_prompt_edits(message=message, state=state)
 
     assert "непустые правки" in message.answers[0]
-    assert enrich_stub.calls == []
+    assert broker_stub == []
 
 
-async def test_prompt_edits_too_long(make_message, fake_state, enrich_stub):
+async def test_prompt_edits_too_long(make_message, fake_state, broker_stub):
     message = make_message(text="а" * (MAX_PROMPT_LEN + 1))
     state = fake_state()
     await state.update_data(prompt="идея")
@@ -348,10 +297,10 @@ async def test_prompt_edits_too_long(make_message, fake_state, enrich_stub):
     await enricher_handlers.handle_prompt_edits(message=message, state=state)
 
     assert "Слишком длинный текст" in message.answers[0]
-    assert enrich_stub.calls == []
+    assert broker_stub == []
 
 
-async def test_prompt_edits_lost_session(make_message, fake_state, enrich_stub):
+async def test_prompt_edits_lost_session(make_message, fake_state, broker_stub):
     message = make_message(text="правки")
     state = fake_state()
 
@@ -359,10 +308,10 @@ async def test_prompt_edits_lost_session(make_message, fake_state, enrich_stub):
 
     assert "потерялась" in message.answers[0]
     assert state.cleared
-    assert enrich_stub.calls == []
+    assert broker_stub == []
 
 
-async def test_prompt_edits_while_enriching(make_message, fake_state, enrich_stub):
+async def test_prompt_edits_while_enriching(make_message, fake_state, broker_stub):
     message = make_message(text="правки")
     state = fake_state()
     await state.update_data(prompt="идея", enriching=True)
@@ -370,7 +319,7 @@ async def test_prompt_edits_while_enriching(make_message, fake_state, enrich_stu
     await enricher_handlers.handle_prompt_edits(message=message, state=state)
 
     assert "Дождитесь окончания обогащения" in message.answers[0]
-    assert enrich_stub.calls == []
+    assert broker_stub == []
 
 
 # --- handle_prompt_retry ---
@@ -387,7 +336,7 @@ async def test_retry_unauthorized(make_callback, fake_state, auth_stub):
     assert state.cleared
 
 
-async def test_retry_while_enriching(make_callback, fake_state, auth_stub, enrich_stub):
+async def test_retry_while_enriching(make_callback, fake_state, auth_stub, broker_stub):
     state = fake_state()
     await state.update_data(prompt="идея", enriching=True)
     callback = make_callback(uid=7)
@@ -395,7 +344,7 @@ async def test_retry_while_enriching(make_callback, fake_state, auth_stub, enric
     await enricher_handlers.handle_prompt_retry(callback=callback, state=state)
 
     assert callback.answered == [("Обогащение уже выполняется.", True)]
-    assert enrich_stub.calls == []
+    assert broker_stub == []
 
 
 async def test_retry_without_prompt_prompts_restart(make_callback, fake_state, auth_stub):
@@ -408,20 +357,22 @@ async def test_retry_without_prompt_prompts_restart(make_callback, fake_state, a
     assert state.cleared
 
 
-async def test_retry_first_run_enriches_idea(make_callback, make_callback_message, fake_state, auth_stub, enrich_stub):
+async def test_retry_first_run_enriches_idea(make_callback, make_callback_message, fake_state, auth_stub, broker_stub):
     state = fake_state()
     await state.update_data(prompt="идея")
     callback = make_callback(uid=7, message=make_callback_message())
 
     await enricher_handlers.handle_prompt_retry(callback=callback, state=state)
 
-    assert enrich_stub.calls[0] == {"prompt": "идея", "history": None}
-    assert state.state == PromptEnricherStates.waiting_for_approval
-    assert "Я подготовил описание песни" in callback.message.edits[-1]
+    assert len(broker_stub) == 1
+    assert broker_stub[0].prompt == "идея"
+    assert broker_stub[0].history is None
+    assert (await state.get_data())["enriching"] is True
+    assert "обогащаю" in callback.message.edits[-1].lower()
 
 
 async def test_retry_after_edits_sends_history(
-    make_callback, make_callback_message, fake_state, auth_stub, enrich_stub
+    make_callback, make_callback_message, fake_state, auth_stub, broker_stub
 ):
     state = fake_state()
     await state.update_data(prompt="идея", enriched_prompt="прошлый вариант", pending_edits="правки")
@@ -429,8 +380,10 @@ async def test_retry_after_edits_sends_history(
 
     await enricher_handlers.handle_prompt_retry(callback=callback, state=state)
 
-    assert enrich_stub.calls[0]["prompt"] == "правки"
-    assert enrich_stub.calls[0]["history"] == [
+    assert len(broker_stub) == 1
+    cmd = broker_stub[0]
+    assert cmd.prompt == "правки"
+    assert cmd.history == [
         {"role": "user", "content": "идея"},
         {"role": "assistant", "content": "прошлый вариант"},
     ]
@@ -471,7 +424,7 @@ async def test_fallback_uses_enriched_prompt(make_callback, make_callback_messag
     assert data["prompt"] == enricher_handlers._build_generation_prompt(text="прошлый обогащённый")
     assert state.state == GenerationStates.waiting_for_title
     assert save_stub[0]["enriched_prompt"] == "прошлый обогащённый"
-    assert "Введите название песни" in callback.message.answers[0]
+    assert "название песни" in callback.message.answers[0]
 
 
 async def test_fallback_uses_raw_prompt_without_enriched(

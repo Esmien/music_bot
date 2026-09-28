@@ -5,11 +5,14 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from core.redis import request_generation_cancel
+from core.utils.fsm_helpers import get_fsm_data
 from domains.auth.service import add_pending_auth, discard_pending_auth, is_authorized
 from domains.base import base_messasges
 from domains.base.keyboards import CANCEL_BUTTON, get_main_keyboard
 from domains.base.service import get_last_generated_title
 from domains.generation.registries.task_registry import get_active_task
+from domains.generation.state_models import GenerationFlowState
 
 router = Router(name="base")
 
@@ -57,6 +60,10 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
         message: Сообщение с командой /cancel или кнопкой отмены.
         state: FSM-контекст текущего пользователя.
     """
+    flow_state = await get_fsm_data(state=state, model_class=GenerationFlowState)
+    if flow_state.gen_id is not None and flow_state.generating:
+        await request_generation_cancel(gen_id=flow_state.gen_id)
+
     task = get_active_task(uid=message.from_user.id)
     if task is not None and not task.done():
         task.cancel()

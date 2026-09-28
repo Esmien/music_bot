@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from core.config import settings
+from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
 from domains.base.keyboards import get_main_keyboard
 from domains.evaluation.evaluation_messages import FEEDBACK_CHOICE_TEXT
 from domains.feedback.feedback_messages import FEEDBACK_PROMPT_TEXT, FEEDBACK_THANKS_TEXT
@@ -18,6 +19,7 @@ from domains.feedback.keyboards import (
     get_feedback_keyboard,
 )
 from domains.feedback.service import save_feedback
+from domains.feedback.state_models import FeedbackFlowState
 
 router = Router()
 
@@ -33,14 +35,14 @@ async def _finish_feedback(user_id: int, state: FSMContext, feedback_text: str |
     Returns:
         None.
     """
-    data = await state.get_data()
-    feedback = feedback_text if feedback_text is not None else data.get("feedback_text")
+    flow_state = await get_fsm_data(state=state, model_class=FeedbackFlowState)
+    feedback = feedback_text if feedback_text is not None else flow_state.feedback_text
     if feedback:
         feedback = feedback.strip()
     if feedback is not None and len(feedback) < settings.MIN_FEEDBACK_TEXT:
         feedback = None
 
-    evalue = bool(data.get("feedback_evaluation"))
+    evalue = bool(flow_state.feedback_evaluation)
     await save_feedback(user_id=user_id, feedback=feedback, evalue=evalue)
     await state.clear()
 
@@ -66,8 +68,8 @@ async def handle_feedback_message(message: Message, state: FSMContext) -> None:
         message: Входящее сообщение пользователя.
         state: FSM-контекст пользователя.
     """
-    data = await state.get_data()
-    prompt_message_id = data.get("feedback_prompt_message_id")
+    flow_state = await get_fsm_data(state=state, model_class=FeedbackFlowState)
+    prompt_message_id = flow_state.feedback_prompt_message_id
 
     await _finish_feedback(user_id=message.from_user.id, state=state, feedback_text=message.text)
 
@@ -97,10 +99,12 @@ async def _show_feedback_prompt(callback: CallbackQuery, state: FSMContext) -> N
         reply_markup=get_feedback_finish_keyboard(),
     )
     await state.set_state(FeedbackStates.waiting_feedback)
-    await state.update_data(
-        feedback_text=None,
-        feedback_prompt_message_id=callback.message.message_id,
-    )
+
+    flow_state = await get_fsm_data(state=state, model_class=FeedbackFlowState)
+    flow_state.feedback_text = None
+    flow_state.feedback_prompt_message_id = callback.message.message_id
+    await update_fsm_data(state=state, model=flow_state)
+
     await callback.answer()
 
 

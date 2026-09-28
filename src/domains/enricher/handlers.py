@@ -11,7 +11,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.exc import SQLAlchemyError
 
+from core.config import settings
+from core.redis import redis_client
 from core.utils.error_notify import notify_owner
+from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
 from domains.auth.service import is_authorized
 from domains.base.keyboards import get_cancel_keyboard, get_main_keyboard
 from domains.enricher.enricher_messages import (
@@ -28,15 +31,12 @@ from domains.enricher.enricher_messages import (
     ENRICH_SESSION_FAILURE,
     ENRICH_STARTS_MSG,
     ENRICH_STARTS_WITH_EDITS,
-    ENRICHER_IS_BROKEN,
-    NOTIFY_ENRICHER_NOT_CONFIGURED_CTX,
     NOTIFY_SAVE_PROMPT_FAILED_CTX,
     PROMPT_MARKERS,
     PROMPT_TOO_LONG_MSG,
     RETURN_TO_START,
     RUN_AGAIN,
     WAITING_PROMPT_EDITS,
-    WAITING_TITLE_MSG,
 )
 from domains.enricher.fsm import PromptEnricherStates
 from domains.enricher.keyboards import (
@@ -47,10 +47,13 @@ from domains.enricher.keyboards import (
     CB_PROMPT_RETRY,
     get_enrich_failed_keyboard,
     get_prompt_approval_keyboard,
-    get_title_keyboard,
 )
-from domains.enricher.service import enrich_prompt, format_enriched_prompt, save_enriched_prompt
-from domains.generation.fsm import MAX_PROMPT_LEN, GenerationStates
+from domains.enricher.service import format_enriched_prompt, save_enriched_prompt
+from domains.enricher.state_models import EnrichmentFlowState
+from domains.generation.fsm import MAX_PROMPT_LEN
+from shared.contracts.commands import StartEnrichment
+from shared.contracts.events import EnrichmentCompleted, GenerationFailed
+from shared.domain_ports import generation_flow_starter
 
 log = logging.getLogger(__name__)
 
@@ -85,7 +88,8 @@ async def _is_actual_enrich(state: FSMContext, enrich_id: str) -> bool:
     Returns:
         True, если идентификатор совпадает с сохранённым в FSM.
     """
-    return (await state.get_data()).get("enrich_id") == enrich_id
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    return flow_state.enrich_id == enrich_id
 
 
 async def _ensure_callback_authorized(callback: CallbackQuery, state: FSMContext) -> bool:
@@ -111,6 +115,7 @@ async def _save_feedback_best_effort(status: Message, uid: int, initial_prompt: 
     Args:
         status: Сообщение, используемое для уведомления владельца.
         uid: Telegram user_id пользователя.
+        chat_id: ID чата для публикации результата.
         initial_prompt: Исходный промпт.
         enriched_prompt: Обогащённый промпт.
     """
@@ -126,69 +131,51 @@ async def _save_feedback_best_effort(status: Message, uid: int, initial_prompt: 
             )
 
 
-async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str, uid: int) -> None:
-    """Запускает обогащение и показывает результат или действия после сбоя.
+async def _publish_enrich_command(command: StartEnrichment) -> None:
+    """Публикует команду обогащения в очередь брокера.
 
     Args:
-        status: Сообщение-лоадер для редактирования.
+        command: Команда с параметрами обогащения.
+    """
+    from domains.enricher.worker import enrich_prompt_task
+
+    await enrich_prompt_task.kiq(command.model_dump())
+
+
+async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str, uid: int, chat_id: int) -> None:
+    """Публикует команду обогащения в очередь.
+
+    Args:
+        status: Сообщение-лоадер (не используется, оставлено для совместимости).
         state: FSM-контекст пользователя.
-        enrich_id: Идентификатор текущего запуска.
+        enrich_id: Идентификатор текущего запуска (не используется в новой версии).
         uid: Telegram user_id пользователя.
     """
-    data = await state.get_data()
-    prompt = data.get("prompt", "")
-    enriched_prev = data.get("enriched_prompt")
-    edits_text = data.get("pending_edits")
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    prompt = flow_state.prompt or ""
+    enriched_prev = flow_state.enriched_prompt
+    edits_text = flow_state.pending_edits
 
-    try:
-        if edits_text and enriched_prev:
-            history = [
-                {"role": "user", "content": prompt},
-                {"role": "assistant", "content": enriched_prev},
-            ]
-            result = await enrich_prompt(prompt=edits_text, history=history)
-        else:
-            result = await enrich_prompt(prompt=prompt)
-    except ValueError as error:
-        if await _is_actual_enrich(state=state, enrich_id=enrich_id):
-            await state.update_data(enriching=False)
-        with contextlib.suppress(Exception):
-            await notify_owner(
-                bot=status.bot,
-                context=NOTIFY_ENRICHER_NOT_CONFIGURED_CTX.format(uid=uid),
-                err=error,
-            )
-        with contextlib.suppress(Exception):
-            await status.edit_text(
-                text=ENRICHER_IS_BROKEN,
-                reply_markup=get_enrich_failed_keyboard(),
-            )
-        return
+    # Формируем историю для API, если есть правки
+    history = None
+    if edits_text and enriched_prev:
+        history = [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": enriched_prev},
+        ]
+        prompt_to_send = edits_text
+    else:
+        prompt_to_send = prompt
 
-    if not await _is_actual_enrich(state=state, enrich_id=enrich_id):
-        log.info("Stale enrichment result dropped (user=%s)", uid)
-        return
-
-    await state.update_data(enriching=False)
-
-    if result is None:
-        with contextlib.suppress(Exception):
-            await status.edit_text(
-                text=ENRICH_FAIL,
-                reply_markup=get_enrich_failed_keyboard(),
-            )
-        return
-
-    await state.update_data(enriched_prompt=result)
-    log.info("Enrichment succeeded (user=%s, edits=%s)", uid, bool(edits_text))
-    display_text = format_enriched_prompt(raw=result)
-
-    with contextlib.suppress(Exception):
-        await status.edit_text(
-            text=ENRICH_RESULT_MSG.format(display_text=html.escape(display_text)),
-            reply_markup=get_prompt_approval_keyboard(),
-        )
-    await state.set_state(PromptEnricherStates.waiting_for_approval)
+    # Публикуем команду в очередь
+    command = StartEnrichment(
+        user_id=uid,
+        chat_id=chat_id,
+        prompt=prompt_to_send,
+        history=history,
+    )
+    await _publish_enrich_command(command)
+    log.info("Enrichment command published (user=%s, has_history=%s)", uid, bool(history))
 
 
 @router.message(PromptEnricherStates.waiting_for_idea, F.text)
@@ -212,21 +199,27 @@ async def handle_idea(message: Message, state: FSMContext):
         await message.answer(text=EMPTY_TEMPLATE_MSG)
         return
 
-    data = await state.get_data()
-    if data.get("enriching"):
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    if flow_state.enriching:
         await message.answer(text=ENRICH_IN_PROGRESS_MSG)
         return
 
     enrich_id = uuid4().hex
-    await state.update_data(
-        prompt=prompt,
-        enriched_prompt=None,
-        pending_edits=None,
-        enriching=True,
-        enrich_id=enrich_id,
-    )
+    flow_state.prompt = prompt
+    flow_state.enriched_prompt = None
+    flow_state.pending_edits = None
+    flow_state.enriching = True
+    flow_state.enrich_id = enrich_id
+    await update_fsm_data(state=state, model=flow_state)
+
     status = await message.answer(text=ENRICH_STARTS_MSG)
-    await _enrich_and_present(status=status, state=state, enrich_id=enrich_id, uid=message.from_user.id)
+    await _enrich_and_present(
+        status=status,
+        state=state,
+        enrich_id=enrich_id,
+        uid=message.from_user.id,
+        chat_id=message.chat.id,
+    )
 
 
 @router.callback_query(PromptEnricherStates.waiting_for_approval, F.data == CB_PROMPT_APPROVE)
@@ -240,8 +233,8 @@ async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
     if not await _ensure_callback_authorized(callback=callback, state=state):
         return
 
-    data = await state.get_data()
-    enriched = data.get("enriched_prompt")
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    enriched = flow_state.enriched_prompt
     if not enriched:
         await callback.answer(text=RUN_AGAIN, show_alert=True)
         await state.clear()
@@ -250,18 +243,18 @@ async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
     await _save_feedback_best_effort(
         status=callback.message,
         uid=callback.from_user.id,
-        initial_prompt=data.get("prompt"),
+        initial_prompt=flow_state.prompt or "",
         enriched_prompt=enriched,
     )
 
-    await state.update_data(prompt=_build_generation_prompt(text=enriched))
+    final_prompt = _build_generation_prompt(text=enriched)
     await callback.answer()
     with contextlib.suppress(Exception):
         await callback.message.edit_reply_markup(reply_markup=None)
-    await state.set_state(GenerationStates.waiting_for_title)
-    await callback.message.answer(
-        text=WAITING_TITLE_MSG,
-        reply_markup=get_title_keyboard(),
+    await generation_flow_starter.start_title_input(
+        message=callback.message,
+        state=state,
+        prompt=final_prompt,
     )
 
 
@@ -303,22 +296,32 @@ async def handle_prompt_edits(message: Message, state: FSMContext):
         await message.answer(text=PROMPT_TOO_LONG_MSG.format(length=len(edits_text), max_len=MAX_PROMPT_LEN))
         return
 
-    data = await state.get_data()
-    if not data.get("prompt"):
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    if not flow_state.prompt:
         await message.answer(
             text=ENRICH_SESSION_FAILURE,
             reply_markup=get_main_keyboard(),
         )
         await state.clear()
         return
-    if data.get("enriching"):
+    if flow_state.enriching:
         await message.answer(text=ENRICH_IN_PROGRESS_MSG)
         return
 
     enrich_id = uuid4().hex
-    await state.update_data(pending_edits=edits_text, enriching=True, enrich_id=enrich_id)
+    flow_state.pending_edits = edits_text
+    flow_state.enriching = True
+    flow_state.enrich_id = enrich_id
+    await update_fsm_data(state=state, model=flow_state)
+
     status = await message.answer(text=ENRICH_STARTS_WITH_EDITS)
-    await _enrich_and_present(status=status, state=state, enrich_id=enrich_id, uid=message.from_user.id)
+    await _enrich_and_present(
+        status=status,
+        state=state,
+        enrich_id=enrich_id,
+        uid=message.from_user.id,
+        chat_id=message.chat.id,
+    )
 
 
 @router.callback_query(
@@ -335,21 +338,30 @@ async def handle_prompt_retry(callback: CallbackQuery, state: FSMContext):
     if not await _ensure_callback_authorized(callback=callback, state=state):
         return
 
-    data = await state.get_data()
-    if data.get("enriching"):
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    if flow_state.enriching:
         await callback.answer(text=ENRICH_RETRY_IN_PROGRESS_MSG, show_alert=True)
         return
-    if not data.get("prompt"):
+    if not flow_state.prompt:
         await callback.answer(text=RUN_AGAIN, show_alert=True)
         await state.clear()
         return
 
     await callback.answer()
     enrich_id = uuid4().hex
-    await state.update_data(enriching=True, enrich_id=enrich_id)
+    flow_state.enriching = True
+    flow_state.enrich_id = enrich_id
+    await update_fsm_data(state=state, model=flow_state)
+
     with contextlib.suppress(Exception):
         await callback.message.edit_text(text=ENRICH_STARTS_MSG)
-    await _enrich_and_present(status=callback.message, state=state, enrich_id=enrich_id, uid=callback.from_user.id)
+    await _enrich_and_present(
+        status=callback.message,
+        state=state,
+        enrich_id=enrich_id,
+        uid=callback.from_user.id,
+        chat_id=callback.from_user.id,
+    )
 
 
 @router.callback_query(
@@ -366,34 +378,34 @@ async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
     if not await _ensure_callback_authorized(callback=callback, state=state):
         return
 
-    data = await state.get_data()
-    prompt = data.get("prompt")
+    flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
+    prompt = flow_state.prompt
     if not prompt:
         await callback.answer(text=RUN_AGAIN, show_alert=True)
         await state.clear()
         return
 
     await callback.answer()
-    final_text = data.get("enriched_prompt") or prompt
+    final_text = flow_state.enriched_prompt or prompt
     await _save_feedback_best_effort(
         status=callback.message,
         uid=callback.from_user.id,
         initial_prompt=prompt,
         enriched_prompt=final_text,
     )
-    await state.update_data(prompt=_build_generation_prompt(text=final_text))
+    final_prompt = _build_generation_prompt(text=final_text)
     log.info("Enrichment fallback used (user=%s)", callback.from_user.id)
     with contextlib.suppress(Exception):
         await callback.message.edit_reply_markup(reply_markup=None)
-    await state.set_state(GenerationStates.waiting_for_title)
-    await callback.message.answer(
-        text=WAITING_TITLE_MSG,
-        reply_markup=get_title_keyboard(),
+    await generation_flow_starter.start_title_input(
+        message=callback.message,
+        state=state,
+        prompt=final_prompt,
     )
 
 
 @router.callback_query(
-    StateFilter(PromptEnricherStates.waiting_for_approval, GenerationStates.waiting_for_title),
+    StateFilter(PromptEnricherStates.waiting_for_approval),
     F.data == CB_PROMPT_CANCEL,
 )
 async def handle_prompt_cancel(callback: CallbackQuery, state: FSMContext):
@@ -411,3 +423,103 @@ async def handle_prompt_cancel(callback: CallbackQuery, state: FSMContext):
     with contextlib.suppress(Exception):
         await callback.message.edit_text(text=ENRICH_CANCELED)
     await callback.message.answer(text=RETURN_TO_START, reply_markup=get_main_keyboard())
+
+
+async def handle_enrichment_completed_event(event: EnrichmentCompleted) -> None:
+    """Обрабатывает событие успешного обогащения промпта.
+
+    Args:
+        event: Событие с обогащённым промптом.
+    """
+    from aiogram import Bot
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.redis import RedisStorage
+
+    # DEVIATION: создаём Bot и FSMContext для отправки сообщения из воркера
+    bot = Bot(token=settings.bot.BOT_TOKEN)
+    storage = RedisStorage(redis=redis_client)
+
+    try:
+        # Получаем FSM-контекст пользователя
+        fsm_context = FSMContext(
+            storage=storage,
+            key=StorageKey(bot_id=bot.id, chat_id=event.chat_id, user_id=event.user_id),
+        )
+
+        # Проверяем, что пользователь всё ещё в процессе обогащения
+        current_state = await fsm_context.get_state()
+        valid_states = (
+            PromptEnricherStates.waiting_for_idea.state,
+            PromptEnricherStates.waiting_for_edits.state,
+        )
+        if current_state not in valid_states:
+            log.info("Enrichment result dropped: state changed (user=%s)", event.user_id)
+            return
+
+        # Обновляем состояние
+        flow_state = await get_fsm_data(state=fsm_context, model_class=EnrichmentFlowState)
+        flow_state.enriched_prompt = event.enriched_prompt
+        flow_state.enriching = False
+        await update_fsm_data(state=fsm_context, model=flow_state)
+        await fsm_context.set_state(PromptEnricherStates.waiting_for_approval)
+
+        # Отправляем результат пользователю
+        display_text = format_enriched_prompt(raw=event.enriched_prompt)
+        await bot.send_message(
+            chat_id=event.chat_id,
+            text=ENRICH_RESULT_MSG.format(display_text=html.escape(display_text)),
+            reply_markup=get_prompt_approval_keyboard(),
+        )
+        log.info("Enrichment result delivered (user=%s)", event.user_id)
+
+    except Exception as exc:
+        log.error(f"Failed to handle enrichment completed (user={event.user_id}): {exc}", exc_info=True)
+    finally:
+        await bot.session.close()
+
+
+async def handle_generation_failed_event(event: GenerationFailed) -> None:
+    """Обрабатывает событие сбоя генерации или обогащения.
+
+    Args:
+        event: Событие с описанием ошибки.
+    """
+    from aiogram import Bot
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.redis import RedisStorage
+
+    bot = Bot(token=settings.bot.BOT_TOKEN)
+    storage = RedisStorage(redis=redis_client)
+
+    try:
+        fsm_context = FSMContext(
+            storage=storage,
+            key=StorageKey(bot_id=bot.id, chat_id=event.chat_id, user_id=event.user_id),
+        )
+
+        # Проверяем стадию ошибки
+        if event.stage == "enrichment":
+            # Обновляем флаг enriching
+            flow_state = await get_fsm_data(state=fsm_context, model_class=EnrichmentFlowState)
+            flow_state.enriching = False
+            await update_fsm_data(state=fsm_context, model=flow_state)
+
+            # Отправляем сообщение с кнопкой повтора
+            await bot.send_message(
+                chat_id=event.chat_id,
+                text=ENRICH_FAIL,
+                reply_markup=get_enrich_failed_keyboard(),
+            )
+            log.info("Enrichment failure delivered (user=%s)", event.user_id)
+        else:
+            # Для других стадий просто очищаем состояние
+            await fsm_context.clear()
+            await bot.send_message(
+                chat_id=event.chat_id,
+                text=f"❌ {event.error_message}",
+            )
+
+    except Exception as exc:
+        log.error(f"Failed to handle generation failed (user={event.user_id}): {exc}", exc_info=True)
+    finally:
+        await bot.session.close()

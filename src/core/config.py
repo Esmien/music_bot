@@ -20,6 +20,9 @@ class BotConfig(BaseModelConfig):
     """Токены и идентификаторы, связанные с ботом и внешними API."""
 
     BOT_TOKEN: str
+    WEBHOOK_MODE: bool = False
+    WEBHOOK_BASE_URL: str = ""
+    WEBHOOK_SECRET: str = ""
     OPENROUTER_API_KEY: str = ""
     MODEL_ID: str = "google/lyria-3-pro-preview"
     BOT_ACCESS_KEY: str = ""
@@ -83,6 +86,45 @@ class DatabaseConfig(BaseModelConfig):
         return str(url)
 
 
+class RabbitMQConfig(BaseModelConfig):
+    """Параметры RabbitMQ и именования очередей TaskIQ."""
+
+    RABBITMQ_URL: str = "amqp://guest:guest@localhost:5672/"
+    RABBITMQ_PREFETCH: int = 10
+    RABBITMQ_QUEUE_PREFIX: str = "dev"
+
+    @property
+    def queue_prefix(self) -> str:
+        """Возвращает нормализованный префикс очередей.
+
+        Returns:
+            Префикс без начальных и конечных разделителей.
+        """
+        return self.RABBITMQ_QUEUE_PREFIX.strip(". ")
+
+    def queue_name(self, domain: str) -> str:
+        """Формирует имя очереди домена.
+
+        Args:
+            domain: Имя домена, например `enricher`.
+
+        Returns:
+            Полное имя очереди домена.
+        """
+        return f"{self.queue_prefix}.{domain}.tasks"
+
+    def dead_letter_queue_name(self, domain: str) -> str:
+        """Формирует имя dead-letter очереди домена.
+
+        Args:
+            domain: Имя домена, например `enricher`.
+
+        Returns:
+            Полное имя DLQ домена.
+        """
+        return f"{self.queue_prefix}.{domain}.tasks.dlq"
+
+
 class RedisConfig(BaseModelConfig):
     """Redis: хранение FSM-состояний (переживают рестарт контейнера)."""
 
@@ -114,6 +156,7 @@ class Settings(BaseModelConfig):
     generation: GenerationConfig = GenerationConfig()
     db: DatabaseConfig = DatabaseConfig()
     redis: RedisConfig = RedisConfig()
+    rabbitmq: RabbitMQConfig = RabbitMQConfig()
     enrich: EnrichPromptConfig = EnrichPromptConfig()
 
 

@@ -26,15 +26,14 @@ def patched_enricher_db(db_sessionmaker, monkeypatch):
 
 
 @pytest.fixture
-def patched_enrich_api(monkeypatch):
-    """Мокает вызов API обогатителя на уровне хендлеров, копя вызовы."""
+def patched_broker(monkeypatch):
+    """Мокает _publish_enrich_command, копя вызовы."""
     calls = []
 
-    async def fake_enrich(prompt, history=None):
-        calls.append({"prompt": prompt, "history": history})
-        return f"обогащённый: {prompt}"
+    async def fake_publish(command):
+        calls.append(command)
 
-    monkeypatch.setattr(enricher_handlers, "enrich_prompt", fake_enrich)
+    monkeypatch.setattr(enricher_handlers, "_publish_enrich_command", fake_publish)
     return calls
 
 
@@ -84,7 +83,7 @@ async def _make_authorized_user(sessionmaker, tg_id: int) -> None:
 async def test_full_enrichment_flow_saves_generation(
     patched_auth_db,
     patched_enricher_db,
-    patched_enrich_api,
+    patched_broker,
     clean_auth_state,
     make_message,
     fake_state,
@@ -99,8 +98,13 @@ async def test_full_enrichment_flow_saves_generation(
     message = make_message(text="грустная песня о дожде", uid=7)
     await enricher_handlers.handle_idea(message=message, state=state)
 
-    assert state.state == PromptEnricherStates.waiting_for_approval
-    assert (await state.get_data())["enriched_prompt"] == "обогащённый: грустная песня о дожде"
+    # Проверяем, что команда опубликована
+    assert len(patched_broker) == 1
+    assert patched_broker[0].prompt == "грустная песня о дожде"
+
+    # Имитируем получение результата обогащения
+    await state.update_data(enriched_prompt="обогащённый: грустная песня о дожде", enriching=False)
+    await state.set_state(PromptEnricherStates.waiting_for_approval)
 
     callback = make_callback(uid=7, message=make_callback_message())
     await enricher_handlers.handle_prompt_approve(callback=callback, state=state)

@@ -20,6 +20,9 @@ os.environ["POSTGRES_DB"] = "test-db"
 os.environ["ENRICH_URL"] = "https://enricher.test/api/v1/chat/completions"
 os.environ["ENRICH_TOKEN"] = "test-enrich-token"
 os.environ["ENRICH_MODEL"] = "test-enrich-model"
+os.environ["RABBITMQ_USER"] = "test-user"
+os.environ["RABBITMQ_PASSWORD"] = "test-password"
+os.environ["RABBITMQ_URL"] = ""  # Пустой URL для тестов — используем InMemoryBroker
 
 import importlib
 
@@ -91,6 +94,14 @@ def fake_redis(monkeypatch):
     """
     client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     monkeypatch.setattr(auth_service, "redis_client", client)
+
+    # Подменяем redis_client и в модулях генерации
+    from domains.generation import service as generation_service
+    from domains.generation.registries import task_registry
+
+    monkeypatch.setattr(generation_service, "redis_client", client)
+    monkeypatch.setattr(task_registry, "redis_client", client)
+
     return client
 
 
@@ -192,3 +203,25 @@ def fake_state():
             self.state = state
 
     return FakeState
+
+
+@pytest.fixture
+def inmemory_broker(monkeypatch):
+    """InMemoryBroker для тестов — задачи выполняются синхронно в процессе.
+
+    Подменяет все брокеры из core.broker на InMemoryBroker,
+    сохраняя существующий стиль интеграционных тестов.
+    """
+    from core import broker as broker_module
+
+    test_broker = broker_module._create_inmemory_broker()
+
+    # Подменяем все брокеры на in-memory версию
+    monkeypatch.setattr(broker_module, "enricher_broker", test_broker)
+    monkeypatch.setattr(broker_module, "generation_broker", test_broker)
+    monkeypatch.setattr(broker_module, "credits_broker", test_broker)
+    monkeypatch.setitem(broker_module.brokers, "enricher", test_broker)
+    monkeypatch.setitem(broker_module.brokers, "generation", test_broker)
+    monkeypatch.setitem(broker_module.brokers, "credits", test_broker)
+
+    return test_broker

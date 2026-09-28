@@ -46,6 +46,9 @@
 | `DEV_MODE`                                            | — | `False` | Режим разработки: переключает хосты Redis/PostgreSQL на `localhost`; для доступа к контейнерным БД снаружи нужно раскомментировать секции `ports` в `infra/docker-compose.yml` |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | ✅ | — | Пользователь, пароль и имя БД PostgreSQL |
 | `POSTGRES_HOST` / `POSTGRES_PORT`                     | ✅ | — | Хост и порт PostgreSQL (в Docker-сети — `postgres:5432`) |
+| `WEBHOOK_MODE`                                        | — | `False` | `True` — webhook-режим, `False` — локальный polling |
+| `WEBHOOK_BASE_URL`                                    | При `WEBHOOK_MODE=True` | — | Публичный базовый URL для Telegram webhook |
+| `WEBHOOK_SECRET`                                      | При `WEBHOOK_MODE=True` | — | Секретный токен webhook |
 | `MODEL_ID`                                            | — | `google/lyria-3-pro-preview` | Модель OpenRouter |
 | `BOT_OWNER_ID`                                        | — | `0` | Telegram ID владельца: ему уходят отчёты об ошибках |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_VAULT`           | — | `redis` / `6379` / `0` | Хост, порт и номер БД Redis для FSM-хранилища; в Docker-сети — `redis:6379` |
@@ -77,7 +80,15 @@ docker compose up -d --build
 docker compose logs -f
 ~~~
 
-В логах должна появиться строка `Starting bot`. Entrypoint контейнера перед запуском бота применяет миграции (`alembic upgrade head`) и переключается на непривилегированного пользователя `botuser`. Остановка: `docker compose down`. Данные PostgreSQL и Redis хранятся в именованных томах и переживают пересоздание контейнеров.
+В логах должна появиться строка `Starting bot`. Entrypoint контейнера перед запуском бота применяет миграции (`alembic upgrade head`) и переключается на непривилегированного пользователя `botuser`. В webhook-режиме приложение принимает запросы на `0.0.0.0:8000`, а публичный адрес задаётся через `WEBHOOK_BASE_URL`. Остановка: `docker compose down`. Данные PostgreSQL и Redis хранятся в именованных томах и переживают пересоздание контейнеров.
+
+Для генерации секрета webhook выполните:
+
+```bash
+openssl rand -hex 32
+```
+
+Скопируйте результат в `.env` как значение `WEBHOOK_SECRET`. Никому не передавайте этот секрет.
 
 ## CI/CD
 
@@ -85,6 +96,7 @@ GitHub Actions:
 
 - `.github/workflows/ci.yml` — на push/PR в `main`, `master` и `dev`: Ruff (проверка кода и формата), применение миграций Alembic к чистому сервисному PostgreSQL 17, прогон Pytest.
 - `.github/workflows/deploy.yml` — после успешного CI в `main`/`master` деплой на VPS по SSH: `git reset --hard` + `git pull origin master`, `docker compose up -d --build`, очистка старых образов и проверка, что миграции дошли до `head` (`alembic current`).
+- CI запускает тесты отдельно с `WEBHOOK_MODE=0` и `WEBHOOK_MODE=1`.
 
 Требуются секреты репозитория: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_PROJECT_DIR`.
 

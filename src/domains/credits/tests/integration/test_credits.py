@@ -64,13 +64,12 @@ async def test_cmd_credits_counts_songs(patched_auth_db, clean_auth_state, make_
     await _make_authorized_user(patched_auth_db, tg_id=7)
     patch_key_info(FakeKeyInfoResponse(data={"limit": 5.0, "usage": 1.5, "limit_remaining": 3.5}))
 
-    msg = make_message(uid=7)
-    await handlers_credits.cmd_credits(msg, fake_state())
+    summary = await credits_service.get_credits_summary(api_key="test_key", song_price=0.5)
 
-    text = msg.answers[0]
-    assert "Всего доступно генераций: 10" in text
-    assert "Сгенерировано композиций: 3" in text
-    assert "Доступное количество генераций: 7" in text
+    assert summary.status_code == 200
+    assert summary.total_songs == 10
+    assert summary.used_songs == 3
+    assert summary.remaining_songs == 7
 
 
 async def test_cmd_credits_without_limit(patched_auth_db, clean_auth_state, make_message, fake_state, patch_key_info):
@@ -83,13 +82,12 @@ async def test_cmd_credits_without_limit(patched_auth_db, clean_auth_state, make
     await _make_authorized_user(patched_auth_db, tg_id=8)
     patch_key_info(FakeKeyInfoResponse(data={"usage": 1.0}))
 
-    msg = make_message(uid=8)
-    await handlers_credits.cmd_credits(msg, fake_state())
+    summary = await credits_service.get_credits_summary(api_key="test_key", song_price=0.5)
 
-    text = msg.answers[0]
-    assert "Всего доступно генераций: Без лимита" in text
-    assert "Сгенерировано композиций: 2" in text
-    assert "Невозможно посчитать" in text
+    assert summary.status_code == 200
+    assert summary.total_songs == "Без лимита"
+    assert summary.used_songs == 2
+    assert summary.remaining_songs == "Невозможно посчитать"
 
 
 @pytest.mark.parametrize("status_code", [401, 500])
@@ -99,33 +97,31 @@ async def test_cmd_credits_api_error_status(
     await _make_authorized_user(patched_auth_db, tg_id=9)
     patch_key_info(FakeKeyInfoResponse(status_code=status_code))
 
-    msg = make_message(uid=9)
-    await handlers_credits.cmd_credits(msg, fake_state())
+    summary = await credits_service.get_credits_summary(api_key="test_key", song_price=0.5)
 
-    assert f"Ошибка запроса: {status_code}" in msg.answers[0]
+    assert summary.status_code == status_code
+    assert summary.total_songs is None
 
 
 async def test_cmd_credits_network_failure(patched_auth_db, clean_auth_state, make_message, fake_state, patch_key_info):
     await _make_authorized_user(patched_auth_db, tg_id=10)
     patch_key_info(httpx.ConnectError("connection refused"))
 
-    msg = make_message(uid=10)
-    await handlers_credits.cmd_credits(msg, fake_state())
-
-    assert "Не получилось проверить остатки" in msg.answers[0]
+    with pytest.raises(httpx.ConnectError):
+        await credits_service.get_credits_summary(api_key="test_key", song_price=0.5)
 
 
 async def test_cmd_credits_without_api_key(patched_auth_db, clean_auth_state, make_message, fake_state, monkeypatch):
-    """Без OPENROUTER_API_KEY команда сразу предупреждает о ненастроенном боте.
+    """Без OPENROUTER_API_KEY хендлер сразу отправляет сообщение об ошибке."""
+    from core.config import settings
 
-    Запрос к API не выполняется — уходит ровно одно сообщение.
-    """
     await _make_authorized_user(patched_auth_db, tg_id=11)
-    monkeypatch.setattr(handlers_credits.settings.bot, "OPENROUTER_API_KEY", "")
+
+    # Очищаем ключ API
+    monkeypatch.setattr(settings.bot, "OPENROUTER_API_KEY", None)
 
     msg = make_message(uid=11)
     await handlers_credits.cmd_credits(msg, fake_state())
 
-    assert "Бот не настроен" in msg.answers[0]
-    assert msg.answers[0]  # ровно одно сообщение: после проверки ключа выходим
     assert len(msg.answers) == 1
+    assert "бот не настроен" in msg.answers[0].lower()
