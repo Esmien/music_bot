@@ -342,6 +342,7 @@
 | Глобальный реестр активных генераций | Redis, множество `generations:active` | Проверка одновременных генераций пользователя |
 | Флаги отмены генерации | Redis, ключи `generation:cancel:{gen_id}` | Сигнал воркеру о необходимости остановки задачи |
 | Промпты и названия генераций | PostgreSQL, таблица `generations` | История генераций (user_id, prompt, title, status, created_at) |
+| Аудио-артефакты генераций | Локальное файловое хранилище (AUDIO_STORAGE_PATH) | Сохраненные mp3-файлы с метаданными (путь, размер, checksum) в БД |
 | Оценки и отзывы | PostgreSQL, таблица `generation_feedbacks` | Обратная связь о генерациях (generation_id, is_positive, comment) |
 | Очереди и сообщения TaskIQ | RabbitMQ (продакшн) или InMemoryBroker (тесты) | Асинхронная обработка команд и событий |
 | Тестовые данные | In-memory SQLite, fakeredis и InMemoryBroker | Изолированные тесты без боевых подключений |

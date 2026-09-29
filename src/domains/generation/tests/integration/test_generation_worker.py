@@ -1,6 +1,8 @@
 """Интеграционные тесты worker-а генерации через контракты и TelegramPort."""
 
 import asyncio
+import io
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -87,8 +89,8 @@ def _command(gen_id: int = 1) -> RunGeneration:
     )
 
 
-async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Успешная генерация отправляет аудио и публикует GenerationSucceeded."""
+async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Успешная генерация сохраняет аудио на диск, записывает метаданные и публикует GenerationSucceeded."""
     generation = Generation(
         id=1,
         user_id=10,
@@ -103,13 +105,19 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch) -
 
     async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
         await on_progress(stage="Получаю аудио…", fraction=0.5)
-        return b"audio"
+        return b"audio_content"
+
+    async def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+        audio_path = tmp_path / f"gen_{gen_id}.mp3"
+        audio_path.write_bytes(audio_bytes)
+        return str(audio_path), len(audio_bytes), "fake_checksum"
 
     async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
         published_events.append((task_name, event))
 
     monkeypatch.setattr(worker, "get_session", lambda: session)
     monkeypatch.setattr(worker, "run_generation", fake_run_generation)
+    monkeypatch.setattr(worker, "save_audio_to_storage", fake_save_audio)
     monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
     monkeypatch.setattr(worker, "clear_generation_cancel", AsyncMock())
     monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
@@ -118,10 +126,13 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch) -
 
     assert len(telegram.sent_audio) == 1
     assert telegram.sent_audio[0]["chat_id"] == 20
-    assert telegram.sent_audio[0]["audio_type"] == "bytes"
+    assert telegram.sent_audio[0]["audio_type"] == "binary_io"
     assert telegram.sent_audio[0]["title"] == "Тест"
     assert telegram.edited_messages
     assert generation.status is GenerationStatus.SUCCESS
+    assert generation.audio_path == str(tmp_path / "gen_1.mp3")
+    assert generation.audio_size == len(b"audio_content")
+    assert generation.audio_checksum == "fake_checksum"
     assert session.committed
     assert len(published_events) == 1
     task_name, event = published_events[0]
@@ -224,6 +235,99 @@ async def test_worker_marks_cancelled_generation_and_publishes_failure(
     assert "отменена" in telegram.sent_messages[0]["text"]
 
 
+async def test_worker_redelivery_uses_existing_artifact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """При повторной попытке доставки воркер берет существующий аудиофайл без вызова генерации."""
+    audio_file = tmp_path / "gen_3.mp3"
+    audio_file.write_bytes(b"existing_audio")
+
+    generation = Generation(
+        id=3,
+        user_id=10,
+        prompt="тестовый промпт",
+        enriched_prompt={"text": "тестовый промпт"},
+        title="Тест",
+        status=GenerationStatus.SUCCESS,
+        audio_path=str(audio_file),
+        audio_size=len(b"existing_audio"),
+        audio_checksum="test_checksum",
+    )
+    session = FakeSession(generation)
+    telegram = FakeTelegramPort()
+    run_generation = AsyncMock()
+    published_events = []
+
+    async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
+        published_events.append((task_name, event))
+
+    monkeypatch.setattr(worker, "get_session", lambda: session)
+    monkeypatch.setattr(worker, "run_generation", run_generation)
+    monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
+
+    await worker.run_generation_task(_command(gen_id=3), _context(telegram))
+
+    run_generation.assert_not_awaited()
+    assert len(telegram.sent_audio) == 1
+    assert telegram.sent_audio[0]["title"] == "Тест"
+    assert len(published_events) == 1
+    assert published_events[0][0] == "handle_generation_succeeded"
+
+
+async def test_worker_telegram_delivery_failure_keeps_generation_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Сбой доставки в Telegram не сбрасывает статус генерации SUCCESS и публикует stage='delivery'."""
+    audio_path = tmp_path / "gen_6.mp3"
+    audio_path.write_bytes(b"audio_content")
+
+    generation = Generation(
+        id=6,
+        user_id=10,
+        prompt="тестовый промпт",
+        enriched_prompt={"text": "тестовый промпт"},
+        title="Тест",
+        status=GenerationStatus.PENDING,
+    )
+    session = FakeSession(generation)
+
+    class FailingTelegramPort(FakeTelegramPort):
+        async def send_audio(self, *args, **kwargs) -> None:
+            raise ConnectionError("Telegram network timeout")
+
+    telegram = FailingTelegramPort()
+    published_events = []
+
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+        return b"audio_content"
+
+    async def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+        return str(audio_path), len(audio_bytes), "checksum"
+
+    async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
+        published_events.append((task_name, event))
+
+    monkeypatch.setattr(worker, "get_session", lambda: session)
+    monkeypatch.setattr(worker, "run_generation", fake_run_generation)
+    monkeypatch.setattr(worker, "save_audio_to_storage", fake_save_audio)
+    monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
+    monkeypatch.setattr(worker, "notify_owner", AsyncMock())
+    monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
+
+    await worker.run_generation_task(_command(gen_id=6), _context(telegram))
+
+    # Статус генерации должен остаться SUCCESS, так как аудиофайл успешно сохранён
+    assert generation.status is GenerationStatus.SUCCESS
+    assert generation.audio_path == str(audio_path)
+
+    # Событие ошибки должно содержать stage="delivery"
+    assert len(published_events) == 1
+    task_name, event = published_events[0]
+    assert task_name == "handle_generation_failed"
+    assert isinstance(event, GenerationFailed)
+    assert event.stage == "delivery"
+    assert "Delivery failed" in event.error_message
+
+
 async def test_worker_skips_already_processed_generation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Повторная команда с тем же gen_id не запускает генерацию повторно."""
     generation = Generation(
@@ -286,10 +390,17 @@ async def test_worker_atomic_claim_concurrent(monkeypatch: pytest.MonkeyPatch) -
         await asyncio.sleep(0.01)
         return b"audio"
 
+    async def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+        return f"/tmp/gen_{gen_id}.mp3", len(audio_bytes), "fake_checksum"
+
     telegram = FakeTelegramPort()
     monkeypatch.setattr(worker, "get_session", ConcurrentSession)
     monkeypatch.setattr(worker, "run_generation", fake_run_generation)
+    monkeypatch.setattr(worker, "save_audio_to_storage", fake_save_audio)
     monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        worker, "Path", lambda p: SimpleNamespace(exists=lambda: True, open=lambda mode: io.BytesIO(b"audio"))
+    )
     monkeypatch.setattr(worker, "_publish_event", AsyncMock())
 
     command = _command(gen_id=4)

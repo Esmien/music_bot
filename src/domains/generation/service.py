@@ -7,6 +7,7 @@
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import logging
@@ -16,6 +17,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -499,3 +501,28 @@ async def persist_generated_title(user_id: int, title: str) -> None:
     except Exception:
         log.exception("Failed to persist generated title (user=%s)", user_id, exc_info=True)
         raise
+
+
+async def save_audio_to_storage(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+    """Сохраняет аудио на диск и возвращает метаданные файла.
+
+    Args:
+        audio_bytes: Байты аудио-файла.
+        gen_id: ID генерации для формирования имени файла.
+
+    Returns:
+        Кортеж (путь к файлу, размер в байтах, SHA256 checksum).
+
+    Raises:
+        OSError: При ошибке записи файла.
+    """
+    storage_path = Path(settings.generation.AUDIO_STORAGE_PATH)
+    storage_path.mkdir(parents=True, exist_ok=True)
+
+    file_path = storage_path / f"gen_{gen_id}.mp3"
+    file_path.write_bytes(audio_bytes)
+
+    file_size = len(audio_bytes)
+    checksum = hashlib.sha256(audio_bytes).hexdigest()
+
+    return str(file_path), file_size, checksum

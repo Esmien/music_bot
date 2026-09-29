@@ -51,12 +51,14 @@ class GenerationConfig(BaseModelConfig):
 
     SONG_PRICE обязательна для расчёта остатка генераций.
     MOCK_MODE позволяет тестировать без реальных API-вызовов.
+    AUDIO_STORAGE_PATH — директория для сохранения аудио-файлов.
     """
 
     SONG_PRICE: float
     MOCK_MODE: bool = False
     MOCK_FILE: str = ""
     TYPICAL_GENERATION_SECONDS: float = 30.0
+    AUDIO_STORAGE_PATH: str = "/var/lib/lyria/audio"
 
 
 class DatabaseConfig(BaseModelConfig):

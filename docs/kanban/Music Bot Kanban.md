@@ -20,7 +20,6 @@ kanban-plugin: board
 
 ## 🟠 P1 — HIGH
 
-- [ ] [[🟠 `TASK-010` [P1] Durable audio и отдельная доставка (AUD-004)]]
 - [ ] [[🟠 `TASK-011` [P1] Завершение и recovery generation state (AUD-005)]]
 - [ ] [[🟠 `TASK-012` [P1] Привязать feedback к конкретному `gen_id` (AUD-007)]]
 - [ ] [[🟠 `TASK-013` [P1] Исправить SSE audio assembly (AUD-010)]]
@@ -42,9 +41,9 @@ kanban-plugin: board
 ## In Progress
 
 
-
 ## Done
 
+- [x] [[🟠 `TASK-010` [P1] Durable audio и отдельная доставка (AUD-004)]]
 - [x] [[🟠 `TASK-009` [P1] Привести event flow к единой модели (AUD-017)]]
 - [x] [[🔴 `TASK-008` [🔴 P0] Безопасная политика повторов OpenRouter (AUD-003)]]
 - [x] [[🔴 `TASK-007` [🔴 P0] Атомарный claim платной генерации (AUD-002)]]

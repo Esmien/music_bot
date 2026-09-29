@@ -69,6 +69,8 @@ services:
     restart: always
     # Порты наружу не пробрасываем: на сервере уже крутится локальный PostgreSQL,
     # бот и alembic работают только внутри docker-сети (POSTGRES_HOST=postgres)
+    ports:
+      - "5432:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
