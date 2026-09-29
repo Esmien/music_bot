@@ -4,14 +4,13 @@
 отправлять аудио и уведомлять владельца без прямой зависимости от aiogram.
 """
 
+import html
 import logging
 from abc import ABC, abstractmethod
 from typing import BinaryIO
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile, FSInputFile
-
-from core.utils.error_notify import notify_owner as core_notify_owner
 
 logger = logging.getLogger(__name__)
 
@@ -159,12 +158,25 @@ class AiogramTelegramPort(TelegramPort):
 
         Args:
             message: Текст уведомления.
-            context: Дополнительный контекст.
+            context: Дополнительный контекст (например, traceback).
         """
-        if self._owner_id:
-            await core_notify_owner(bot=self._bot, owner_id=self._owner_id, message=message, context=context)
-        else:
+        if not self._owner_id:
             logger.warning(f"Owner notification skipped (no owner_id): {message}")
+            return
+
+        text = f"🐞 <b>{html.escape(message)}</b>"
+        if context and "traceback" in context:
+            traceback_text = str(context["traceback"])
+            if len(traceback_text) > 3000:
+                traceback_text = "…\n" + traceback_text[-2997:]
+            text += f"\n<code>{html.escape(traceback_text)}</code>"
+        elif context:
+            text += f"\n<code>{html.escape(str(context))}</code>"
+
+        try:
+            await self._bot.send_message(chat_id=self._owner_id, text=text, parse_mode="HTML")
+        except Exception:
+            logger.exception("Failed to notify owner via AiogramTelegramPort")
 
     async def close(self) -> None:
         """Закрыть сессию бота."""
