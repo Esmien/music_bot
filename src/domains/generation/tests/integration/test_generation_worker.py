@@ -39,8 +39,22 @@ class FakeSession:
         return None
 
     async def execute(self, statement: Any) -> Any:
-        if self.generation and self.generation.status == GenerationStatus.PENDING:
-            self.generation.status = GenerationStatus.PROCESSING
+        if self.generation:
+            values_by_name = {}
+            for k, v in getattr(statement, "_values", {}).items():
+                col_name = getattr(k, "key", getattr(k, "name", str(k)))
+                val = getattr(v, "value", v)
+                values_by_name[col_name] = val
+
+            if "status" in values_by_name and values_by_name["status"] == GenerationStatus.PROCESSING:
+                if self.generation.status == GenerationStatus.PENDING:
+                    self.generation.status = GenerationStatus.PROCESSING
+                    self.generation.attempt_id = values_by_name.get("attempt_id", "test-attempt")
+                    return SimpleNamespace(scalar_one_or_none=lambda: self.generation.id)
+                return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+            for name, val in values_by_name.items():
+                setattr(self.generation, name, val)
             return SimpleNamespace(scalar_one_or_none=lambda: self.generation.id)
         return SimpleNamespace(scalar_one_or_none=lambda: None)
 
@@ -373,10 +387,22 @@ async def test_worker_atomic_claim_concurrent(monkeypatch: pytest.MonkeyPatch) -
 
         async def execute(self, statement: Any) -> Any:
             async with lock:
-                if generation.status == GenerationStatus.PENDING:
-                    generation.status = GenerationStatus.PROCESSING
-                    return SimpleNamespace(scalar_one_or_none=lambda: generation.id)
-                return SimpleNamespace(scalar_one_or_none=lambda: None)
+                values_by_name = {}
+                for k, v in getattr(statement, "_values", {}).items():
+                    col_name = getattr(k, "key", getattr(k, "name", str(k)))
+                    val = getattr(v, "value", v)
+                    values_by_name[col_name] = val
+
+                if "status" in values_by_name and values_by_name["status"] == GenerationStatus.PROCESSING:
+                    if generation.status == GenerationStatus.PENDING:
+                        generation.status = GenerationStatus.PROCESSING
+                        generation.attempt_id = values_by_name.get("attempt_id", "test-attempt")
+                        return SimpleNamespace(scalar_one_or_none=lambda: generation.id)
+                    return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+                for name, val in values_by_name.items():
+                    setattr(generation, name, val)
+                return SimpleNamespace(scalar_one_or_none=lambda: generation.id)
 
         async def get(self, model: type[Generation], gen_id: int) -> Generation | None:
             return generation
@@ -413,3 +439,154 @@ async def test_worker_atomic_claim_concurrent(monkeypatch: pytest.MonkeyPatch) -
 
     assert call_count == 1
     assert generation.status is GenerationStatus.SUCCESS
+
+
+async def test_worker_notify_owner_failure_does_not_prevent_db_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Сбой notify_owner не мешает обновлению статуса на FAILED в БД и публикации GenerationFailed."""
+    generation = Generation(
+        id=7,
+        user_id=10,
+        prompt="тестовый промпт",
+        enriched_prompt={"text": "тестовый промпт"},
+        title="Тест",
+        status=GenerationStatus.PENDING,
+    )
+    session = FakeSession(generation)
+    telegram = FakeTelegramPort()
+    published_events = []
+
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+        raise RuntimeError("OpenRouter 500 internal server error")
+
+    async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
+        published_events.append((task_name, event))
+
+    failing_notify = AsyncMock(side_effect=ConnectionError("Telegram network timeout"))
+
+    monkeypatch.setattr(worker, "get_session", lambda: session)
+    monkeypatch.setattr(worker, "run_generation", fake_run_generation)
+    monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
+    monkeypatch.setattr(worker, "notify_owner", failing_notify)
+    monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
+
+    await worker.run_generation_task(_command(gen_id=7), _context(telegram))
+
+    assert generation.status is GenerationStatus.FAILED
+    assert session.committed
+    assert len(published_events) == 1
+    task_name, event = published_events[0]
+    assert task_name == "handle_generation_failed"
+    assert isinstance(event, GenerationFailed)
+    assert event.gen_id == 7
+    assert event.stage == "generation"
+
+
+async def test_worker_stale_attempt_does_not_overwrite_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Устаревший воркер с несовпадающим attempt_id не перезаписывает статус генерации."""
+    generation = Generation(
+        id=8,
+        user_id=10,
+        prompt="тестовый промпт",
+        enriched_prompt={"text": "тестовый промпт"},
+        title="Тест",
+        status=GenerationStatus.PROCESSING,
+        attempt_id="newer-attempt-id",
+    )
+
+    class StaleAttemptSession(FakeSession):
+        async def execute(self, statement: Any) -> Any:
+            # Имитируем несовпадение attempt_id: ни одна строка не обновлена
+            return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+    session = StaleAttemptSession(generation)
+    telegram = FakeTelegramPort()
+
+    monkeypatch.setattr(worker, "get_session", lambda: session)
+    monkeypatch.setattr(worker, "run_generation", AsyncMock(side_effect=RuntimeError("Late failure")))
+    monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
+    monkeypatch.setattr(worker, "notify_owner", AsyncMock())
+    monkeypatch.setattr(worker, "_publish_event", AsyncMock())
+
+    await worker.run_generation_task(_command(gen_id=8), _context(telegram))
+
+    # Статус остался прежним, так как attempt_id не совпал
+    assert generation.status is GenerationStatus.PROCESSING
+    assert generation.attempt_id == "newer-attempt-id"
+
+
+async def test_generation_failed_event_clears_generating_flag_in_fsm() -> None:
+    """Событие GenerationFailed сбрасывает generating в False в FSM."""
+    from domains.generation.handlers import handle_generation_failed_event
+
+    telegram = FakeTelegramPort()
+    bot = SimpleNamespace(id=123)
+    storage = MemoryStorage()
+
+    key = StorageKey(bot_id=bot.id, chat_id=20, user_id=10)
+    fsm_context = FSMContext(storage=storage, key=key)
+    await fsm_context.set_data(GenerationFlowState(gen_id=9, prompt="песня", generating=True).model_dump())
+
+    event = GenerationFailed(
+        user_id=10,
+        chat_id=20,
+        gen_id=9,
+        error_message="Fatal error",
+        stage="generation",
+    )
+    context = _context(telegram, bot=bot, storage=storage)
+
+    await handle_generation_failed_event(event=event, context=context)
+
+    flow_state = await fsm_context.get_data()
+    assert flow_state.get("generating") is False
+    assert await fsm_context.get_state() is None
+    assert len(telegram.sent_messages) == 1
+    assert "Fatal error" in telegram.sent_messages[0]["text"]
+
+
+async def test_worker_save_audio_failure_marks_generation_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Сбой сохранения аудиофайла на диск переводит генерацию в FAILED."""
+    generation = Generation(
+        id=10,
+        user_id=10,
+        prompt="тестовый промпт",
+        enriched_prompt={"text": "тестовый промпт"},
+        title="Тест",
+        status=GenerationStatus.PENDING,
+    )
+    session = FakeSession(generation)
+    telegram = FakeTelegramPort()
+    published_events = []
+
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+        return b"valid_audio_bytes"
+
+    async def failing_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+        raise OSError("Disk full: no space left on device")
+
+    async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
+        published_events.append((task_name, event))
+
+    monkeypatch.setattr(worker, "get_session", lambda: session)
+    monkeypatch.setattr(worker, "run_generation", fake_run_generation)
+    monkeypatch.setattr(worker, "save_audio_to_storage", failing_save_audio)
+    monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
+    monkeypatch.setattr(worker, "notify_owner", AsyncMock())
+    monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
+
+    await worker.run_generation_task(_command(gen_id=10), _context(telegram))
+
+    assert generation.status is GenerationStatus.FAILED
+    assert session.committed
+    assert len(published_events) == 1
+    task_name, event = published_events[0]
+    assert task_name == "handle_generation_failed"
+    assert isinstance(event, GenerationFailed)
+    assert event.stage == "generation"
+    assert "Disk full" in event.error_message

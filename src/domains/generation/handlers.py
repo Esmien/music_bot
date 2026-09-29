@@ -156,8 +156,11 @@ async def handle_generation_failed_event(
             MAX_ENRICH_ATTEMPTS,
         )
     else:
-        # Для других стадий просто очищаем состояние
-        await fsm_context.clear()
+        # Для других стадий сбрасываем флаг генерации и очищаем состояние
+        flow_state = await get_fsm_data(state=fsm_context, model_class=GenerationFlowState)
+        flow_state.generating = False
+        await update_fsm_data(state=fsm_context, model=flow_state)
+        await fsm_context.set_state(None)
         await telegram.send_message(
             chat_id=event.chat_id,
             text=f"❌ {event.error_message}",

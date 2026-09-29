@@ -483,14 +483,14 @@ async def handle_enrichment_completed_event(
     log.info("Enrichment result delivered (user=%s)", event.user_id)
 
 
-async def handle_generation_failed_event(
+async def handle_enrichment_failed_event(
     event: GenerationFailed,
     context: Context = TaskiqDepends(),
 ) -> None:
-    """Обрабатывает событие сбоя генерации или обогащения.
+    """Обрабатывает событие сбоя обогащения.
 
     Args:
-        event: Событие с описанием ошибки.
+        event: Событие с описанием ошибки (stage="enrichment").
         context: Контекст TaskIQ с зависимостями.
     """
     from aiogram.fsm.storage.base import StorageKey
@@ -505,40 +505,31 @@ async def handle_generation_failed_event(
         key=StorageKey(bot_id=bot.id, chat_id=event.chat_id, user_id=event.user_id),
     )
 
-    # Проверяем стадию ошибки
-    if event.stage == "enrichment":
-        flow_state = await get_fsm_data(state=fsm_context, model_class=EnrichmentFlowState)
-        flow_state.enriching = False
-        flow_state.retry_count += 1
-        await update_fsm_data(state=fsm_context, model=flow_state)
+    flow_state = await get_fsm_data(state=fsm_context, model_class=EnrichmentFlowState)
+    flow_state.enriching = False
+    flow_state.retry_count += 1
+    await update_fsm_data(state=fsm_context, model=flow_state)
 
-        if flow_state.retry_count < MAX_ENRICH_ATTEMPTS:
-            await telegram.send_message(
-                chat_id=event.chat_id,
-                text=ENRICH_FAIL.format(
-                    attempt=flow_state.retry_count,
-                    max_attempts=MAX_ENRICH_ATTEMPTS,
-                ),
-                reply_markup=get_enrich_failed_keyboard(),
-            )
-        else:
-            await telegram.send_message(
-                chat_id=event.chat_id,
-                text=ENRICH_FAIL_EXHAUSTED.format(
-                    max_attempts=MAX_ENRICH_ATTEMPTS,
-                ),
-                reply_markup=get_enrich_exhausted_keyboard(),
-            )
-        log.info(
-            "Enrichment failure delivered (user=%s, attempt=%s/%s)",
-            event.user_id,
-            flow_state.retry_count,
-            MAX_ENRICH_ATTEMPTS,
-        )
-    else:
-        # Для других стадий просто очищаем состояние
-        await fsm_context.clear()
+    if flow_state.retry_count < MAX_ENRICH_ATTEMPTS:
         await telegram.send_message(
             chat_id=event.chat_id,
-            text=f"❌ {event.error_message}",
+            text=ENRICH_FAIL.format(
+                attempt=flow_state.retry_count,
+                max_attempts=MAX_ENRICH_ATTEMPTS,
+            ),
+            reply_markup=get_enrich_failed_keyboard(),
         )
+    else:
+        await telegram.send_message(
+            chat_id=event.chat_id,
+            text=ENRICH_FAIL_EXHAUSTED.format(
+                max_attempts=MAX_ENRICH_ATTEMPTS,
+            ),
+            reply_markup=get_enrich_exhausted_keyboard(),
+        )
+    log.info(
+        "Enrichment failure delivered (user=%s, attempt=%s/%s)",
+        event.user_id,
+        flow_state.retry_count,
+        MAX_ENRICH_ATTEMPTS,
+    )

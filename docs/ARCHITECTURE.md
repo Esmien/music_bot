@@ -246,7 +246,7 @@
         ├─> уведомление владельца через notify_owner
         ├─> PostgreSQL: обновление статуса на FAILED
         ├─> публикация события GenerationFailed(stage="generation")
-        └─> domains/enricher/handlers.py: handle_generation_failed_event
+        └─> domains/generation/handlers.py: handle_generation_failed_event
               ├─> сброс FSM
               └─> отправка сообщения об ошибке
 ```

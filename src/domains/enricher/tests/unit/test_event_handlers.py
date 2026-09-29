@@ -8,7 +8,7 @@ from aiogram.fsm.storage.base import StorageKey
 from taskiq import TaskiqState
 
 from domains.enricher.fsm import PromptEnricherStates
-from domains.enricher.handlers import handle_enrichment_completed_event, handle_generation_failed_event
+from domains.enricher.handlers import handle_enrichment_completed_event, handle_enrichment_failed_event
 from domains.enricher.state_models import EnrichmentFlowState
 from shared.contracts.events import EnrichmentCompleted, GenerationFailed
 from shared.ports.fake_telegram import FakeTelegramPort
@@ -129,8 +129,8 @@ async def test_enrichment_completed_drops_outdated_event(taskiq_state, fake_stor
     assert len(telegram_port.sent_messages) == 0
 
 
-async def test_generation_failed_uses_port_from_context(taskiq_state, fake_storage, fake_bot):
-    """Проверяет, что handle_generation_failed_event использует TelegramPort из контекста."""
+async def test_enrichment_failed_uses_port_from_context(taskiq_state, fake_storage, fake_bot):
+    """Проверяет, что handle_enrichment_failed_event использует TelegramPort из контекста."""
     user_id = 789
     chat_id = 789
 
@@ -153,7 +153,7 @@ async def test_generation_failed_uses_port_from_context(taskiq_state, fake_stora
     )
 
     # Выполняем хендлер
-    await handle_generation_failed_event(event=event, context=taskiq_state)
+    await handle_enrichment_failed_event(event=event, context=taskiq_state)
 
     # Проверяем, что использовался TelegramPort из контекста
     telegram_port: FakeTelegramPort = taskiq_state.state["telegram_port"]
@@ -164,30 +164,6 @@ async def test_generation_failed_uses_port_from_context(taskiq_state, fake_stora
     fsm_context = FSMContext(storage=fake_storage, key=key)
     data = await fsm_context.get_data()
     assert data.get("enriching") is False
-
-
-async def test_generation_failed_clears_state_for_other_stages(taskiq_state, fake_storage, fake_bot):
-    """Проверяет, что для других стадий (не enrichment) состояние очищается."""
-    user_id = 999
-    chat_id = 999
-
-    key = StorageKey(bot_id=fake_bot.id, chat_id=chat_id, user_id=user_id)
-    await fake_storage.set_state(key, "some_state")
-    await fake_storage.update_data(key, {"some_key": "some_value"})
-
-    event = GenerationFailed(
-        user_id=user_id,
-        chat_id=chat_id,
-        error_message="Generation error",
-        stage="generation",
-    )
-
-    await handle_generation_failed_event(event=event, context=taskiq_state)
-
-    # Проверяем, что состояние очищено
-    fsm_context = FSMContext(storage=fake_storage, key=key)
-    state = await fsm_context.get_state()
-    assert state is None
 
 
 async def test_no_bot_session_leak_on_exception(taskiq_state, fake_storage, fake_bot):
@@ -229,7 +205,20 @@ async def test_no_bot_session_leak_on_exception(taskiq_state, fake_storage, fake
     # потому что Bot управляется на уровне воркера, а не создаётся в хендлере
 
 
-async def test_enrichment_context_missing_state_raises_key_error():
+async def test_enrichment_failed_context_missing_state_raises_key_error():
+    """Проверяет возникновение KeyError при отсутствии нужной зависимости в handle_enrichment_failed_event."""
+    empty_context = SimpleNamespace(state={})
+    event = GenerationFailed(
+        user_id=123,
+        chat_id=123,
+        error_message="Timeout",
+        stage="enrichment",
+    )
+    with pytest.raises(KeyError):
+        await handle_enrichment_failed_event(event=event, context=empty_context)
+
+
+async def test_enrichment_completed_context_missing_state_raises_key_error():
     """Проверяет возникновение KeyError при отсутствии нужной зависимости."""
     empty_context = SimpleNamespace(state={})
     event = EnrichmentCompleted(

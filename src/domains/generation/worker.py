@@ -44,11 +44,14 @@ async def deliver_generation_audio(
     if not audio_file_path.exists():
         log.error("Audio file not found for delivery (gen_id=%s, path=%s)", command.gen_id, audio_path)
         delivery_err = FileNotFoundError(f"Audio file not found: {audio_path}")
-        await notify_owner(
-            telegram_port=telegram,
-            context=f"Файл аудио не найден для отправки gen_id={command.gen_id}",
-            err=delivery_err,
-        )
+        try:
+            await notify_owner(
+                telegram_port=telegram,
+                context=f"Файл аудио не найден для отправки gen_id={command.gen_id}",
+                err=delivery_err,
+            )
+        except Exception:
+            log.exception("Failed to notify owner about missing audio file (gen_id=%s)", command.gen_id)
         failure_event = GenerationFailed(
             user_id=command.user_id,
             chat_id=command.chat_id,
@@ -98,11 +101,14 @@ async def deliver_generation_audio(
         )
     except Exception as delivery_error:
         log.exception("Delivery to Telegram failed (gen_id=%s)", command.gen_id)
-        await notify_owner(
-            telegram_port=telegram,
-            context=f"Ошибка отправки аудио в Telegram gen_id={command.gen_id}",
-            err=delivery_error,
-        )
+        try:
+            await notify_owner(
+                telegram_port=telegram,
+                context=f"Ошибка отправки аудио в Telegram gen_id={command.gen_id}",
+                err=delivery_error,
+            )
+        except Exception:
+            log.exception("Failed to notify owner about delivery error (gen_id=%s)", command.gen_id)
         failure_event = GenerationFailed(
             user_id=command.user_id,
             chat_id=command.chat_id,
@@ -223,20 +229,44 @@ async def run_generation_task(
         )
 
         async with get_session() as session:
-            generation = await session.get(Generation, command.gen_id)
-            if generation is None or generation.status is not GenerationStatus.PROCESSING:
-                return
-            generation.audio_path = audio_path
-            generation.audio_size = audio_size
-            generation.audio_checksum = audio_checksum
-            generation.status = GenerationStatus.SUCCESS
+            success_stmt = (
+                update(Generation)
+                .where(
+                    Generation.id == command.gen_id,
+                    Generation.attempt_id == attempt_id,
+                    Generation.status == GenerationStatus.PROCESSING,
+                )
+                .values(
+                    audio_path=audio_path,
+                    audio_size=audio_size,
+                    audio_checksum=audio_checksum,
+                    status=GenerationStatus.SUCCESS,
+                )
+                .returning(Generation.id)
+            )
+            result = await session.execute(success_stmt)
+            updated_id = result.scalar_one_or_none()
             await session.commit()
+            if updated_id is None:
+                log.warning(
+                    "Generation %s was modified concurrently (attempt %s), skipping delivery",
+                    command.gen_id,
+                    attempt_id,
+                )
+                return
     except asyncio.CancelledError:
         async with get_session() as session:
-            generation = await session.get(Generation, command.gen_id)
-            if generation is not None:
-                generation.status = GenerationStatus.CANCELLED
-                await session.commit()
+            cancel_stmt = (
+                update(Generation)
+                .where(
+                    Generation.id == command.gen_id,
+                    Generation.attempt_id == attempt_id,
+                )
+                .values(status=GenerationStatus.CANCELLED)
+                .returning(Generation.id)
+            )
+            await session.execute(cancel_stmt)
+            await session.commit()
         await clear_generation_cancel(gen_id=command.gen_id)
 
         if command.status_message_id is not None:
@@ -244,17 +274,37 @@ async def run_generation_task(
         return
     except Exception as error:
         log.exception("Generation failed (gen_id=%s)", command.gen_id)
-        async with get_session() as session:
-            generation = await session.get(Generation, command.gen_id)
-            if generation is not None:
-                generation.status = GenerationStatus.FAILED
+        try:
+            async with get_session() as session:
+                fail_stmt = (
+                    update(Generation)
+                    .where(
+                        Generation.id == command.gen_id,
+                        Generation.attempt_id == attempt_id,
+                    )
+                    .values(status=GenerationStatus.FAILED)
+                    .returning(Generation.id)
+                )
+                await session.execute(fail_stmt)
                 await session.commit()
+        except Exception as db_error:
+            log.exception(
+                "Failed to update generation %s status to FAILED in DB: %s",
+                command.gen_id,
+                db_error,
+            )
 
-        await notify_owner(
-            telegram_port=telegram,
-            context=f"Ошибка генерации gen_id={command.gen_id}",
-            err=error,
-        )
+        try:
+            await notify_owner(
+                telegram_port=telegram,
+                context=f"Ошибка генерации gen_id={command.gen_id}",
+                err=error,
+            )
+        except Exception:
+            log.exception(
+                "Failed to notify owner about generation failure (gen_id=%s)",
+                command.gen_id,
+            )
 
         failure_event = GenerationFailed(
             user_id=command.user_id,
@@ -316,6 +366,6 @@ async def handle_generation_failed_task(
     elif not isinstance(event, GenerationFailed):
         event = GenerationFailed.model_validate(event)
 
-    from domains.enricher.handlers import handle_generation_failed_event
+    from domains.generation.handlers import handle_generation_failed_event
 
     await handle_generation_failed_event(event=event, context=context)
