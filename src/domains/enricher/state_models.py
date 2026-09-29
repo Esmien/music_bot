@@ -19,3 +19,4 @@ class EnrichmentFlowState(BaseModel):
     pending_edits: str | None = None
     enriching: bool = False
     enrich_id: str | None = None
+    retry_count: int = 0

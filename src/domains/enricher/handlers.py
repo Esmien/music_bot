@@ -24,12 +24,14 @@ from domains.enricher.enricher_messages import (
     EMPTY_TEMPLATE_MSG,
     ENRICH_CANCELED,
     ENRICH_FAIL,
+    ENRICH_FAIL_EXHAUSTED,
     ENRICH_IN_PROGRESS_MSG,
     ENRICH_RESULT_MSG,
     ENRICH_RETRY_IN_PROGRESS_MSG,
     ENRICH_SESSION_FAILURE,
     ENRICH_STARTS_MSG,
     ENRICH_STARTS_WITH_EDITS,
+    MAX_ENRICH_ATTEMPTS,
     NOTIFY_SAVE_PROMPT_FAILED_CTX,
     PROMPT_MARKERS,
     PROMPT_TOO_LONG_MSG,
@@ -44,6 +46,7 @@ from domains.enricher.keyboards import (
     CB_PROMPT_EDIT,
     CB_PROMPT_FALLBACK,
     CB_PROMPT_RETRY,
+    get_enrich_exhausted_keyboard,
     get_enrich_failed_keyboard,
     get_prompt_approval_keyboard,
 )
@@ -209,6 +212,7 @@ async def handle_idea(message: Message, state: FSMContext):
     flow_state.enriched_prompt = None
     flow_state.pending_edits = None
     flow_state.enriching = True
+    flow_state.retry_count = 0
     flow_state.enrich_id = enrich_id
     await update_fsm_data(state=state, model=flow_state)
 
@@ -405,7 +409,11 @@ async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(
-    StateFilter(PromptEnricherStates.waiting_for_approval),
+    StateFilter(
+        PromptEnricherStates.waiting_for_approval,
+        PromptEnricherStates.waiting_for_idea,
+        PromptEnricherStates.waiting_for_edits,
+    ),
     F.data == CB_PROMPT_CANCEL,
 )
 async def handle_prompt_cancel(callback: CallbackQuery, state: FSMContext):
@@ -499,18 +507,34 @@ async def handle_generation_failed_event(
 
     # Проверяем стадию ошибки
     if event.stage == "enrichment":
-        # Обновляем флаг enriching
         flow_state = await get_fsm_data(state=fsm_context, model_class=EnrichmentFlowState)
         flow_state.enriching = False
+        flow_state.retry_count += 1
         await update_fsm_data(state=fsm_context, model=flow_state)
 
-        # Отправляем сообщение с кнопкой повтора
-        await telegram.send_message(
-            chat_id=event.chat_id,
-            text=ENRICH_FAIL,
-            reply_markup=get_enrich_failed_keyboard(),
+        if flow_state.retry_count < MAX_ENRICH_ATTEMPTS:
+            await telegram.send_message(
+                chat_id=event.chat_id,
+                text=ENRICH_FAIL.format(
+                    attempt=flow_state.retry_count,
+                    max_attempts=MAX_ENRICH_ATTEMPTS,
+                ),
+                reply_markup=get_enrich_failed_keyboard(),
+            )
+        else:
+            await telegram.send_message(
+                chat_id=event.chat_id,
+                text=ENRICH_FAIL_EXHAUSTED.format(
+                    max_attempts=MAX_ENRICH_ATTEMPTS,
+                ),
+                reply_markup=get_enrich_exhausted_keyboard(),
+            )
+        log.info(
+            "Enrichment failure delivered (user=%s, attempt=%s/%s)",
+            event.user_id,
+            flow_state.retry_count,
+            MAX_ENRICH_ATTEMPTS,
         )
-        log.info("Enrichment failure delivered (user=%s)", event.user_id)
     else:
         # Для других стадий просто очищаем состояние
         await fsm_context.clear()
