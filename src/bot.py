@@ -1,6 +1,7 @@
 """Точка входа Telegram-бота: настройка Bot/Dispatcher и запуск polling."""
 
 import asyncio
+import contextlib
 import logging
 import signal
 from contextlib import AsyncExitStack
@@ -114,6 +115,29 @@ async def run_webhook(*, bot: Bot, dispatcher: Dispatcher, shutdown_event: async
         await runner.cleanup()
 
 
+async def run_polling(*, bot: Bot, dispatcher: Dispatcher, shutdown_event: asyncio.Event) -> None:
+    """Запускает polling-режим с корректной остановкой по сигналу через shutdown_event.
+
+    Args:
+        bot: Экземпляр Telegram-бота.
+        dispatcher: Dispatcher приложения.
+        shutdown_event: Событие для координации остановки polling.
+    """
+
+    async def _wait_shutdown() -> None:
+        await shutdown_event.wait()
+        log.info("Shutdown event set, stopping dispatcher polling")
+        await dispatcher.stop_polling()
+
+    shutdown_task = asyncio.create_task(_wait_shutdown())
+    try:
+        await dispatcher.start_polling(bot, handle_signals=False)
+    finally:
+        shutdown_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await shutdown_task
+
+
 async def main() -> None:
     """Точка входа: настраивает логирование, Bot и Dispatcher, запускает выбранный режим.
 
@@ -172,8 +196,7 @@ async def main() -> None:
             if settings.bot.WEBHOOK_MODE:
                 await run_webhook(bot=bot, dispatcher=dp, shutdown_event=shutdown_event)
             else:
-                # start_polling сам обрабатывает graceful shutdown при получении сигнала
-                await dp.start_polling(bot, handle_signals=False)
+                await run_polling(bot=bot, dispatcher=dp, shutdown_event=shutdown_event)
 
     except Exception as e:
         log.exception("Fatal error during bot execution: %s", e)

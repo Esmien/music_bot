@@ -5,6 +5,7 @@ services:
       dockerfile: infra/Dockerfile
     container_name: ${COMPOSE_PROJECT_NAME}-bot
     restart: always
+    stop_grace_period: 30s
     env_file:
       - ../.env
     environment:
@@ -28,6 +29,7 @@ services:
       dockerfile: infra/Dockerfile
     container_name: ${COMPOSE_PROJECT_NAME}-generation-worker
     restart: always
+    stop_grace_period: 30s
     command: ["python", "-u", "-m", "workers.taskiq_worker", "generation"]
     env_file:
       - ../.env
@@ -47,6 +49,7 @@ services:
       dockerfile: infra/Dockerfile
     container_name: ${COMPOSE_PROJECT_NAME}-enricher-worker
     restart: always
+    stop_grace_period: 30s
     command: ["python", "-u", "-m", "workers.taskiq_worker", "enricher"]
     env_file:
       - ../.env

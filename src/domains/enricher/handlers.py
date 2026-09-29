@@ -437,7 +437,7 @@ async def handle_enrichment_completed_event(
     """
     from aiogram.fsm.storage.base import StorageKey
 
-    state_dict = getattr(context, "state", getattr(context, "dependencies", {}))
+    state_dict = getattr(context, "state", None) or getattr(context, "dependencies", None) or {}
     telegram: TelegramPort = state_dict["telegram_port"]
     storage = state_dict["storage"]
     bot = state_dict["bot"]
@@ -487,7 +487,7 @@ async def handle_generation_failed_event(
     """
     from aiogram.fsm.storage.base import StorageKey
 
-    state_dict = getattr(context, "state", getattr(context, "dependencies", {}))
+    state_dict = getattr(context, "state", None) or getattr(context, "dependencies", None) or {}
     telegram: TelegramPort = state_dict["telegram_port"]
     storage = state_dict["storage"]
     bot = state_dict["bot"]

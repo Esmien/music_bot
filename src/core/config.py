@@ -95,8 +95,8 @@ class DatabaseConfig(BaseModelConfig):
 class RabbitMQConfig(BaseModelConfig):
     """Параметры RabbitMQ и именования очередей TaskIQ."""
 
-    RABBITMQ_USER: str
-    RABBITMQ_PASSWORD: str
+    RABBITMQ_USER: str = "guest"
+    RABBITMQ_PASSWORD: str = "guest"
     RABBITMQ_URL: str = ""
     RABBITMQ_PREFETCH: int = 10
     RABBITMQ_QUEUE_PREFIX: str = "dev"

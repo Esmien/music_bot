@@ -122,11 +122,15 @@ async def enrich_prompt_task(
 
 
 @enricher_broker.task(task_name="handle_enrichment_completed")
-async def handle_enrichment_completed_task(event: EnrichmentCompleted | dict | str) -> None:
+async def handle_enrichment_completed_task(
+    event: EnrichmentCompleted | dict | str,
+    context: Context = TaskiqDepends(),
+) -> None:
     """Передаёт событие успешного обогащения обработчику бота.
 
     Args:
         event: Событие с результатом обогащения.
+        context: Контекст TaskIQ с зависимостями.
     """
     if isinstance(event, str):
         event = EnrichmentCompleted.model_validate_json(event)
@@ -135,15 +139,19 @@ async def handle_enrichment_completed_task(event: EnrichmentCompleted | dict | s
 
     from domains.enricher.handlers import handle_enrichment_completed_event  # type: ignore[attr-defined]
 
-    await handle_enrichment_completed_event(event=event)
+    await handle_enrichment_completed_event(event=event, context=context)
 
 
 @enricher_broker.task(task_name="handle_generation_failed")
-async def handle_generation_failed_task(event: GenerationFailed | dict | str) -> None:
+async def handle_generation_failed_task(
+    event: GenerationFailed | dict | str,
+    context: Context = TaskiqDepends(),
+) -> None:
     """Передаёт событие сбоя обработчику бота.
 
     Args:
         event: Событие с описанием ошибки.
+        context: Контекст TaskIQ с зависимостями.
     """
     if isinstance(event, str):
         event = GenerationFailed.model_validate_json(event)
@@ -152,4 +160,4 @@ async def handle_generation_failed_task(event: GenerationFailed | dict | str) ->
 
     from domains.enricher.handlers import handle_generation_failed_event  # type: ignore[attr-defined]
 
-    await handle_generation_failed_event(event=event)
+    await handle_generation_failed_event(event=event, context=context)
