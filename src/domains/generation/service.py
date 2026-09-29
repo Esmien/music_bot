@@ -19,16 +19,10 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import httpx
 from sqlalchemy import select
-from tenacity import (
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
+from tenacity import retry
 
 from core.config import settings
 from core.database.engine import get_session
@@ -42,6 +36,12 @@ from core.utils.exceptions import (
     GenerationLockTimeoutError,
     GenerationStreamError,
 )
+from core.utils.retry import (
+    DEFAULT_RETRY_STOP,
+    default_retry_predicate,
+    default_retry_wait,
+    make_retry_logger,
+)
 from domains.generation.models import Generation, GenerationStatus
 
 log = logging.getLogger(__name__)
@@ -52,49 +52,7 @@ PROGRESS_EDIT_INTERVAL = 3.0
 # TTL распределённого лока в миллисекундах (3 минуты: запас на генерацию)
 LOCK_TTL_MS = 180_000
 
-
-def _is_retryable_error(exception: Exception) -> bool:
-    """Определяет, является ли ошибка повторяемой для retry-логики.
-
-    Разрешает повторы исключительно для pre-request сбоев (до получения
-    успешного ответа и начала стриминга): сетевые таймауты подключения
-    и HTTP 429/503. Сбои стриминга (GenerationStreamError) и клиентские
-    4xx ошибки не повторяются во избежание двойных списаний.
-
-    Args:
-        exception: Исключение для проверки.
-
-    Returns:
-        True, если ошибку можно повторить, False иначе.
-    """
-    # Сетевые ошибки httpx до установления стрима
-    if isinstance(exception, (httpx.TimeoutException, httpx.ConnectError)):
-        return True
-
-    # HTTP-ошибки с кодами 429 (Rate Limit) и 503 (Service Unavailable)
-    if isinstance(exception, GenerationAPIError):
-        error_msg = str(exception)
-        return "429" in error_msg or "503" in error_msg
-
-    return False
-
-
-def _log_retry_attempt(retry_state: Any) -> None:
-    """Логирует попытку повтора запроса с указанием gen_id, attempt_id и фазы.
-
-    Args:
-        retry_state: Состояние retry из tenacity.
-    """
-    attempt = retry_state.attempt_number
-    exception = retry_state.outcome.exception() if retry_state.outcome else None
-    gen_id = retry_state.kwargs.get("gen_id", "unknown") if retry_state.kwargs else "unknown"
-    log.warning(
-        "Retry attempt %d for OpenRouter API (gen_id=%s, phase=pre-request) due to %s: %s",
-        attempt,
-        gen_id,
-        type(exception).__name__ if exception else "unknown",
-        str(exception)[:200] if exception else "",
-    )
+_log_generation_retry = make_retry_logger("OpenRouter Generation API")
 
 
 # Максимальный размер отдельной строки SSE (1 МБ) для защиты от OOM до парсинга JSON
@@ -364,10 +322,10 @@ def load_mock_audio() -> bytes:
 
 
 @retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception(_is_retryable_error),
-    before_sleep=_log_retry_attempt,
+    stop=DEFAULT_RETRY_STOP,
+    wait=default_retry_wait,
+    retry=default_retry_predicate,
+    before_sleep=_log_generation_retry,
     reraise=True,
 )
 async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCallback | None = None) -> bytes:
@@ -450,7 +408,11 @@ async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCall
     ):
         if resp.status_code != 200:
             error_body = (await resp.aread()).decode("utf-8", "ignore")
-            raise GenerationAPIError(f"OpenRouter {resp.status_code}: {error_body[:300]}")
+            raise GenerationAPIError(
+                f"OpenRouter {resp.status_code}: {error_body[:300]}",
+                status_code=resp.status_code,
+                headers=getattr(resp, "headers", None),
+            )
 
         # Читаем очищенный поток из парсера.
         # Любой сбой во время чтения стрима — post-request ошибка,
@@ -490,8 +452,9 @@ async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCall
                 fraction = 1.0 - math.exp(-elapsed / settings.generation.TYPICAL_GENERATION_SECONDS)
                 await report(stage="Получаю аудио…", fraction=fraction * 0.95)
         except (httpx.HTTPError, httpx.TimeoutException) as exc:
+            # КРИТИЧНО: post-request ошибки не повторяются (избегаем двойного списания)
             log.warning(
-                "Stream interrupted (gen_id=%s, phase=post-request) due to %s: %s",
+                "Stream interrupted (gen_id=%s, phase=post-request) due to %s: %s. No retry will be attempted.",
                 gen_id,
                 type(exc).__name__,
                 exc,

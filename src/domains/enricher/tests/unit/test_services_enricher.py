@@ -16,9 +16,11 @@ from domains.enricher import service as enricher
 class FakeResponse:
     """Заглушка httpx.Response: raise_for_status() кидает исключение или json() отдаёт payload."""
 
-    def __init__(self, payload=None, status_error=None):
+    def __init__(self, payload=None, status_error=None, headers=None, status_code=200):
         self._payload = payload
         self._status_error = status_error
+        self.headers = headers or {}
+        self.status_code = status_code
 
     def raise_for_status(self):
         if self._status_error is not None:
@@ -133,6 +135,55 @@ async def test_enrich_prompt_unexpected_body_returns_none(patch_enricher_client)
     result = await enricher.enrich_prompt(prompt="idea")
 
     assert result is None
+
+
+async def test_enrich_prompt_401_no_retry(monkeypatch):
+    """Ошибки авторизации 401 не должны повторяться."""
+    request = httpx.Request("POST", "http://test")
+    resp_401 = httpx.Response(401, request=request)
+    error = httpx.HTTPStatusError("401 Unauthorized", request=request, response=resp_401)
+    fake_resp = FakeResponse(status_error=error, status_code=401)
+
+    client = FakeAsyncClient(response=fake_resp)
+    monkeypatch.setattr(enricher.httpx, "AsyncClient", lambda **kwargs: client)
+
+    result = await enricher.enrich_prompt(prompt="idea")
+
+    assert result is None
+    assert len(client.post_calls) == 1
+
+
+async def test_enrich_prompt_429_retries_with_retry_after(monkeypatch):
+    """HTTP 429 вызывает повторные попытки с учётом Retry-After."""
+    monkeypatch.setattr(enricher, "default_retry_wait", lambda retry_state: 0.0)
+
+    request = httpx.Request("POST", "http://test")
+    resp_429 = httpx.Response(429, headers={"Retry-After": "0.01"}, request=request)
+    error_429 = httpx.HTTPStatusError("429 Too Many Requests", request=request, response=resp_429)
+
+    class MultiCallClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json=None, headers=None):
+            self.calls += 1
+            if self.calls == 1:
+                return FakeResponse(status_error=error_429, headers={"Retry-After": "0.01"}, status_code=429)
+            return _api_response("success after retry")
+
+    multi_client = MultiCallClient()
+    monkeypatch.setattr(enricher.httpx, "AsyncClient", lambda **kwargs: multi_client)
+
+    result = await enricher.enrich_prompt(prompt="idea")
+
+    assert result == "success after retry"
+    assert multi_client.calls == 2
 
 
 async def test_enrich_prompt_raises_without_config(monkeypatch):

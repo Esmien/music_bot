@@ -4,6 +4,8 @@
 но имеют семантически понятные имена для упрощения обработки ошибок.
 """
 
+from typing import Any
+
 
 class APINotSet(Exception):
     """API-ключ не установлен в конфигурации."""
@@ -29,8 +31,34 @@ class GenerationFileError(RuntimeError):
     """Некорректный mock-файл генерации."""
 
 
+class CreditsAPIError(RuntimeError):
+    """Ошибка API проверки кредитов."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        headers: Any = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.headers = headers
+
+
 class GenerationAPIError(RuntimeError):
     """Ошибка API генерации."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        headers: Any = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.headers = headers
 
 
 class GenerationStreamError(RuntimeError):

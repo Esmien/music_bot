@@ -34,7 +34,8 @@
 │   │   └── utils/
 │   │       ├── error_notify.py        # Логирование ошибок и уведомление владельца
 │   │       ├── exceptions.py          # Кастомные исключения (APINotSet, GenerationConfigurationError и т.д.)
-│   │       └── fsm_helpers.py         # Вспомогательные функции для работы с FSM
+│   │       ├── fsm_helpers.py         # Вспомогательные функции для работы с FSM
+│   │       └── retry.py               # Стандартизированная retry-политика и обработка Retry-After
 │   ├── domains/
 │   │   ├── auth/
 │   │   │   ├── handlers.py            # /logout, ввод ключа, фильтры авторизации и fallback
