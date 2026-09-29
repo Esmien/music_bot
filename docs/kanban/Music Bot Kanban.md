@@ -11,11 +11,10 @@ kanban-plugin: board
 - [x] `TASK-003` — очистка неиспользуемых воркеров в Compose и брокеров
 - [x] `TASK-004` — закрытие публичных infrastructure-портов
 - [x] `TASK-005` — корректный shutdown бота при polling
-- [ ] `TASK-006` — удаление сброса FSM `state.clear()` в `/credits`
+- [x] `TASK-006` — удаление сброса FSM `state.clear()` в `/credits`
 
 
 ## 🔴 P0 — BLOCKER
-- [ ] [[🔴 `TASK-006` [🔴 P0] Убрать `state.clear()` из ` credits` (AUD-013)]] ^lr73hm
 - [ ] [[🔴 `TASK-007` [🔴 P0] Атомарный claim платной генерации (AUD-002)]]
 - [ ] [[🔴 `TASK-008` [🔴 P0] Безопасная политика повторов OpenRouter (AUD-003)]]
 
@@ -48,6 +47,7 @@ kanban-plugin: board
 
 ## Done
 
+- [x] [[🔴 `TASK-006` [🔴 P0] Убрать `state.clear()` из ` credits` (AUD-013)]]
 - [x] [[🔴 `TASK-005` [🔴 P0] Исправить shutdown бота (AUD-006)]]
 - [x] [[🔴 `TASK-001` [🔴 P0] Исправить доступ к TaskIQ dependencies в event handlers (AUD-018)]]
 - [x] [[🔴 `TASK-002` [🔴 P0] Исправить `AiogramTelegramPort.notify_owner` (AUD-011)]]

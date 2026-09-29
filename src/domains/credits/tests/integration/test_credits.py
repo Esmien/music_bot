@@ -125,3 +125,40 @@ async def test_cmd_credits_without_api_key(patched_auth_db, clean_auth_state, ma
 
     assert len(msg.answers) == 1
     assert "бот не настроен" in msg.answers[0].lower()
+
+
+@pytest.mark.parametrize(
+    ("state_name", "state_data"),
+    [
+        ("PromptEnricherStates:waiting_idea", {"idea": "rock ballad"}),
+        ("GenerationStates:generating", {"gen_id": 42, "title": "Epic Track"}),
+        ("FeedbackStates:waiting_feedback", {"gen_id": 42, "score": 1}),
+    ],
+)
+async def test_cmd_credits_preserves_fsm_state_and_data(
+    patched_auth_db,
+    clean_auth_state,
+    make_message,
+    fake_state,
+    patch_key_info,
+    state_name,
+    state_data,
+):
+    """Вызов /credits сохраняет FSM state и FSM data (включая gen_id) пользователя."""
+    await _make_authorized_user(patched_auth_db, tg_id=12)
+    patch_key_info(FakeKeyInfoResponse(data={"limit": 5.0, "usage": 1.0, "limit_remaining": 4.0}))
+
+    state = fake_state()
+    await state.set_state(state_name)
+    await state.update_data(**state_data)
+
+    msg = make_message(uid=12)
+    await handlers_credits.cmd_credits(msg, state)
+
+    assert len(msg.answers) == 1
+    assert not state.cleared
+    assert state.state == state_name
+    current_data = await state.get_data()
+    assert current_data == state_data
+    if "gen_id" in state_data:
+        assert current_data.get("gen_id") == state_data["gen_id"]
