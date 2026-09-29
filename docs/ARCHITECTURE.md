@@ -58,9 +58,7 @@
 │       │   ├── service.py             # OpenRouter API и пересчёт баланса в генерации
 │       │   └── tests/
 │       │       └── unit/
-│       │           ├── test_credits.py        # Интеграционные тесты сервиса кредитов
-│       │           └── test_credits_worker.py # Интеграционные тесты воркера кредитов
-│       │   └── worker.py              # TaskIQ-воркер для проверки кредитов
+│       │           └── test_credits.py        # Интеграционные тесты сервиса кредитов
 │       ├── enricher/
 │       │   ├── handlers.py            # FSM-диалог идеи, обогащения, правок и подтверждения
 │       │   ├── fsm.py                 # Состояния сценария обогащения
@@ -123,20 +121,16 @@
 
 `/logout` снимает авторизацию в БД, очищает FSM и отменяет активную задачу генерации, если она зарегистрирована.
 
-`/credits` или кнопка проверки кредитов публикует команду `CheckCreditsCommand` в брокер:
+`/credits` или кнопка проверки кредитов обрабатывается Telegram-хендлером синхронно:
 
 ```text
 Пользователь
-  └─> domains/credits/handlers.py: cmd_credits или callback
-        └─> публикация CheckCreditsCommand в TaskIQ
-              └─> domains/credits/worker.py: check_credits_handler
-                    ├─> domains/credits/service.py: get_credits_summary
-                    │     └─> OpenRouter API: баланс ключа
-                    ├─> перевод долларов в примерное число генераций
-                    └─> отправка результата через TelegramPort
+  └─> domains/credits/handlers.py: cmd_credits
+        ├─> domains/credits/service.py: get_credits_summary
+        │     └─> OpenRouter API: баланс ключа
+        ├─> перевод долларов в примерное число генераций
+        └─> отправка результата пользователю в чат
 ```
-
-Воркер обрабатывает команду асинхронно и отправляет результат пользователю. При ошибке уведомляет владельца.
 
 ### 2. Обогащение промпта (событийный флоу)
 
@@ -190,41 +184,33 @@
 
 `/cancel` и `/logout` могут отменить задачу через Redis-флаг, который проверяется воркером генерации.
 
-### 4. Оценка и отзыв (событийный флоу)
+### 4. Оценка и отзыв
 
-После успешной генерации срабатывает воркер оценки:
+Обработка оценки и отзыва выполняется Telegram-хендлерами:
 
 ```text
-Событие GenerationSucceeded
-  └─> domains/evaluation/worker.py: request_evaluation_handler
-        ├─> FSM: FeedbackStates.waiting_evaluation
-        ├─> отправка запроса оценки через TelegramPort
-        └─> отправка клавиатуры оценки
-
 Пользователь ставит оценку
   └─> domains/evaluation/handlers.py: handle_evaluate
         ├─> domains/evaluation/service.py: save_evaluation
         │     └─> PostgreSQL: создание GenerationFeedback с оценкой
-        ├─> публикация EvaluationCompleted события
         └─> FSM: FeedbackStates.waiting_for_feedback_choice
 
 Пользователь выбирает действие (оставить отзыв или пропустить)
-  └─> domains/feedback/handlers.py: handle_feedback_choice
-        ├─> если отзыв → FSM: waiting_for_feedback_text
-        ├─> если пропустить → завершение FSM
-        └─> domains/feedback/handlers.py: handle_feedback_text
-              ├─> domains/feedback/service.py: save_feedback_text
-              │     └─> PostgreSQL: обновление GenerationFeedback текстом отзыва
+  └─> domains/feedback/handlers.py: handle_feedback_send_choice / handle_feedback_finish_choice
+        ├─> если отзыв → FSM: FeedbackStates.waiting_feedback
+        ├─> если завершить → сохранение и завершение FSM
+        └─> domains/feedback/handlers.py: handle_feedback_message
+              ├─> domains/feedback/service.py: save_feedback
+              │     └─> PostgreSQL: сохранение отзыва
               └─> завершение FSM
 ```
 
 Текстовый отзыв необязателен: пользователь может завершить сценарий после выставления оценки.
 
 ## Событийная архитектура
-Приложение использует событийную архитектуру на базе TaskIQ и RabbitMQ:
+Приложение использует событийную архитектуру на базе TaskIQ и RabbitMQ для длительных фоновых задач:
 
 **Команды** (shared/contracts/commands.py):
-- `CheckCreditsCommand` — проверить кредиты пользователя
 - `EnrichPromptCommand` — обогатить промпт через LLM
 - `StartGenerationCommand` — начать генерацию музыки
 
@@ -232,32 +218,10 @@
 - `PromptEnriched` — промпт успешно обогащён
 - `GenerationSucceeded` — генерация завершена успешно
 - `GenerationFailed` — генерация завершена с ошибкой
-- `EvaluationCompleted` — пользователь оценил генерацию
 
 **Воркеры**:
-- `domains/credits/worker.py` — обработка проверки кредитов
-- `domains/enricher/worker.py` — обработка обогащения промптов
-- `domains/generation/worker.py` — обработка генерации музыки
-- `domains/evaluation/worker.py` — обработка запроса оценки
-
-Приложение использует событийную архитектуру на базе TaskIQ и RabbitMQ:
-
-**Команды** (shared/contracts/commands.py):
-- `CheckCreditsCommand` — проверить кредиты пользователя
-- `EnrichPromptCommand` — обогатить промпт через LLM
-- `StartGenerationCommand` — начать генерацию музыки
-
-**События** (shared/contracts/events.py):
-- `PromptEnriched` — промпт успешно обогащён
-- `GenerationSucceeded` — генерация завершена успешно
-- `GenerationFailed` — генерация завершена с ошибкой
-- `EvaluationCompleted` — пользователь оценил генерацию
-
-**Воркеры**:
-- `domains/credits/worker.py` — обработка проверки кредитов
-- `domains/enricher/worker.py` — обработка обогащения промптов
-- `domains/generation/worker.py` — обработка генерации музыки
-- `domains/evaluation/worker.py` — обработка запроса оценки
+- `domains/enricher/worker.py` — обработка обогащения промптов (`enricher-worker`)
+- `domains/generation/worker.py` — обработка генерации музыки (`generation-worker`)
 
 ### 5. Обработка ошибок
 

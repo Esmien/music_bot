@@ -1,4 +1,4 @@
-- [ ] **Приоритет:** 🔴 P0 (BLOCKER)
+- [x] **Приоритет:** 🔴 P0 (BLOCKER)
 	**Метки:** `bug`, `reliability`, `tech-debt`, `docs`
 	**Проблема:** AUD-001. `docker-compose.yml` запускает воркеры `evaluation`, `credits`, `feedback`, тогда как `workers/taskiq_worker.py` поддерживает только `enricher` и `generation`, что приводит к crash-loop в контейнерах.
 	**Решение:**
@@ -8,10 +8,10 @@
 	  4. Сохранить доменные Telegram handlers и сервисы без TaskIQ-обвязки там, где логика выполняется синхронно.
 	  5. Актуализировать документацию и переменные окружения.
 	**DoD:**
-	  - [ ] В `docker-compose.yml` оставлены только сервисы `enricher-worker` и `generation-worker`.
-	  - [ ] Отсутствуют неиспользуемые экземпляры брокеров и лишние подключения к очередям RabbitMQ.
-	  - [ ] Модули доменов `evaluation`, `credits`, `feedback` сохраняют работоспособность и корректно импортируются.
-	  - [ ] Проходят тесты для хендлеров credits, evaluation и feedback.
-	  - [ ] Команда `docker compose config` отрабатывает без ошибок с кодом 0.
-	  - [ ] Обновлены `ARCHITECTURE.md` и связанные описания.
-	  - [ ] Ruff, Mypy, Pytest проходят без ошибок.
+	  - [x] В `docker-compose.yml` оставлены только сервисы `enricher-worker` и `generation-worker`.
+	  - [x] Отсутствуют неиспользуемые экземпляры брокеров и лишние подключения к очередям RabbitMQ.
+	  - [x] Модули доменов `evaluation`, `credits`, `feedback` сохраняют работоспособность и корректно импортируются.
+	  - [x] Проходят тесты для хендлеров credits, evaluation и feedback.
+	  - [x] Команда `docker compose config` отрабатывает без ошибок с кодом 0.
+	  - [x] Обновлены `ARCHITECTURE.md` и связанные описания.
+	  - [x] Ruff, Mypy, Pytest проходят без ошибок.

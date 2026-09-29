@@ -8,7 +8,7 @@ kanban-plugin: board
 
 - [ ] `TASK-001` — `context.state` в event handlers
 - [x] `TASK-002` — исправление `AiogramTelegramPort.notify_owner`
-- [ ] `TASK-003` — очистка неиспользуемых воркеров в Compose и брокеров
+- [x] `TASK-003` — очистка неиспользуемых воркеров в Compose и брокеров
 - [ ] `TASK-004` — закрытие публичных infrastructure-портов
 - [ ] `TASK-005` — корректный shutdown бота при polling
 - [ ] `TASK-006` — удаление сброса FSM `state.clear()` в `/credits`
@@ -16,7 +16,6 @@ kanban-plugin: board
 
 ## 🔴 P0 — BLOCKER
 
-- [ ] [[🔴 `TASK-003` [🔴 P0] Удалить неиспользуемые worker units и broker connections (AUD-001)]]
 - [ ] [[🔴 `TASK-004` [🔴 P0] Закрыть production infrastructure ports (AUD-008)]]
 - [ ] [[🔴 `TASK-005` [🔴 P0] Исправить shutdown бота (AUD-006)]]
 - [ ] [[🔴 `TASK-006` [🔴 P0] Убрать `state.clear()` из ` credits` (AUD-013)]] ^lr73hm
@@ -54,6 +53,7 @@ kanban-plugin: board
 
 - [x] [[🔴 `TASK-001` [🔴 P0] Исправить доступ к TaskIQ dependencies в event handlers (AUD-018)]]
 - [x] [[🔴 `TASK-002` [🔴 P0] Исправить `AiogramTelegramPort.notify_owner` (AUD-011)]]
+- [x] [[🔴 `TASK-003` [🔴 P0] Удалить неиспользуемые worker units и broker connections (AUD-001)]]
 
 
 

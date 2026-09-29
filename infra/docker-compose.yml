@@ -60,63 +60,6 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  evaluation-worker:
-    build:
-      context: ../
-      dockerfile: infra/Dockerfile
-    container_name: ${COMPOSE_PROJECT_NAME}-evaluation-worker
-    restart: always
-    command: ["python", "-u", "-m", "workers.taskiq_worker", "evaluation"]
-    env_file:
-      - ../.env
-    environment:
-      - REDIS_URL=redis://${REDIS_HOST}:${REDIS_PORT}/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-
-  credits-worker:
-    build:
-      context: ../
-      dockerfile: infra/Dockerfile
-    container_name: ${COMPOSE_PROJECT_NAME}-credits-worker
-    restart: always
-    command: ["python", "-u", "-m", "workers.taskiq_worker", "credits"]
-    env_file:
-      - ../.env
-    environment:
-      - REDIS_URL=redis://${REDIS_HOST}:${REDIS_PORT}/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-
-  feedback-worker:
-    build:
-      context: ../
-      dockerfile: infra/Dockerfile
-    container_name: ${COMPOSE_PROJECT_NAME}-feedback-worker
-    restart: always
-    command: [ "python", "-u", "-m", "workers.taskiq_worker", "feedback" ]
-    env_file:
-      - ../.env
-    environment:
-      - REDIS_URL=redis://${REDIS_HOST}:${REDIS_PORT}/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-
   postgres:
     image: postgres:17-alpine
     container_name: ${COMPOSE_PROJECT_NAME}-postgres

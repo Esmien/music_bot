@@ -218,10 +218,8 @@ def inmemory_broker(monkeypatch):
     # Подменяем все брокеры на in-memory версию
     monkeypatch.setattr(broker_module, "enricher_broker", test_broker)
     monkeypatch.setattr(broker_module, "generation_broker", test_broker)
-    monkeypatch.setattr(broker_module, "credits_broker", test_broker)
     monkeypatch.setitem(broker_module.brokers, "enricher", test_broker)
     monkeypatch.setitem(broker_module.brokers, "generation", test_broker)
-    monkeypatch.setitem(broker_module.brokers, "credits", test_broker)
 
     return test_broker
 

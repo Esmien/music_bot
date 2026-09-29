@@ -13,7 +13,7 @@ def _create_broker(domain: str) -> AioPikaBroker:
     """Создаёт брокер TaskIQ для полностью изолированной очереди домена.
 
     Args:
-        domain: Имя домена (enricher, generation, evaluation, feedback, credits).
+        domain: Имя домена (enricher, generation).
 
     Returns:
         AioPikaBroker: Настроенный брокер с JSON-сериализацией и DLQ.
@@ -41,15 +41,9 @@ def _create_inmemory_broker() -> InMemoryBroker:
 
 enricher_broker = _create_broker("enricher")
 generation_broker = _create_broker("generation")
-evaluation_broker = _create_broker("evaluation")
-feedback_broker = _create_broker("feedback")
-credits_broker = _create_broker("credits")
 
 # Реестр для точки запуска
 brokers = {
     "enricher": enricher_broker,
     "generation": generation_broker,
-    "evaluation": evaluation_broker,
-    "feedback": feedback_broker,
-    "credits": credits_broker,
 }
