@@ -1,10 +1,12 @@
 """Хендлеры точки входа генерации: запуск, повтор после сбоя и название песни."""
 
 import contextlib
+import logging
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
+from taskiq import Context, TaskiqDepends
 
 from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
 from domains.auth.handlers import require_auth
@@ -26,7 +28,10 @@ from domains.generation.generation_messages import (
 )
 from domains.generation.pipeline_handlers import generate_and_send
 from domains.generation.state_models import GenerationFlowState
+from shared.contracts.events import GenerationFailed
 from shared.domain_ports import enrichment_flow_starter
+
+log = logging.getLogger(__name__)
 
 router = Router(name="generation")
 
@@ -90,6 +95,73 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
         title=title,
         user_id=callback.from_user.id,
     )
+
+
+async def handle_generation_failed_event(
+    event: GenerationFailed,
+    context: Context = TaskiqDepends(),
+) -> None:
+    """Обрабатывает событие сбоя генерации или обогащения.
+
+    Args:
+        event: Событие с описанием ошибки.
+        context: Контекст TaskIQ с зависимостями.
+    """
+    from aiogram.fsm.storage.base import StorageKey
+
+    from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
+    from domains.enricher.enricher_messages import ENRICH_FAIL, ENRICH_FAIL_EXHAUSTED, MAX_ENRICH_ATTEMPTS
+    from domains.enricher.keyboards import get_enrich_exhausted_keyboard, get_enrich_failed_keyboard
+    from domains.enricher.state_models import EnrichmentFlowState
+    from shared.ports.telegram import TelegramPort
+
+    state_dict = getattr(context, "state", None) or getattr(context, "dependencies", None) or {}
+    telegram: TelegramPort = state_dict["telegram_port"]
+    storage = state_dict["storage"]
+    bot = state_dict["bot"]
+
+    fsm_context = FSMContext(
+        storage=storage,
+        key=StorageKey(bot_id=bot.id, chat_id=event.chat_id, user_id=event.user_id),
+    )
+
+    # Проверяем стадию ошибки
+    if event.stage == "enrichment":
+        flow_state = await get_fsm_data(state=fsm_context, model_class=EnrichmentFlowState)
+        flow_state.enriching = False
+        flow_state.retry_count += 1
+        await update_fsm_data(state=fsm_context, model=flow_state)
+
+        if flow_state.retry_count < MAX_ENRICH_ATTEMPTS:
+            await telegram.send_message(
+                chat_id=event.chat_id,
+                text=ENRICH_FAIL.format(
+                    attempt=flow_state.retry_count,
+                    max_attempts=MAX_ENRICH_ATTEMPTS,
+                ),
+                reply_markup=get_enrich_failed_keyboard(),
+            )
+        else:
+            await telegram.send_message(
+                chat_id=event.chat_id,
+                text=ENRICH_FAIL_EXHAUSTED.format(
+                    max_attempts=MAX_ENRICH_ATTEMPTS,
+                ),
+                reply_markup=get_enrich_exhausted_keyboard(),
+            )
+        log.info(
+            "Enrichment failure delivered (user=%s, attempt=%s/%s)",
+            event.user_id,
+            flow_state.retry_count,
+            MAX_ENRICH_ATTEMPTS,
+        )
+    else:
+        # Для других стадий просто очищаем состояние
+        await fsm_context.clear()
+        await telegram.send_message(
+            chat_id=event.chat_id,
+            text=f"❌ {event.error_message}",
+        )
 
 
 @router.message(GenerationStates.waiting_for_title, F.text)

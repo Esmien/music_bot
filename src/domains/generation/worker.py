@@ -4,10 +4,6 @@ import asyncio
 import logging
 import uuid
 
-from aiogram import Bot
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.storage.base import StorageKey
-from aiogram.fsm.storage.redis import RedisStorage
 from sqlalchemy import update
 from taskiq import Context, TaskiqDepends
 
@@ -16,17 +12,38 @@ from core.config import settings  # type: ignore[attr-defined]
 from core.database.engine import get_session  # type: ignore[attr-defined]
 from core.redis import clear_generation_cancel, is_generation_cancelled  # type: ignore[attr-defined]
 from core.utils.error_notify import notify_owner  # type: ignore[attr-defined]
-from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
-from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT
-from domains.evaluation.keyboards import get_evaluation_keyboard
-from domains.feedback.fsm import FeedbackStates
 from domains.generation.models import Generation, GenerationStatus  # type: ignore[attr-defined]
 from domains.generation.service import run_generation  # type: ignore[attr-defined]
-from domains.generation.state_models import GenerationFlowState
 from shared.contracts.commands import RunGeneration  # type: ignore[attr-defined]
+from shared.contracts.events import GenerationFailed, GenerationSucceeded  # type: ignore[attr-defined]
 from shared.ports.telegram import TelegramPort  # type: ignore[attr-defined]
 
 log = logging.getLogger(__name__)
+
+broker = generation_broker
+
+
+async def _publish_event(*, task_name: str, event: GenerationSucceeded | GenerationFailed, task: object) -> None:
+    """Публикует событие через брокер или зарегистрированную задачу.
+
+    Args:
+        task_name: Имя задачи TaskIQ.
+        event: Событие для публикации.
+        task: Зарегистрированная задача TaskIQ с методом kiq.
+
+    Raises:
+        TypeError: Если задача не предоставляет метод kiq.
+    """
+    broker_kicker = getattr(broker, "kicker", None)
+    if callable(broker_kicker):
+        await broker_kicker(task_name=task_name).kiq(event)
+        return
+
+    task_kiq = getattr(task, "kiq", None)
+    if not callable(task_kiq):
+        raise TypeError(f"Task {task_name!r} does not expose kiq")
+
+    await task_kiq(event)
 
 
 @generation_broker.task(
@@ -107,31 +124,18 @@ async def run_generation_task(
                 text="🎵 Готово!",
             )
 
-        # Обновляем FSM и запрашиваем оценку
-        bot: Bot | None = state_dict.get("bot")
-        storage: RedisStorage | None = state_dict.get("storage")
-        if bot is not None and storage is not None:
-            fsm_context = FSMContext(
-                storage=storage,
-                key=StorageKey(bot_id=bot.id, chat_id=command.chat_id, user_id=command.user_id),
-            )
-
-            flow_state = await get_fsm_data(state=fsm_context, model_class=GenerationFlowState)
-            if flow_state.gen_id != command.gen_id:
-                log.info("Evaluation skipped for outdated generation (gen_id=%s)", command.gen_id)
-                return
-
-            flow_state.generating = False
-            await update_fsm_data(state=fsm_context, model=flow_state)
-            await fsm_context.set_state(FeedbackStates.waiting_evaluation)
-
-            await telegram.send_message(
-                chat_id=command.chat_id,
-                text=EVALUATION_PROMPT_TEXT,
-                reply_markup=get_evaluation_keyboard(),
-            )
-
-            log.info("Evaluation requested (user=%s, gen_id=%s)", command.user_id, command.gen_id)
+        # Публикуем событие успеха генерации
+        succeeded_event = GenerationSucceeded(
+            user_id=command.user_id,
+            chat_id=command.chat_id,
+            gen_id=command.gen_id,
+            status_message_id=command.status_message_id,
+        )
+        await _publish_event(
+            task_name="handle_generation_succeeded",
+            event=succeeded_event,
+            task=handle_generation_succeeded_task,
+        )
     except asyncio.CancelledError:
         async with get_session() as session:
             generation = await session.get(Generation, command.gen_id)
@@ -156,7 +160,58 @@ async def run_generation_task(
             err=error,
         )
 
-        await telegram.send_message(
+        failure_event = GenerationFailed(
+            user_id=command.user_id,
             chat_id=command.chat_id,
-            text="😔 Не получилось сгенерировать. Попробуйте ещё раз чуть позже.",
+            gen_id=command.gen_id,
+            error_message=f"Generation failed: {type(error).__name__}: {error}",
+            stage="generation",
+            status_message_id=command.status_message_id,
         )
+        await _publish_event(
+            task_name="handle_generation_failed",
+            event=failure_event,
+            task=handle_generation_failed_task,
+        )
+
+
+@generation_broker.task(task_name="handle_generation_succeeded")
+async def handle_generation_succeeded_task(
+    event: GenerationSucceeded | dict | str,
+    context: Context = TaskiqDepends(),
+) -> None:
+    """Передаёт событие успешной генерации обработчику бота.
+
+    Args:
+        event: Событие с результатом генерации.
+        context: Контекст TaskIQ с зависимостями.
+    """
+    if isinstance(event, str):
+        event = GenerationSucceeded.model_validate_json(event)
+    elif not isinstance(event, GenerationSucceeded):
+        event = GenerationSucceeded.model_validate(event)
+
+    from domains.evaluation.handlers import handle_generation_succeeded_event
+
+    await handle_generation_succeeded_event(event=event, context=context)
+
+
+@generation_broker.task(task_name="handle_generation_failed")
+async def handle_generation_failed_task(
+    event: GenerationFailed | dict | str,
+    context: Context = TaskiqDepends(),
+) -> None:
+    """Передаёт событие сбоя генерации обработчику бота.
+
+    Args:
+        event: Событие с описанием ошибки.
+        context: Контекст TaskIQ с зависимостями.
+    """
+    if isinstance(event, str):
+        event = GenerationFailed.model_validate_json(event)
+    elif not isinstance(event, GenerationFailed):
+        event = GenerationFailed.model_validate(event)
+
+    from domains.enricher.handlers import handle_generation_failed_event
+
+    await handle_generation_failed_event(event=event, context=context)

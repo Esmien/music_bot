@@ -17,9 +17,9 @@ kanban-plugin: board
 ## 🔴 P0 — BLOCKER
 
 
+
 ## 🟠 P1 — HIGH
 
-- [ ] [[🟠 `TASK-009` [P1] Привести event flow к единой модели (AUD-017)]]
 - [ ] [[🟠 `TASK-010` [P1] Durable audio и отдельная доставка (AUD-004)]]
 - [ ] [[🟠 `TASK-011` [P1] Завершение и recovery generation state (AUD-005)]]
 - [ ] [[🟠 `TASK-012` [P1] Привязать feedback к конкретному `gen_id` (AUD-007)]]
@@ -45,6 +45,7 @@ kanban-plugin: board
 
 ## Done
 
+- [x] [[🟠 `TASK-009` [P1] Привести event flow к единой модели (AUD-017)]]
 - [x] [[🔴 `TASK-008` [🔴 P0] Безопасная политика повторов OpenRouter (AUD-003)]]
 - [x] [[🔴 `TASK-007` [🔴 P0] Атомарный claim платной генерации (AUD-002)]]
 - [x] [[🔴 `TASK-006` [🔴 P0] Убрать `state.clear()` из ` credits` (AUD-013)]]

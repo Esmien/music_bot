@@ -234,15 +234,21 @@
         └─> публикация события GenerationSucceeded
 
 При успешной генерации
-  └─> domains/generation/worker.py: start_generation_handler
-        └─> отправка клавиатуры оценки пользователю через TelegramPort
+  └─> domains/generation/worker.py: run_generation_task
+        ├─> публикация события GenerationSucceeded
+        └─> domains/evaluation/handlers.py: handle_generation_succeeded_event
+              ├─> проверка соответствия gen_id в FSM
+              ├─> FSM: FeedbackStates.waiting_evaluation
+              └─> отправка клавиатуры оценки пользователю через TelegramPort
 
 При ошибке генерации
-  └─> domains/generation/worker.py
+  └─> domains/generation/worker.py: run_generation_task
         ├─> уведомление владельца через notify_owner
         ├─> PostgreSQL: обновление статуса на FAILED
-        ├─> публикация события GenerationFailed
-        └─> отправка сообщения с кнопкой повтора
+        ├─> публикация события GenerationFailed(stage="generation")
+        └─> domains/enricher/handlers.py: handle_generation_failed_event
+              ├─> сброс FSM
+              └─> отправка сообщения об ошибке
 ```
 
 `/cancel` и `/logout` могут отменить задачу через Redis-флаг `generation:cancel:{gen_id}`, который проверяется воркером генерации во время выполнения.

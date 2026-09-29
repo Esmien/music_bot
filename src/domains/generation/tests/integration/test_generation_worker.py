@@ -11,11 +11,13 @@ from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT
+from domains.evaluation.handlers import handle_generation_succeeded_event
 from domains.feedback.fsm import FeedbackStates
 from domains.generation import worker
 from domains.generation.models import Generation, GenerationStatus
 from domains.generation.state_models import GenerationFlowState
 from shared.contracts.commands import RunGeneration
+from shared.contracts.events import GenerationFailed, GenerationSucceeded
 from shared.ports.fake_telegram import FakeTelegramPort
 
 pytestmark = pytest.mark.integration
@@ -86,7 +88,7 @@ def _command(gen_id: int = 1) -> RunGeneration:
 
 
 async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Успешная генерация отправляет аудио и запрашивает оценку."""
+    """Успешная генерация отправляет аудио и публикует GenerationSucceeded."""
     generation = Generation(
         id=1,
         user_id=10,
@@ -97,23 +99,22 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch) -
     )
     session = FakeSession(generation)
     telegram = FakeTelegramPort()
-    bot = SimpleNamespace(id=123)
-    storage = MemoryStorage()
-
-    key = StorageKey(bot_id=bot.id, chat_id=20, user_id=10)
-    fsm_context = FSMContext(storage=storage, key=key)
-    await fsm_context.set_data(GenerationFlowState(gen_id=1, generating=True).model_dump())
+    published_events = []
 
     async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
         await on_progress(stage="Получаю аудио…", fraction=0.5)
         return b"audio"
 
+    async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
+        published_events.append((task_name, event))
+
     monkeypatch.setattr(worker, "get_session", lambda: session)
     monkeypatch.setattr(worker, "run_generation", fake_run_generation)
     monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
     monkeypatch.setattr(worker, "clear_generation_cancel", AsyncMock())
+    monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
 
-    await worker.run_generation_task(_command(), _context(telegram, bot=bot, storage=storage))
+    await worker.run_generation_task(_command(), _context(telegram))
 
     assert len(telegram.sent_audio) == 1
     assert telegram.sent_audio[0]["chat_id"] == 20
@@ -122,9 +123,73 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch) -
     assert telegram.edited_messages
     assert generation.status is GenerationStatus.SUCCESS
     assert session.committed
+    assert len(published_events) == 1
+    task_name, event = published_events[0]
+    assert task_name == "handle_generation_succeeded"
+    assert isinstance(event, GenerationSucceeded)
+    assert event.gen_id == 1
+    assert event.user_id == 10
+    assert event.chat_id == 20
+
+
+async def test_worker_publishes_generation_failed_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Сбой генерации публикует GenerationFailed со stage='generation'."""
+    generation = Generation(
+        id=5,
+        user_id=10,
+        prompt="тестовый промпт",
+        enriched_prompt={"text": "тестовый промпт"},
+        title="Тест",
+        status=GenerationStatus.PENDING,
+    )
+    session = FakeSession(generation)
+    telegram = FakeTelegramPort()
+    published_events = []
+
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+        raise RuntimeError("API timeout error")
+
+    async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
+        published_events.append((task_name, event))
+
+    monkeypatch.setattr(worker, "get_session", lambda: session)
+    monkeypatch.setattr(worker, "run_generation", fake_run_generation)
+    monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
+    monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
+    monkeypatch.setattr(worker, "notify_owner", AsyncMock())
+
+    await worker.run_generation_task(_command(gen_id=5), _context(telegram))
+
+    assert generation.status is GenerationStatus.FAILED
+    assert len(published_events) == 1
+    task_name, event = published_events[0]
+    assert task_name == "handle_generation_failed"
+    assert isinstance(event, GenerationFailed)
+    assert event.stage == "generation"
+    assert event.gen_id == 5
+
+
+async def test_end_to_end_generation_succeeded_event_handling() -> None:
+    """Сквозной тест: событие GenerationSucceeded переводит FSM в waiting_evaluation и отправляет клавиатуру."""
+    telegram = FakeTelegramPort()
+    bot = SimpleNamespace(id=123)
+    storage = MemoryStorage()
+
+    key = StorageKey(bot_id=bot.id, chat_id=20, user_id=10)
+    fsm_context = FSMContext(storage=storage, key=key)
+    await fsm_context.set_data(GenerationFlowState(gen_id=1, generating=True).model_dump())
+
+    event = GenerationSucceeded(user_id=10, chat_id=20, gen_id=1, status_message_id=30)
+    context = _context(telegram, bot=bot, storage=storage)
+
+    await handle_generation_succeeded_event(event=event, context=context)
+
     assert len(telegram.sent_messages) == 1
     assert telegram.sent_messages[0]["text"] == EVALUATION_PROMPT_TEXT
     assert await fsm_context.get_state() == FeedbackStates.waiting_evaluation.state
+
+    flow_state = await fsm_context.get_data()
+    assert flow_state["generating"] is False
 
 
 async def test_worker_marks_cancelled_generation_and_publishes_failure(
@@ -225,6 +290,7 @@ async def test_worker_atomic_claim_concurrent(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(worker, "get_session", ConcurrentSession)
     monkeypatch.setattr(worker, "run_generation", fake_run_generation)
     monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
+    monkeypatch.setattr(worker, "_publish_event", AsyncMock())
 
     command = _command(gen_id=4)
     context = _context(telegram)
