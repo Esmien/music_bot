@@ -370,3 +370,43 @@ async def test_generate_song_real_no_retry_on_400(patch_openrouter):
 
     with pytest.raises(gen.GenerationAPIError, match="OpenRouter 400"):
         await gen.generate_song_real(prompt="промпт", gen_id=999)
+
+
+async def test_generate_song_real_stream_timeout_does_not_retry_post_request(monkeypatch):
+    """Сбой или таймаут во время чтения SSE-потока (post-request) не инициирует повторный POST-запрос."""
+    stream_calls = 0
+
+    class FailingStreamResponse(FakeStreamResponse):
+        async def aiter_lines(self):
+            yield _audio_chunk(_b64(b"FIRST_PART"))
+            raise gen.httpx.ReadTimeout("Stream read timed out")
+
+    class SingleCallClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        def stream(self, *args, **kwargs):
+            nonlocal stream_calls
+            stream_calls += 1
+
+            class _StreamContext:
+                async def __aenter__(self):
+                    return FailingStreamResponse([])
+
+                async def __aexit__(self, *exc_info):
+                    return False
+
+            return _StreamContext()
+
+    monkeypatch.setattr(gen.httpx, "AsyncClient", SingleCallClient)
+
+    with pytest.raises(gen.GenerationStreamError, match="Stream interrupted during reading"):
+        await gen.generate_song_real(prompt="промпт", gen_id=999)
+
+    assert stream_calls == 1, "Must not retry POST request after stream has started"

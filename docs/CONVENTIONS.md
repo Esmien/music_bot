@@ -83,33 +83,15 @@ known-first-party = ["core", "fsm", "handlers", "keyboards", "services"] # Мо�
 Если для данного конкретного проброса исключение не написано (core/exceptions.py), необходимо его создать
 
 # Retry-логика для внешних API
-Все вызовы внешних API (OpenRouter, OpenAI, и т.д.) должны быть обёрнуты в retry с экспоненциальным backoff.
+Все вызовы внешних API (OpenRouter, OpenAI, и т.д.) должны быть обёрнуты в безопасную retry-политику с экспоненциальным backoff.
 Используется библиотека tenacity с настройками:
-- Максимум 3 попытки (stop_after_attempt(3))
-- Экспоненциальный backoff: 2, 4, 8, 10 секунд (wait_exponential(multiplier=1, min=2, max=10))
-- Retry только на транзиентные ошибки: TimeoutException, ConnectError, ReadTimeout, HTTP 429, HTTP 503
-- Ошибки клиента (4xx кроме 429) не повторяются
-- Каждая попытка логируется с уровнем WARNING
-Пример:
-```python
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
-
-def _is_retryable_error(exception: BaseException) -> bool:
-    if isinstance(exception, (httpx.TimeoutException, httpx.ConnectError, httpx.ReadTimeout)):
-        return True
-    if isinstance(exception, APIError):
-        return "429" in str(exception) or "503" in str(exception)
-    return False
-
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception(_is_retryable_error),
-    reraise=True,
-)
-async def call_external_api(...):
-    ...
-```
+- Максимум 3 попытки (`stop_after_attempt(3)`)
+- Экспоненциальный backoff: 2, 4, 8, 10 секунд (`wait_exponential(multiplier=1, min=2, max=10)`)
+- Четкое разделение pre-request (до успешного старта ответа/стрима) и post-request (в процессе чтения данных) сбоев
+- Автоматический повторный запрос запрещен после успешного установления соединения и начала стриминга (во избежание двойных платных списаний)
+- Retry применяется только на транзиентные сетевые ошибки подключения (TimeoutException, ConnectError до ответа) и HTTP 429, HTTP 503
+- Ошибки клиента (4xx кроме 429) и серверные ошибки (5xx кроме 503) не повторяются
+- При попытках повтора и сбоях в логах с уровнем WARNING обязательно фиксируются `gen_id`, `attempt_id` и фаза сбоя (`pre-request` или `post-request`)
 
 # Kanban и проектная документация
 Работа идет в соответствие с бэклогом/аудитом. По мере выполнения задач проставляются чекбоксы ФАКТИЧЕСКИ закрытых DoD

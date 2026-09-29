@@ -61,14 +61,19 @@ end
 def _is_retryable_error(exception: Exception) -> bool:
     """Определяет, является ли ошибка повторяемой для retry-логики.
 
+    Разрешает повторы исключительно для pre-request сбоев (до получения
+    успешного ответа и начала стриминга): сетевые таймауты подключения
+    и HTTP 429/503. Сбои стриминга (GenerationStreamError) и клиентские
+    4xx ошибки не повторяются во избежание двойных списаний.
+
     Args:
         exception: Исключение для проверки.
 
     Returns:
         True, если ошибку можно повторить, False иначе.
     """
-    # Сетевые ошибки httpx
-    if isinstance(exception, (httpx.TimeoutException, httpx.ConnectError, httpx.ReadTimeout)):
+    # Сетевые ошибки httpx до установления стрима
+    if isinstance(exception, (httpx.TimeoutException, httpx.ConnectError)):
         return True
 
     # HTTP-ошибки с кодами 429 (Rate Limit) и 503 (Service Unavailable)
@@ -80,16 +85,18 @@ def _is_retryable_error(exception: Exception) -> bool:
 
 
 def _log_retry_attempt(retry_state: Any) -> None:
-    """Логирует попытку повтора запроса.
+    """Логирует попытку повтора запроса с указанием gen_id, attempt_id и фазы.
 
     Args:
         retry_state: Состояние retry из tenacity.
     """
     attempt = retry_state.attempt_number
     exception = retry_state.outcome.exception() if retry_state.outcome else None
+    gen_id = retry_state.kwargs.get("gen_id", "unknown") if retry_state.kwargs else "unknown"
     log.warning(
-        "Retry attempt %d for OpenRouter API due to %s: %s",
+        "Retry attempt %d for OpenRouter API (gen_id=%s, phase=pre-request) due to %s: %s",
         attempt,
+        gen_id,
         type(exception).__name__ if exception else "unknown",
         str(exception)[:200] if exception else "",
     )
@@ -375,34 +382,45 @@ async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCall
             error_body = (await resp.aread()).decode("utf-8", "ignore")
             raise GenerationAPIError(f"OpenRouter {resp.status_code}: {error_body[:300]}")
 
-        # Читаем очищенный поток из парсера
-        async for raw_chunk in _parse_openrouter_sse(resp):
-            if last_chunk and raw_chunk.startswith(last_chunk):
-                # Сервер шлёт снимки, а не дельты: новый чанк содержит
-                # предыдущий. В decoded_audio уже лежат декодированные байты
-                # префикса, поэтому декодируем только приращение.
-                pending_b64 += raw_chunk[len(last_chunk) :]
-                total_b64 += len(raw_chunk) - len(last_chunk)
-            else:
-                pending_b64 += raw_chunk
-                total_b64 += len(raw_chunk)
+        # Читаем очищенный поток из парсера.
+        # Любой сбой во время чтения стрима — post-request ошибка,
+        # которая не должна приводить к повторному POST-запросу.
+        try:
+            async for raw_chunk in _parse_openrouter_sse(resp):
+                if last_chunk and raw_chunk.startswith(last_chunk):
+                    # Сервер шлёт снимки, а не дельты: новый чанк содержит
+                    # предыдущий. В decoded_audio уже лежат декодированные байты
+                    # префикса, поэтому декодируем только приращение.
+                    pending_b64 += raw_chunk[len(last_chunk) :]
+                    total_b64 += len(raw_chunk) - len(last_chunk)
+                else:
+                    pending_b64 += raw_chunk
+                    total_b64 += len(raw_chunk)
 
-            if total_b64 > MAX_AUDIO_B64_LEN:
-                raise GenerationStreamError("Audio in stream exceeds the allowed size")
+                if total_b64 > MAX_AUDIO_B64_LEN:
+                    raise GenerationStreamError("Audio in stream exceeds the allowed size")
 
-            # base64 декодируется группами по 4 символа: готовую часть
-            # сразу пишем в BytesIO, хвост ждёт следующих чанков
-            aligned_len = len(pending_b64) - len(pending_b64) % 4
-            if aligned_len:
-                decoded_audio.write(base64.b64decode(pending_b64[:aligned_len]))
-                pending_b64 = pending_b64[aligned_len:]
+                # base64 декодируется группами по 4 символа: готовую часть
+                # сразу пишем в BytesIO, хвост ждёт следующих чанков
+                aligned_len = len(pending_b64) - len(pending_b64) % 4
+                if aligned_len:
+                    decoded_audio.write(base64.b64decode(pending_b64[:aligned_len]))
+                    pending_b64 = pending_b64[aligned_len:]
 
-            last_chunk = raw_chunk
+                last_chunk = raw_chunk
 
-            # Обновляем UI асимптотически от времени
-            elapsed = time.monotonic() - started
-            fraction = 1.0 - math.exp(-elapsed / settings.generation.TYPICAL_GENERATION_SECONDS)
-            await report(stage="Получаю аудио…", fraction=fraction * 0.95)
+                # Обновляем UI асимптотически от времени
+                elapsed = time.monotonic() - started
+                fraction = 1.0 - math.exp(-elapsed / settings.generation.TYPICAL_GENERATION_SECONDS)
+                await report(stage="Получаю аудио…", fraction=fraction * 0.95)
+        except (httpx.HTTPError, httpx.TimeoutException) as exc:
+            log.warning(
+                "Stream interrupted (gen_id=%s, phase=post-request) due to %s: %s",
+                gen_id,
+                type(exc).__name__,
+                exc,
+            )
+            raise GenerationStreamError(f"Stream interrupted during reading: {exc}") from exc
 
     if not last_chunk:
         raise GenerationAudioMissingError("No audio received in stream")
