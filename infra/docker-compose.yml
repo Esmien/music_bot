@@ -72,9 +72,6 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # Для локального взаимодействия
-    ports:
-      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -87,9 +84,6 @@ services:
     restart: always
     volumes:
       - redis_data:/data
-    # Для локального взаимодействия
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -101,13 +95,10 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME}-rabbitmq
     restart: always
     environment:
-      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-songai}
-      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-songai}
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s

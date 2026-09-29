@@ -4,7 +4,7 @@
 импортируют только этот файл, ничего не читая из окружения напрямую.
 """
 
-from pydantic import computed_field
+from pydantic import computed_field, field_validator
 from pydantic_core import MultiHostUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -95,9 +95,18 @@ class DatabaseConfig(BaseModelConfig):
 class RabbitMQConfig(BaseModelConfig):
     """Параметры RabbitMQ и именования очередей TaskIQ."""
 
-    RABBITMQ_URL: str = "amqp://guest:guest@localhost:5672/"
+    RABBITMQ_USER: str
+    RABBITMQ_PASSWORD: str
+    RABBITMQ_URL: str = ""
     RABBITMQ_PREFETCH: int = 10
     RABBITMQ_QUEUE_PREFIX: str = "dev"
+
+    @field_validator("RABBITMQ_USER", "RABBITMQ_PASSWORD", mode="after")
+    @classmethod
+    def validate_non_empty(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Field must not be empty")
+        return value
 
     @property
     def queue_prefix(self) -> str:
