@@ -12,6 +12,7 @@ class FeedbackFlowState(BaseModel):
         feedback_prompt_message_id: ID сообщения с запросом отзыва (для удаления кнопок).
     """
 
+    gen_id: int | None = None
     feedback_evaluation: bool | None = None
     feedback_text: str | None = None
     feedback_prompt_message_id: int | None = None

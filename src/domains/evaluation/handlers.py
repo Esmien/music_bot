@@ -12,9 +12,9 @@ from taskiq import Context, TaskiqDepends
 from core.utils.fsm_helpers import get_fsm_data, update_fsm_data
 from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT, FEEDBACK_CHOICE_TEXT
 from domains.evaluation.keyboards import CB_FEEDBACK_DISLIKE, CB_FEEDBACK_LIKE, get_evaluation_keyboard
-from domains.evaluation.service import save_evaluation
 from domains.feedback.fsm import FeedbackStates
 from domains.feedback.keyboards import get_feedback_keyboard
+from domains.feedback.service import save_feedback
 from domains.feedback.state_models import FeedbackFlowState
 from domains.generation.state_models import GenerationFlowState
 from shared.contracts.events import GenerationSucceeded
@@ -58,28 +58,41 @@ async def handle_generation_succeeded_event(
     await update_fsm_data(state=fsm_context, model=flow_state)
     await fsm_context.set_state(FeedbackStates.waiting_evaluation)
 
+    feedback_state = await get_fsm_data(state=fsm_context, model_class=FeedbackFlowState)
+    feedback_state.gen_id = event.gen_id
+    await update_fsm_data(state=fsm_context, model=feedback_state)
+
     await telegram.send_message(
         chat_id=event.chat_id,
         text=EVALUATION_PROMPT_TEXT,
-        reply_markup=get_evaluation_keyboard(),
+        reply_markup=get_evaluation_keyboard(gen_id=event.gen_id),
     )
     log.info("Evaluation requested (user=%s, gen_id=%s)", event.user_id, event.gen_id)
 
 
 @router.message(FeedbackStates.waiting_evaluation, F.text & ~F.command)
-async def handle_evaluate_prompt(message: Message) -> None:
+async def handle_evaluate_prompt(message: Message, state: FSMContext | None = None) -> None:
     """Рисует клавиатуру оценки, если пользователь написал в состоянии ожидания.
 
     Args:
         message: Входящее сообщение пользователя.
+        state: FSM-контекст пользователя (опционально).
     """
+    gen_id = None
+    if state is not None:
+        flow_state = await get_fsm_data(state=state, model_class=FeedbackFlowState)
+        gen_id = flow_state.gen_id
+
     await message.answer(
         text=EVALUATION_PROMPT_TEXT,
-        reply_markup=get_evaluation_keyboard(),
+        reply_markup=get_evaluation_keyboard(gen_id=gen_id),
     )
 
 
-@router.callback_query(FeedbackStates.waiting_evaluation, F.data.in_((CB_FEEDBACK_LIKE, CB_FEEDBACK_DISLIKE)))
+@router.callback_query(
+    FeedbackStates.waiting_evaluation,
+    F.data.startswith(CB_FEEDBACK_LIKE) | F.data.startswith(CB_FEEDBACK_DISLIKE),
+)
 async def handle_evaluate(callback: CallbackQuery, state: FSMContext) -> None:
     """Записывает оценку, переводит в выбор действия и рисует кнопки фидбека.
 
@@ -87,11 +100,31 @@ async def handle_evaluate(callback: CallbackQuery, state: FSMContext) -> None:
         callback: Нажатие кнопки «нравится» или «не нравится».
         state: FSM-контекст пользователя.
     """
-    evaluation = callback.data == CB_FEEDBACK_LIKE
-
-    await save_evaluation(user_id=callback.from_user.id, is_liked=evaluation)
+    raw_data = callback.data or ""
+    parts = raw_data.split(":")
+    callback_gen_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
+    evaluation = parts[1] == "like" if len(parts) > 1 else (raw_data == CB_FEEDBACK_LIKE)
 
     flow_state = await get_fsm_data(state=state, model_class=FeedbackFlowState)
+    if callback_gen_id is not None and flow_state.gen_id is not None and callback_gen_id != flow_state.gen_id:
+        log.warning(
+            "Evaluation callback gen_id mismatch (callback=%s, state=%s, user=%s)",
+            callback_gen_id,
+            flow_state.gen_id,
+            callback.from_user.id,
+        )
+        await callback.answer(text="Эта оценка относится к устаревшей генерации.", show_alert=True)
+        return
+
+    gen_id = callback_gen_id or flow_state.gen_id
+    if gen_id is None:
+        log.warning("Evaluation attempted without gen_id (user=%s)", callback.from_user.id)
+        await callback.answer(text="Не удалось определить генерацию для оценки.", show_alert=True)
+        return
+
+    await save_feedback(gen_id=gen_id, user_id=callback.from_user.id, evalue=evaluation)
+
+    flow_state.gen_id = gen_id
     flow_state.feedback_evaluation = evaluation
     await update_fsm_data(state=state, model=flow_state)
 
@@ -102,6 +135,6 @@ async def handle_evaluate(callback: CallbackQuery, state: FSMContext) -> None:
 
     await callback.message.answer(
         text=FEEDBACK_CHOICE_TEXT,
-        reply_markup=get_feedback_keyboard(),
+        reply_markup=get_feedback_keyboard(gen_id=gen_id),
     )
     await callback.answer()

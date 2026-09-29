@@ -258,9 +258,10 @@
 ```text
 Пользователь ставит оценку (лайк/дизлайк)
   └─> domains/evaluation/handlers.py: handle_evaluate
-        ├─> domains/evaluation/service.py: save_evaluation
-        │     └─> PostgreSQL: создание или обновление GenerationFeedback с оценкой
-        ├─> публикация события EvaluationCompleted
+        ├─> извлечение gen_id из callback_data и проверка соответствия FSM state
+        ├─> domains/feedback/service.py: save_feedback (с gen_id и user_id)
+        │     └─> PostgreSQL: upsert в GenerationFeedback с проверкой принадлежности
+        ├─> обновление FSM state с gen_id и оценкой
         └─> FSM: FeedbackStates.waiting_for_feedback_choice
 
 Пользователь выбирает действие (оставить отзыв или завершить)
@@ -293,7 +294,6 @@
 - `EnrichmentCompleted` — промпт успешно обогащён
 - `GenerationSucceeded` — генерация завершена успешно
 - `GenerationFailed` — генерация завершена с ошибкой
-- `EvaluationCompleted` — пользователь поставил оценку
 
 **Воркеры**:
 - `domains/enricher/worker.py` — обработка обогащения промптов

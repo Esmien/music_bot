@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.database.models import User
+from core.utils.exceptions import FeedbackSaveError
 from domains.feedback import service as feedback_service
 from domains.feedback.models import GenerationFeedback
 from domains.generation.models import Generation, GenerationStatus
@@ -84,7 +85,7 @@ async def test_save_feedback_skips_without_touching_db(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(feedback_service, "get_session", _fail_get_session)
 
-    await feedback_service.save_feedback(user_id=1, feedback=None, evalue=None)
+    await feedback_service.save_feedback(gen_id=1, user_id=1, feedback=None, evalue=None)
 
 
 async def test_save_feedback_creates_record_for_like_only(
@@ -93,7 +94,7 @@ async def test_save_feedback_creates_record_for_like_only(
     """Лайк без текста создаёт запись обратной связи для успешной генерации."""
     generation, _ = await _create_generation(sessionmaker=patched_feedback_db, user_id=1)
 
-    await feedback_service.save_feedback(user_id=1, feedback=None, evalue=True)
+    await feedback_service.save_feedback(gen_id=generation.id, user_id=1, feedback=None, evalue=True)
 
     records = await _get_feedback_records(sessionmaker=patched_feedback_db, user_id=1)
 
@@ -109,7 +110,12 @@ async def test_save_feedback_creates_record_for_text_and_dislike(
     """Текст отзыва сохраняется даже при отрицательной оценке."""
     generation, _ = await _create_generation(sessionmaker=patched_feedback_db, user_id=1)
 
-    await feedback_service.save_feedback(user_id=1, feedback="Слишком громко", evalue=False)
+    await feedback_service.save_feedback(
+        gen_id=generation.id,
+        user_id=1,
+        feedback="Слишком громко",
+        evalue=False,
+    )
 
     records = await _get_feedback_records(sessionmaker=patched_feedback_db, user_id=1)
 
@@ -131,7 +137,12 @@ async def test_save_feedback_overwrites_existing_feedback_text(
         feedback="bad",
     )
 
-    await feedback_service.save_feedback(user_id=1, feedback="good", evalue=True)
+    await feedback_service.save_feedback(
+        gen_id=generation.id,
+        user_id=1,
+        feedback="good",
+        evalue=True,
+    )
 
     records = await _get_feedback_records(sessionmaker=patched_feedback_db, user_id=1)
 
@@ -143,10 +154,10 @@ async def test_save_feedback_overwrites_existing_feedback_text(
     assert records[0].feedback == "good"
 
 
-async def test_save_feedback_updates_latest_record_for_user(
+async def test_save_feedback_updates_strictly_specified_generation(
     patched_feedback_db: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Оценка обновляет запись последней генерации пользователя."""
+    """Оценка обновляет запись строго переданного gen_id, не трогая другие генерации."""
     old_generation, old_record = await _create_generation(
         sessionmaker=patched_feedback_db,
         user_id=1,
@@ -160,7 +171,12 @@ async def test_save_feedback_updates_latest_record_for_user(
         is_liked=False,
     )
 
-    await feedback_service.save_feedback(user_id=1, feedback="Хорошо", evalue=True)
+    await feedback_service.save_feedback(
+        gen_id=old_generation.id,
+        user_id=1,
+        feedback="Старая запись обновлена",
+        evalue=True,
+    )
 
     async with patched_feedback_db() as session:
         refreshed_old = await session.get(GenerationFeedback, old_record.id)
@@ -169,17 +185,17 @@ async def test_save_feedback_updates_latest_record_for_user(
     assert old_generation.id != latest_generation.id
     assert refreshed_old is not None
     assert refreshed_latest is not None
-    assert refreshed_old.is_liked is False
-    assert refreshed_old.feedback is None
-    assert refreshed_latest.is_liked is True
-    assert refreshed_latest.feedback == "Хорошо"
+    assert refreshed_old.is_liked is True
+    assert refreshed_old.feedback == "Старая запись обновлена"
+    assert refreshed_latest.is_liked is False
+    assert refreshed_latest.feedback is None
 
 
 async def test_save_feedback_does_not_update_other_user(
     patched_feedback_db: async_sessionmaker[AsyncSession],
 ) -> None:
     """Сохранение оценки пользователя не меняет запись другого пользователя."""
-    _, other_record = await _create_generation(
+    other_generation, other_record = await _create_generation(
         sessionmaker=patched_feedback_db,
         user_id=2,
         create_feedback=True,
@@ -187,7 +203,12 @@ async def test_save_feedback_does_not_update_other_user(
     )
     await _create_generation(sessionmaker=patched_feedback_db, user_id=1)
 
-    await feedback_service.save_feedback(user_id=1, feedback="Моя оценка", evalue=True)
+    await feedback_service.save_feedback(
+        gen_id=other_generation.id,
+        user_id=1,
+        feedback="Моя оценка",
+        evalue=True,
+    )
 
     async with patched_feedback_db() as session:
         refreshed_other = await session.get(GenerationFeedback, other_record.id)
@@ -197,37 +218,35 @@ async def test_save_feedback_does_not_update_other_user(
     assert refreshed_other is not None
     assert refreshed_other.is_liked is False
     assert refreshed_other.feedback is None
-    assert len(my_records) == 1
-    assert my_records[0].is_liked is True
-    assert my_records[0].feedback == "Моя оценка"
+    assert len(my_records) == 0
 
 
 async def test_save_feedback_does_not_create_record_without_successful_generation(
     patched_feedback_db: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Оценка не создаёт запись, если у пользователя нет успешной генерации."""
+    """Оценка не создаёт запись, если генерация не в статусе SUCCESS."""
     async with patched_feedback_db() as session:
         session.add(User(tg_id=1, is_authorized=True))
-        session.add(
-            Generation(
-                user_id=1,
-                prompt="исходный промпт",
-                enriched_prompt={"text": "обогащённый промпт"},
-                status=GenerationStatus.PENDING,
-            )
+        gen = Generation(
+            user_id=1,
+            prompt="исходный промпт",
+            enriched_prompt={"text": "обогащённый промпт"},
+            status=GenerationStatus.PENDING,
         )
+        session.add(gen)
         await session.commit()
+        gen_id = gen.id
 
-    await feedback_service.save_feedback(user_id=1, feedback="Отзыв", evalue=True)
+    await feedback_service.save_feedback(gen_id=gen_id, user_id=1, feedback="Отзыв", evalue=True)
 
     assert await _get_feedback_records(sessionmaker=patched_feedback_db, user_id=1) == []
 
 
-async def test_save_feedback_swallows_and_logs_sqlalchemy_error(
+async def test_save_feedback_logs_and_raises_domain_error_on_sqlalchemy_error(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Сбой БД логируется и не пробрасывается наружу."""
+    """Сбой БД логируется и возбуждает доменное исключение FeedbackSaveError."""
 
     class FailingSession:
         async def __aenter__(self) -> "FailingSession":
@@ -247,7 +266,8 @@ async def test_save_feedback_swallows_and_logs_sqlalchemy_error(
     monkeypatch.setattr(feedback_service, "get_session", lambda: FailingSession())
     caplog.set_level(logging.ERROR, logger=feedback_service.log.name)
 
-    await feedback_service.save_feedback(user_id=1, feedback="test", evalue=True)
+    with pytest.raises(FeedbackSaveError):
+        await feedback_service.save_feedback(gen_id=1, user_id=1, feedback="test", evalue=True)
 
     assert "Failed to save feedback" in caplog.text
     assert "user=1" in caplog.text

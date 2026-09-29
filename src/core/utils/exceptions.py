@@ -39,3 +39,7 @@ class GenerationStreamError(RuntimeError):
 
 class GenerationAudioMissingError(RuntimeError):
     """Аудио не получено."""
+
+
+class FeedbackSaveError(RuntimeError):
+    """Ошибка сохранения оценки или отзыва в БД."""

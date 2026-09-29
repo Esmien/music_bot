@@ -133,17 +133,23 @@ def make_callback(make_callback_message):
 
 
 @pytest.fixture
-def save_calls() -> list[tuple[int, str | None, bool]]:
-    """Список вызовов save_feedback с аргументами."""
+def save_calls() -> list[tuple[int, int, str | None, bool | None]]:
+    """Список вызовов save_feedback с аргументами (gen_id, user_id, feedback, evalue)."""
     return []
 
 
 @pytest.fixture
-def patched_save_feedback(monkeypatch, save_calls: list[tuple[int, str | None, bool]]):
+def patched_save_feedback(monkeypatch, save_calls: list[tuple[int, int, str | None, bool | None]]):
     """Подменяет save_feedback на заглушку, собирающую вызовы."""
 
-    async def fake_save_feedback(*, user_id: int, feedback: str | None, evalue: bool) -> None:
-        save_calls.append((user_id, feedback, evalue))
+    async def fake_save_feedback(
+        *,
+        gen_id: int,
+        user_id: int,
+        feedback: str | None = None,
+        evalue: bool | None = None,
+    ) -> None:
+        save_calls.append((gen_id, user_id, feedback, evalue))
 
     monkeypatch.setattr(feedback_handlers, "save_feedback", fake_save_feedback)
     return save_calls
@@ -169,12 +175,12 @@ async def test_handle_feedback_message_saves_text_and_clears_state(
     monkeypatch.setattr(settings, "MIN_FEEDBACK_TEXT", 5)
     state = fake_state()
     await state.set_state(FeedbackStates.waiting_feedback)
-    await state.update_data(feedback_evaluation=True, feedback_prompt_message_id=456)
+    await state.update_data(gen_id=42, feedback_evaluation=True, feedback_prompt_message_id=456)
     message = make_feedback_message(text="  отличный трек  ", uid=77)
 
     await feedback_handlers.handle_feedback_message(message=message, state=state)
 
-    assert patched_save_feedback == [(77, "отличный трек", None)]
+    assert patched_save_feedback == [(42, 77, "отличный трек", None)]
     assert state.cleared is True
     assert message.edited_reply_markups == [(77, 456, None)]
     assert message.answers == [FEEDBACK_THANKS_TEXT]
@@ -190,12 +196,14 @@ async def test_handle_feedback_message_uses_fsm_text_when_message_text_is_none(
     """Если сообщение без текста, берётся feedback_text из FSM."""
     monkeypatch.setattr(settings, "MIN_FEEDBACK_TEXT", 5)
     state = fake_state()
-    await state.update_data(feedback_text="текст из FSM", feedback_evaluation=False, feedback_prompt_message_id=None)
+    await state.update_data(
+        gen_id=42, feedback_text="текст из FSM", feedback_evaluation=False, feedback_prompt_message_id=None
+    )
     message = make_feedback_message(text=None, uid=3)
 
     await feedback_handlers.handle_feedback_message(message=message, state=state)
 
-    assert patched_save_feedback == [(3, "текст из FSM", None)]
+    assert patched_save_feedback == [(42, 3, "текст из FSM", None)]
     assert message.edited_reply_markups == []
 
 
@@ -208,12 +216,12 @@ async def test_handle_feedback_message_drops_short_feedback(
     """Слишком короткий текст не сохраняется как отзыв."""
     monkeypatch.setattr(settings, "MIN_FEEDBACK_TEXT", 5)
     state = fake_state()
-    await state.update_data(feedback_evaluation=True, feedback_prompt_message_id=None)
+    await state.update_data(gen_id=42, feedback_evaluation=True, feedback_prompt_message_id=None)
     message = make_feedback_message(text="ок", uid=1)
 
     await feedback_handlers.handle_feedback_message(message=message, state=state)
 
-    assert patched_save_feedback == [(1, None, None)]
+    assert patched_save_feedback == [(42, 1, None, None)]
 
 
 async def test_handle_feedback_message_suppresses_markup_edit_failure(
@@ -225,7 +233,7 @@ async def test_handle_feedback_message_suppresses_markup_edit_failure(
     """Сбой уборки клавиатуры не должен ломать завершение сценария."""
     monkeypatch.setattr(settings, "MIN_FEEDBACK_TEXT", 1)
     state = fake_state()
-    await state.update_data(feedback_prompt_message_id=999)
+    await state.update_data(gen_id=42, feedback_prompt_message_id=999)
     message = make_feedback_message(text="текст", uid=1)
 
     async def fail_edit(*args: object, **kwargs: object) -> None:
@@ -235,7 +243,7 @@ async def test_handle_feedback_message_suppresses_markup_edit_failure(
 
     await feedback_handlers.handle_feedback_message(message=message, state=state)
 
-    assert patched_save_feedback == [(1, "текст", None)]
+    assert patched_save_feedback == [(42, 1, "текст", None)]
     assert message.answers == [FEEDBACK_THANKS_TEXT]
 
 
@@ -243,17 +251,20 @@ async def test_handle_feedback_send_choice_switches_to_waiting_feedback(make_cal
     """Кнопка «Отправить фидбек» переводит в ожидание текста отзыва."""
     state = fake_state()
     await state.set_state(FeedbackStates.waiting_for_feedback_choice)
+    await state.update_data(gen_id=42)
     callback = make_callback(uid=10)
+    callback.data = "fb:send:42"
 
     await feedback_handlers.handle_feedback_send_choice(callback=callback, state=state)
 
     assert callback.message.edit_calls[0][0] == FEEDBACK_PROMPT_TEXT
     assert _inline_button_texts(callback.message.edit_calls[0][1]) == _inline_button_texts(
-        get_feedback_finish_keyboard()
+        get_feedback_finish_keyboard(gen_id=42)
     )
     assert state.state == FeedbackStates.waiting_feedback
     data = await state.get_data()
     assert data["feedback_text"] is None
+    assert data["gen_id"] == 42
     assert data["feedback_prompt_message_id"] == callback.message.message_id
     assert callback.answered == [(None, False)]
 
@@ -262,8 +273,9 @@ async def test_handle_feedback_send_in_waiting_feedback_shows_prompt_again(make_
     """Повторное нажатие кнопки в ожидании отзыва снова показывает промпт."""
     state = fake_state()
     await state.set_state(FeedbackStates.waiting_feedback)
-    await state.update_data(feedback_prompt_message_id=1)
+    await state.update_data(gen_id=42, feedback_prompt_message_id=1)
     callback = make_callback(uid=11)
+    callback.data = "fb:send:42"
 
     await feedback_handlers.handle_feedback_send(callback=callback, state=state)
 
@@ -283,13 +295,14 @@ async def test_handle_feedback_finish_choice_saves_evaluation_from_state(
     monkeypatch.setattr(settings, "MIN_FEEDBACK_TEXT", 5)
     state = fake_state()
     await state.set_state(FeedbackStates.waiting_for_feedback_choice)
-    await state.update_data(feedback_evaluation=True, feedback_text="нормальный отзыв")
+    await state.update_data(gen_id=42, feedback_evaluation=True, feedback_text="нормальный отзыв")
     callback = make_callback(uid=20)
+    callback.data = "fb:finish:42"
 
     await feedback_handlers.handle_feedback_finish_choice(callback=callback, state=state)
 
     assert callback.message.reply_markup_edits == [None]
-    assert patched_save_feedback == [(20, "нормальный отзыв", None)]
+    assert patched_save_feedback == [(42, 20, "нормальный отзыв", None)]
     assert state.cleared is True
     assert callback.message.answers == [FEEDBACK_THANKS_TEXT]
     assert _reply_button_texts(callback.message.answered_markups[0]) == _reply_button_texts(get_main_keyboard())
@@ -304,28 +317,30 @@ async def test_handle_feedback_finish_saves_without_feedback_text(
     """Завершение в ожидании отзыва сохраняет оценку без текста."""
     state = fake_state()
     await state.set_state(FeedbackStates.waiting_feedback)
-    await state.update_data(feedback_evaluation=False, feedback_text=None)
+    await state.update_data(gen_id=42, feedback_evaluation=False, feedback_text=None)
     callback = make_callback(uid=21)
+    callback.data = "fb:finish:42"
 
     await feedback_handlers.handle_feedback_finish(callback=callback, state=state)
 
-    assert patched_save_feedback == [(21, None, None)]
+    assert patched_save_feedback == [(42, 21, None, None)]
     assert state.cleared is True
 
 
-async def test_handle_feedback_finish_choice_treats_non_bool_evaluation_as_true(
+async def test_handle_feedback_callback_rejects_mismatched_gen_id(
     make_callback,
     fake_state,
     patched_save_feedback,
-    monkeypatch,
 ) -> None:
-    """Любое непустое значение оценки приводится к True."""
-    monkeypatch.setattr(settings, "MIN_FEEDBACK_TEXT", 5)
+    """Callback со старым gen_id отклоняется предупреждением."""
     state = fake_state()
     await state.set_state(FeedbackStates.waiting_for_feedback_choice)
-    await state.update_data(feedback_evaluation=1, feedback_text="длинный отзыв")
-    callback = make_callback(uid=22)
+    await state.update_data(gen_id=100)
+    callback = make_callback(uid=23)
+    callback.data = "fb:finish:50"
 
     await feedback_handlers.handle_feedback_finish_choice(callback=callback, state=state)
 
-    assert patched_save_feedback == [(22, "длинный отзыв", None)]
+    assert patched_save_feedback == []
+    assert state.cleared is False
+    assert callback.answered == [("Этот запрос отзыва относится к устаревшей генерации.", True)]
