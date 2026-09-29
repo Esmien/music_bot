@@ -1,6 +1,8 @@
 """Интеграционные тесты worker-а генерации через контракты и TelegramPort."""
 
+import asyncio
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -31,6 +33,12 @@ class FakeSession:
 
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
         return None
+
+    async def execute(self, statement: Any) -> Any:
+        if self.generation and self.generation.status == GenerationStatus.PENDING:
+            self.generation.status = GenerationStatus.PROCESSING
+            return SimpleNamespace(scalar_one_or_none=lambda: self.generation.id)
+        return SimpleNamespace(scalar_one_or_none=lambda: None)
 
     async def get(self, model: type[Generation], gen_id: int) -> Generation | None:
         return self.generation
@@ -172,3 +180,59 @@ async def test_worker_skips_already_processed_generation(monkeypatch: pytest.Mon
 
     run_generation.assert_not_awaited()
     assert not telegram.sent_audio
+
+
+async def test_worker_atomic_claim_concurrent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Конкурентный запуск двух воркеров приводит ровно к одному вызову run_generation."""
+    generation = Generation(
+        id=4,
+        user_id=10,
+        prompt="тестовый промпт",
+        enriched_prompt={"text": "тестовый промпт"},
+        title="Тест",
+        status=GenerationStatus.PENDING,
+    )
+    lock = asyncio.Lock()
+    call_count = 0
+
+    class ConcurrentSession:
+        async def __aenter__(self) -> "ConcurrentSession":
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+            return None
+
+        async def execute(self, statement: Any) -> Any:
+            async with lock:
+                if generation.status == GenerationStatus.PENDING:
+                    generation.status = GenerationStatus.PROCESSING
+                    return SimpleNamespace(scalar_one_or_none=lambda: generation.id)
+                return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+        async def get(self, model: type[Generation], gen_id: int) -> Generation | None:
+            return generation
+
+        async def commit(self) -> None:
+            pass
+
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+        nonlocal call_count
+        call_count += 1
+        await asyncio.sleep(0.01)
+        return b"audio"
+
+    telegram = FakeTelegramPort()
+    monkeypatch.setattr(worker, "get_session", ConcurrentSession)
+    monkeypatch.setattr(worker, "run_generation", fake_run_generation)
+    monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
+
+    command = _command(gen_id=4)
+    context = _context(telegram)
+
+    await asyncio.gather(
+        worker.run_generation_task(command=command, context=context),
+        worker.run_generation_task(command=command, context=context),
+    )
+
+    assert call_count == 1
+    assert generation.status is GenerationStatus.SUCCESS

@@ -15,7 +15,6 @@ kanban-plugin: board
 
 
 ## 🔴 P0 — BLOCKER
-- [ ] [[🔴 `TASK-007` [🔴 P0] Атомарный claim платной генерации (AUD-002)]]
 - [ ] [[🔴 `TASK-008` [🔴 P0] Безопасная политика повторов OpenRouter (AUD-003)]]
 
 
@@ -47,6 +46,7 @@ kanban-plugin: board
 
 ## Done
 
+- [x] [[🔴 `TASK-007` [🔴 P0] Атомарный claim платной генерации (AUD-002)]]
 - [x] [[🔴 `TASK-006` [🔴 P0] Убрать `state.clear()` из ` credits` (AUD-013)]]
 - [x] [[🔴 `TASK-005` [🔴 P0] Исправить shutdown бота (AUD-006)]]
 - [x] [[🔴 `TASK-001` [🔴 P0] Исправить доступ к TaskIQ dependencies в event handlers (AUD-018)]]

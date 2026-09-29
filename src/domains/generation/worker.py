@@ -2,11 +2,13 @@
 
 import asyncio
 import logging
+import uuid
 
 from aiogram import Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.redis import RedisStorage
+from sqlalchemy import update
 from taskiq import Context, TaskiqDepends
 
 from core.broker import generation_broker  # type: ignore[attr-defined]
@@ -44,12 +46,23 @@ async def run_generation_task(
     state_dict = getattr(context, "state", getattr(context, "dependencies", {}))
     telegram: TelegramPort = state_dict["telegram_port"]
 
+    attempt_id = str(uuid.uuid4())
     async with get_session() as session:
-        generation = await session.get(Generation, command.gen_id)
-        if generation is None:
-            return
-        if generation.status is not GenerationStatus.PENDING:
-            log.info("Generation %s is already processed", command.gen_id)
+        claim_stmt = (
+            update(Generation)
+            .where(
+                Generation.id == command.gen_id,
+                Generation.status == GenerationStatus.PENDING,
+            )
+            .values(status=GenerationStatus.PROCESSING, attempt_id=attempt_id)
+            .returning(Generation.id)
+        )
+        result = await session.execute(claim_stmt)
+        claimed_id = result.scalar_one_or_none()
+        await session.commit()
+
+        if claimed_id is None:
+            log.info("Generation %s already claimed or processed, skipping", command.gen_id)
             return
 
     async def on_progress(stage: str, fraction: float) -> None:
@@ -81,7 +94,7 @@ async def run_generation_task(
         # Обновляем статус генерации в БД
         async with get_session() as session:
             generation = await session.get(Generation, command.gen_id)
-            if generation is None or generation.status is not GenerationStatus.PENDING:
+            if generation is None or generation.status is not GenerationStatus.PROCESSING:
                 return
             generation.status = GenerationStatus.SUCCESS
             await session.commit()
@@ -131,6 +144,12 @@ async def run_generation_task(
             await telegram.send_message(chat_id=command.chat_id, text="Генерация отменена.")
     except Exception as error:
         log.exception("Generation failed (gen_id=%s)", command.gen_id)
+        async with get_session() as session:
+            generation = await session.get(Generation, command.gen_id)
+            if generation is not None:
+                generation.status = GenerationStatus.FAILED
+                await session.commit()
+
         await notify_owner(
             telegram_port=telegram,
             context=f"Ошибка генерации gen_id={command.gen_id}",

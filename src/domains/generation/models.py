@@ -19,6 +19,7 @@ class GenerationStatus(StrEnum):
     """Статус жизненного цикла генерации."""
 
     PENDING = "pending"
+    PROCESSING = "processing"
     SUCCESS = "success"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -56,6 +57,7 @@ class Generation(Base):
         nullable=False,
     )
     title: Mapped[str | None] = mapped_column(String, nullable=True)
+    attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
