@@ -41,5 +41,9 @@ class GenerationAudioMissingError(RuntimeError):
     """Аудио не получено."""
 
 
+class GenerationLockTimeoutError(RuntimeError):
+    """Превышено время ожидания захвата блокировки генерации."""
+
+
 class FeedbackSaveError(RuntimeError):
     """Ошибка сохранения оценки или отзыва в БД."""

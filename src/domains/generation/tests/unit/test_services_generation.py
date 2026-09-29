@@ -19,8 +19,13 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
 
 
-def _audio_chunk(data_b64: str) -> str:
-    payload = {"choices": [{"delta": {"audio": {"data": data_b64}}}]}
+def _audio_chunk(data_b64: str, is_cumulative: bool = False, index: int | None = None) -> str:
+    audio_obj: dict[str, object] = {"data": data_b64}
+    if is_cumulative:
+        audio_obj["is_cumulative"] = True
+    if index is not None:
+        audio_obj["index"] = index
+    payload = {"choices": [{"delta": {"audio": audio_obj}}]}
     return "data: " + json.dumps(payload)
 
 
@@ -147,20 +152,46 @@ def patch_openrouter(monkeypatch):
     "lines, expected",
     [
         pytest.param(
-            [_audio_chunk(_b64(b"ABC")), _audio_chunk(_b64(b"DEF"))],
+            [_audio_chunk(_b64(b"ABC")), _audio_chunk(_b64(b"DEF")), "data: [DONE]"],
             b"ABCDEF",
             id="delta-chunks",
         ),
         pytest.param(
-            # Второй чанк начинается с первого: сервер шлёт снимки, а не дельты
-            [_audio_chunk(_b64(b"ABC")), _audio_chunk(_b64(b"ABCDEF"))],
+            # Повторяющиеся одинаковые дельты корректно конкатенируются (AUD-010)
+            [_audio_chunk(_b64(b"ABC")), _audio_chunk(_b64(b"ABC")), "data: [DONE]"],
+            b"ABCABC",
+            id="duplicate-deltas-preserve-all-data",
+        ),
+        pytest.param(
+            # Вторая дельта начинается с префикса первой дельты — обе дельты сохраняются
+            [_audio_chunk(_b64(b"ABC")), _audio_chunk(_b64(b"ABCDEF")), "data: [DONE]"],
+            b"ABCABCDEF",
+            id="deltas-with-shared-prefix-not-dropped",
+        ),
+        pytest.param(
+            # Явный кумулятивный поток: снимки содержат предыдущие данные и дают приращение
+            [
+                _audio_chunk(_b64(b"ABC"), is_cumulative=True),
+                _audio_chunk(_b64(b"ABCDEF"), is_cumulative=True),
+                "data: [DONE]",
+            ],
             b"ABCDEF",
             id="cumulative-chunks-yield-increment",
         ),
         pytest.param(
+            # Явный кумулятивный поток с отслеживанием индекса
+            [
+                _audio_chunk(_b64(b"ABC"), is_cumulative=True, index=0),
+                _audio_chunk(_b64(b"ABCDEF"), is_cumulative=True, index=len(_b64(b"ABC"))),
+                "data: [DONE]",
+            ],
+            b"ABCDEF",
+            id="cumulative-chunks-with-index",
+        ),
+        pytest.param(
             # Первый чанк обрезан посреди base64-группы (3 символа, не кратны 4):
             # декодировать его нельзя, буфер pending_b64 копится до следующего чанка
-            [_audio_chunk(_b64(b"ABCDEF")[:3]), _audio_chunk(_b64(b"ABCDEF")[3:])],
+            [_audio_chunk(_b64(b"ABCDEF")[:3]), _audio_chunk(_b64(b"ABCDEF")[3:]), "data: [DONE]"],
             b"ABCDEF",
             id="incomplete-chunk-accumulates",
         ),
@@ -171,16 +202,10 @@ def patch_openrouter(monkeypatch):
                 _audio_chunk(_b64(b"ABCDEF")[:2]),
                 _audio_chunk(_b64(b"ABCDEF")[2:4]),
                 _audio_chunk(_b64(b"ABCDEF")[4:]),
+                "data: [DONE]",
             ],
             b"ABCDEF",
             id="pending-spans-multiple-chunks",
-        ),
-        pytest.param(
-            # Снимки с неполными приращениями: первый снимок (3 символа) не кратен 4
-            # и не должен быть декодирован по частям, второй полностью его заменяет
-            [_audio_chunk(_b64(b"ABCDEF")[:3]), _audio_chunk(_b64(b"ABCDEF"))],
-            b"ABCDEF",
-            id="cumulative-chunks-with-pending",
         ),
         pytest.param(
             [
@@ -218,17 +243,45 @@ async def test_generate_song_real_reports_progress(patch_openrouter):
 
 
 @pytest.mark.parametrize(
-    "response, match",
+    "response, match, exc_type",
     [
-        pytest.param(FakeStreamResponse([], status_code=500), "OpenRouter 500", id="http-500"),
-        pytest.param(FakeStreamResponse(["data: [DONE]"]), "No audio received", id="stream-without-audio"),
-        pytest.param(FakeStreamResponse(["event: end"]), "No audio received", id="empty-stream"),
+        pytest.param(FakeStreamResponse([], status_code=500), "OpenRouter 500", gen.GenerationAPIError, id="http-500"),
+        pytest.param(
+            FakeStreamResponse(["data: [DONE]"]),
+            "No audio received",
+            gen.GenerationAudioMissingError,
+            id="stream-without-audio",
+        ),
+        pytest.param(
+            FakeStreamResponse(["event: end"]),
+            "terminal \\[DONE\\] event not received",
+            gen.GenerationStreamError,
+            id="empty-stream-without-done",
+        ),
     ],
 )
-async def test_generate_song_real_failures(patch_openrouter, response, match):
+async def test_generate_song_real_failures(patch_openrouter, response, match, exc_type):
     patch_openrouter(response)
 
-    with pytest.raises(RuntimeError, match=match):
+    with pytest.raises(exc_type, match=match):
+        await gen.generate_song_real(prompt="промпт", gen_id=999)
+
+
+async def test_generate_song_real_stream_without_done_raises(patch_openrouter):
+    """Обрыв потока без терминального события [DONE] вызывает GenerationStreamError."""
+    patch_openrouter(FakeStreamResponse([_audio_chunk(_b64(b"PARTIAL_AUDIO"))]))
+
+    with pytest.raises(gen.GenerationStreamError, match="terminal \\[DONE\\] event not received"):
+        await gen.generate_song_real(prompt="промпт", gen_id=999)
+
+
+async def test_generate_song_real_oversized_sse_line_raises(patch_openrouter, monkeypatch):
+    """Строка SSE, превышающая MAX_SSE_LINE_LENGTH, отклоняется до парсинга JSON."""
+    monkeypatch.setattr(gen, "MAX_SSE_LINE_LENGTH", 32)
+    oversized_line = "data: " + ("x" * 40)
+    patch_openrouter(FakeStreamResponse([oversized_line, "data: [DONE]"]))
+
+    with pytest.raises(gen.GenerationStreamError, match="SSE line exceeds limit"):
         await gen.generate_song_real(prompt="промпт", gen_id=999)
 
 
@@ -275,7 +328,7 @@ async def test_generate_song_real_retries_on_503(patch_openrouter, monkeypatch):
                 async def __aenter__(self):
                     if len(attempts) <= 2:
                         return FakeStreamResponse([], status_code=503)
-                    return FakeStreamResponse([_audio_chunk(_b64(b"SUCCESS"))], status_code=200)
+                    return FakeStreamResponse([_audio_chunk(_b64(b"SUCCESS")), "data: [DONE]"], status_code=200)
 
                 async def __aexit__(self, *exc_info):
                     return False
@@ -313,7 +366,7 @@ async def test_generate_song_real_retries_on_timeout(patch_openrouter, monkeypat
                 async def __aenter__(self):
                     if len(attempts) <= 2:
                         raise gen.httpx.TimeoutException("Connection timeout")
-                    return FakeStreamResponse([_audio_chunk(_b64(b"RECOVERED"))], status_code=200)
+                    return FakeStreamResponse([_audio_chunk(_b64(b"RECOVERED")), "data: [DONE]"], status_code=200)
 
                 async def __aexit__(self, *exc_info):
                     return False

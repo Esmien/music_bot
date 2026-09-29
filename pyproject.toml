@@ -32,6 +32,7 @@ pytest-asyncio = ">=1.0.0,<2.0.0"
 pytest-cov = ">=6.1.1,<7.0.0"
 ruff = ">=0.9.0"
 fakeredis = "^2.38.0"
+lupa = "^2.8"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

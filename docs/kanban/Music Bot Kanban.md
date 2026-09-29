@@ -20,8 +20,6 @@ kanban-plugin: board
 
 ## 🟠 P1 — HIGH
 
-- [ ] [[🟠 `TASK-013` [P1] Исправить SSE audio assembly (AUD-010)]]
-- [ ] [[🟠 `TASK-014` [P1] Устранить TOCTOU в Redis lock (AUD-009)]]
 - [ ] [[🟠 `TASK-015` [P1] Единообразная retry policy (AUD-014)]]
 
 
@@ -42,8 +40,9 @@ kanban-plugin: board
 
 ## Done
 
+- [x] [[🟠 `TASK-014` [P1] Устранить TOCTOU в Redis lock (AUD-009)]]
+- [x] [[🟠 `TASK-013` [P1] Исправить SSE audio assembly (AUD-010)]]
 - [x] [[🟠 `TASK-012` [P1] Привязать feedback к конкретному `gen_id` (AUD-007)]]
-
 - [x] [[🟠 `TASK-011` [P1] Завершение и recovery generation state (AUD-005)]]
 - [x] [[🟠 `TASK-010` [P1] Durable audio и отдельная доставка (AUD-004)]]
 - [x] [[🟠 `TASK-009` [P1] Привести event flow к единой модели (AUD-017)]]

@@ -25,6 +25,15 @@ else:
 
 GENERATION_CANCEL_KEY_PREFIX = "bot:cancel:gen"
 
+# Lua-скрипт для атомарного освобождения лока по токену владельца
+RELEASE_LOCK_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
+
 
 def generation_cancel_key(gen_id: int) -> str:
     """Возвращает Redis-ключ отмены генерации.
