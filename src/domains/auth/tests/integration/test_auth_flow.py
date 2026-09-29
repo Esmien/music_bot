@@ -9,6 +9,7 @@ from core.config import settings
 from core.database import User
 from domains.auth import handlers as auth_handlers
 from domains.auth import service as auth_service
+from domains.auth.registries.auth_registry import add_pending_auth, get_failed_key_attempts, is_pending_auth
 from domains.base import handlers as base_handlers
 from domains.generation.registries import task_registry
 
@@ -82,7 +83,7 @@ async def test_handle_key_counts_failed_attempts(patched_auth_db, clean_auth_sta
     for _ in range(attempt):
         await auth_handlers.handle_key(msg)
 
-    assert await auth_service.get_failed_key_attempts(uid=301) == attempt
+    assert await get_failed_key_attempts(uid=301) == attempt
     assert "Неверный ключ доступа." in msg.answers[-1]
     assert await auth_service.is_authorized(uid=301) is False
 
@@ -99,8 +100,8 @@ async def test_handle_key_blocks_after_max_attempts(patched_auth_db, clean_auth_
 
     assert "Слишком много неверных попыток" in msg.answers[-1]
     # После блокировки счётчик и статус ожидания должны быть сброшены
-    assert await auth_service.get_failed_key_attempts(uid=302) == 0
-    assert not await auth_service.is_pending_auth(uid=302)
+    assert await get_failed_key_attempts(uid=302) == 0
+    assert not await is_pending_auth(uid=302)
     assert await auth_service.is_authorized(uid=302) is False
 
 
@@ -146,7 +147,7 @@ async def test_cmd_start_greets_authorized(patched_auth_db, clean_auth_state, ma
 
     assert "Используйте кнопки ниже" in msg.answers[-1]
     assert state.cleared
-    assert not await auth_service.is_pending_auth(uid=42)
+    assert not await is_pending_auth(uid=42)
 
 
 async def test_cmd_start_puts_unauthorized_into_pending(patched_auth_db, clean_auth_state, make_message, fake_state):
@@ -158,12 +159,12 @@ async def test_cmd_start_puts_unauthorized_into_pending(patched_auth_db, clean_a
     await base_handlers.cmd_start(msg, fake_state())
 
     assert "отправьте ключ доступа" in msg.answers[-1]
-    assert await auth_service.is_pending_auth(uid=43)
+    assert await is_pending_auth(uid=43)
 
 
 async def test_require_auth_hints_unauthorized(patched_auth_db, clean_auth_state, make_message):
     """require_auth отклоняет ожидающего ключ и подсказывает, что делать."""
-    await auth_service.add_pending_auth(uid=44)
+    await add_pending_auth(uid=44)
     msg = make_message(uid=44)
 
     assert await auth_handlers.require_auth(msg) is False
@@ -172,7 +173,7 @@ async def test_require_auth_hints_unauthorized(patched_auth_db, clean_auth_state
 
 async def test_fallback_skips_users_waiting_for_key(patched_auth_db, clean_auth_state, make_message):
     """Fallback молчит для ожидающих ввод ключа — сообщение уйдёт в handle_key."""
-    await auth_service.add_pending_auth(uid=45)
+    await add_pending_auth(uid=45)
     msg = make_message(text="что-то", uid=45)
 
     await auth_handlers.fallback(msg)
@@ -297,7 +298,7 @@ async def test_cmd_logout_db_error_notifies_owner(patched_auth_db, make_message,
     def _failing_session_factory():
         raise SQLAlchemyError("database is down")
 
-    monkeypatch.setattr(auth_handlers, "get_session", _failing_session_factory)
+    monkeypatch.setattr(auth_service, "get_session", _failing_session_factory)
 
     notify_calls = []
 
@@ -331,7 +332,7 @@ async def test_cmd_logout_cancels_active_generation(patched_auth_db, make_messag
     с ожидания ключа, FSM очищается, is_authorized=False в БД.
     """
     await _make_user(patched_auth_db, tg_id=23, is_authorized=True)
-    await auth_service.add_pending_auth(uid=23)
+    await add_pending_auth(uid=23)
 
     class FakeTask:
         def __init__(self):
@@ -353,7 +354,7 @@ async def test_cmd_logout_cancels_active_generation(patched_auth_db, make_messag
     assert task.cancel_calls == 1
     assert "Вы вышли" in msg.answers[0]
     assert state.cleared is True
-    assert not await auth_service.is_pending_auth(uid=23)
+    assert not await is_pending_auth(uid=23)
 
     db_user = await _get_user(patched_auth_db, tg_id=23)
     assert db_user is not None

@@ -31,16 +31,15 @@ router = Router(name="credits")
 
 @router.message(Command("credits"))
 @router.message(F.text == CREDITS_BUTTON)
-async def cmd_credits(message: Message, state: FSMContext) -> None:
+async def cmd_credits(message: Message, state: FSMContext | None = None) -> None:
     """Проверяет кредиты OpenRouter и отправляет результат пользователю.
 
     Args:
         message: Входящее сообщение.
-        state: FSM-контекст; очищается для отмены незавершённого сценария.
+        state: Опциональный FSM-контекст пользователя (не модифицируется).
     """
     if not await require_auth(message):
         return
-    await state.clear()
 
     api_key = settings.bot.OPENROUTER_API_KEY
     if not api_key:

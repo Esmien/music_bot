@@ -7,7 +7,8 @@ from aiogram.types import Message
 
 from core.redis import request_generation_cancel
 from core.utils.fsm_helpers import get_fsm_data
-from domains.auth.service import add_pending_auth, discard_pending_auth, is_authorized
+from domains.auth.registries.auth_registry import add_pending_auth, discard_pending_auth
+from domains.auth.service import is_authorized
 from domains.base import base_messasges
 from domains.base.keyboards import CANCEL_BUTTON, get_main_keyboard
 from domains.base.service import get_last_generated_title

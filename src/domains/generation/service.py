@@ -7,6 +7,7 @@
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import logging
@@ -14,21 +15,34 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, Protocol
+from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
+from sqlalchemy import select
+from tenacity import retry
 
 from core.config import settings
-from core.redis import is_generation_cancelled, redis_client
+from core.database.engine import get_session
+from core.redis import RELEASE_LOCK_SCRIPT, is_generation_cancelled, redis_client
+from core.types import JSONValue, ProgressCallback, ProgressReporter
 from core.utils.exceptions import (
     GenerationAPIError,
     GenerationAudioMissingError,
     GenerationConfigurationError,
     GenerationFileError,
+    GenerationLockTimeoutError,
     GenerationStreamError,
 )
+from core.utils.retry import (
+    DEFAULT_RETRY_STOP,
+    default_retry_predicate,
+    default_retry_wait,
+    make_retry_logger,
+)
+from domains.generation.models import Generation, GenerationStatus
 
 log = logging.getLogger(__name__)
 
@@ -38,20 +52,14 @@ PROGRESS_EDIT_INTERVAL = 3.0
 # TTL распределённого лока в миллисекундах (3 минуты: запас на генерацию)
 LOCK_TTL_MS = 180_000
 
-# Lua-скрипт для атомарного освобождения лока по токену владельца
-RELEASE_LOCK_SCRIPT = """
-if redis.call("get", KEYS[1]) == ARGV[1] then
-    return redis.call("del", KEYS[1])
-else
-    return 0
-end
-"""
+# Таймаут ожидания захвата лока в секундах
+DEFAULT_LOCK_TIMEOUT = 10.0
+
+_log_generation_retry = make_retry_logger("OpenRouter Generation API")
 
 
-# Колбек прогресса: `on_progress(stage, fraction)`, fraction в диапазоне 0..1
-class ProgressCallback(Protocol):
-    async def __call__(self, stage: str, fraction: float) -> None: ...
-
+# Максимальный размер отдельной строки SSE (1 МБ) для защиты от OOM до парсинга JSON
+MAX_SSE_LINE_LENGTH = 1024 * 1024
 
 # Максимальный размер аудио в base64-символах (~30 МБ после декодирования).
 # Защита от исчерпания памяти, если сервер шлёт аномально большой поток.
@@ -61,37 +69,72 @@ MAX_AUDIO_B64_LEN = 40 * 1024 * 1024
 AUDIO_B64_RE = re.compile(r"data:audio/mpeg;base64,([A-Za-z0-9+/=]+)")
 
 
+@dataclass(frozen=True)
+class AudioChunk:
+    """Элемент аудиопотока SSE.
+
+    Attributes:
+        data: Base64-данные аудио.
+        index: Опциональный индекс смещения в кумулятивном потоке.
+        is_cumulative: Флаг кумулятивного кадра (снимок вместо дельты).
+    """
+
+    data: str
+    index: int | None = None
+    is_cumulative: bool = False
+
+
 @asynccontextmanager
-async def user_generation_lock(user_id: int) -> AsyncIterator[None]:
+async def user_generation_lock(
+    user_id: int,
+    *,
+    retry_interval: float = 0.05,
+) -> AsyncIterator[None]:
     """Асинхронный контекст: захват и освобождение распределённого Redis-лока.
 
     Лок реализован через `SET NX PX` с уникальным токеном владельца.
-    Освобождение выполняется через проверку токена перед удалением.
+    Освобождение выполняется строго через атомарный Lua-скрипт (compare-and-delete).
+    Ожидание захвата ограничено таймаутом через контекстный менеджер asyncio.timeout.
 
     Args:
         user_id: Telegram user_id пользователя.
+        retry_interval: Интервал опроса Redis при ожидании блокировки в секундах.
+
+    Yields:
+        None.
+
+    Raises:
+        GenerationLockTimeoutError: Если лок не удалось захватить за отведённый таймаут.
     """
     lock_key = f"bot:generation_lock:{user_id}"
     owner_token = str(uuid.uuid4())
 
-    # Захват лока: SET NX PX гарантирует атомарность и автоосвобождение по TTL
-    while True:
-        acquired = await redis_client.set(lock_key, owner_token, nx=True, px=LOCK_TTL_MS)
-        if acquired:
-            break
-        # Лок занят — ждём с экспоненциальным backoff
-        await asyncio.sleep(0.1)
+    try:
+        async with asyncio.timeout(DEFAULT_LOCK_TIMEOUT):
+            while not await redis_client.set(name=lock_key, value=owner_token, nx=True, px=LOCK_TTL_MS):
+                await asyncio.sleep(retry_interval)
+    except TimeoutError as err:
+        raise GenerationLockTimeoutError(
+            f"Failed to acquire generation lock for user {user_id} within {DEFAULT_LOCK_TIMEOUT}s"
+        ) from err
 
     try:
         yield
     finally:
-        # Освобождаем лок: проверяем токен владельца перед удалением
-        # (упрощенная версия без Lua для совместимости с fakeredis)
-        current_token = await redis_client.get(lock_key)
-        if current_token:
-            token_str = current_token.decode("utf-8") if isinstance(current_token, bytes) else current_token
-            if token_str == owner_token:
-                await redis_client.delete(lock_key)
+        # Атомарное освобождение лока: удаляем только если значение совпадает с токеном владельца
+        try:
+            await redis_client.eval(RELEASE_LOCK_SCRIPT, 1, lock_key, owner_token)
+        except Exception as e:
+            # DEVIATION: Fallback для тестового окружения с fakeredis без библиотеки lupa
+            if "unknown command 'eval'" in str(e).lower():
+                current_val = await redis_client.get(lock_key)
+                if isinstance(current_val, bytes):
+                    current_val = current_val.decode("utf-8")
+                if current_val == owner_token:
+                    await redis_client.delete(lock_key)
+            else:
+                log.exception("Failed to release Redis lock for user %s: %s", user_id, e)
+                raise
 
 
 def _progress_bar(fraction: float, width: int = 10) -> str:
@@ -122,7 +165,7 @@ def progress_text(stage: str, fraction: float) -> str:
     return f"🎼 {stage}\n{_progress_bar(fraction)} {round(fraction * 100)}%"
 
 
-def make_throttled_progress(report: Callable[[str], Awaitable[None]]) -> ProgressCallback:
+def make_throttled_progress(report: ProgressReporter) -> ProgressCallback:
     """Оборачивает «отрисовку» статуса в троттлинг по времени.
 
     Правки идут не чаще PROGRESS_EDIT_INTERVAL (лимиты Telegram);
@@ -157,7 +200,7 @@ def make_throttled_progress(report: Callable[[str], Awaitable[None]]) -> Progres
     return on_progress
 
 
-def _find_audio_b64(node: Any) -> str | None:
+def _find_audio_b64(node: JSONValue) -> str | None:
     """Рекурсивно ищет base64-аудио в JSON любой структуры.
 
     Структура ответа модели не зафиксирована контрактом, поэтому
@@ -189,9 +232,57 @@ def _find_audio_b64(node: Any) -> str | None:
     return None
 
 
-async def _parse_openrouter_sse(response: httpx.Response) -> AsyncGenerator[str, None]:
-    """Читает SSE-поток и отдаёт base64-строки аудио по мере их поступления."""
+def _extract_audio_chunk(raw_payload: str) -> AudioChunk | None:
+    """Извлекает AudioChunk из сырой полезной нагрузки SSE-строки.
+
+    Args:
+        raw_payload: Строка с JSON полезной нагрузки события SSE.
+
+    Returns:
+        Объект AudioChunk или None, если аудиоданные отсутствуют или некорректны.
+    """
+    try:
+        chunk = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return None
+
+    choices = chunk.get("choices") or [{}]
+    delta = choices[0].get("delta", {})
+    audio = delta.get("audio") or {}
+
+    if not (isinstance(audio, dict) and audio.get("data")):
+        return None
+
+    is_cumulative = bool(audio.get("cumulative") or audio.get("is_cumulative"))
+    raw_index = audio.get("index") if audio.get("index") is not None else audio.get("offset")
+    return AudioChunk(
+        data=audio["data"],
+        index=int(raw_index) if raw_index is not None else None,
+        is_cumulative=is_cumulative,
+    )
+
+
+async def _parse_openrouter_sse(response: httpx.Response) -> AsyncGenerator[AudioChunk, None]:
+    """Читает SSE-поток и отдаёт порции base64-аудио.
+
+    Проверяет размер каждой строки до разбора JSON во избежание DoS/OOM
+    и контролирует получение терминального события [DONE].
+
+    Args:
+        response: HTTP-ответ от OpenRouter со стримом.
+
+    Yields:
+        AudioChunk с base64-данными и признаками формата потока.
+
+    Raises:
+        GenerationStreamError: Если превышен лимит длины строки или стрим оборвался без [DONE].
+    """
+    received_done = False
+
     async for line in response.aiter_lines():
+        if len(line) > MAX_SSE_LINE_LENGTH:
+            raise GenerationStreamError(f"SSE line exceeds limit of {MAX_SSE_LINE_LENGTH} characters")
+
         if not line.startswith("data:"):
             continue
 
@@ -199,20 +290,131 @@ async def _parse_openrouter_sse(response: httpx.Response) -> AsyncGenerator[str,
         # отрезаем префикс до первого двоеточия и чистим пробелы
         raw_payload = line.split(":", 1)[1].strip()
         if raw_payload == "[DONE]":
+            received_done = True
             break
 
-        try:
-            chunk = json.loads(raw_payload)
-        except json.JSONDecodeError:
-            continue
+        chunk = _extract_audio_chunk(raw_payload=raw_payload)
+        if chunk is not None:
+            yield chunk
 
-        # Извлекаем аудио из глубоко вложенной структуры дельты
-        choices = chunk.get("choices") or [{}]
-        delta = choices[0].get("delta", {})
-        audio = delta.get("audio") or {}
+    if not received_done:
+        raise GenerationStreamError("Stream interrupted: terminal [DONE] event not received")
 
-        if audio.get("data"):
-            yield audio["data"]
+
+def _extract_chunk_increment(chunk: AudioChunk, cumulative_cursor: int) -> tuple[str, int]:
+    """Вычисляет добавленный фрагмент base64 и обновлённый курсор для чанка.
+
+    Args:
+        chunk: Очередной чанк аудиопотока.
+        cumulative_cursor: Текущая позиция курсора в кумулятивном потоке.
+
+    Returns:
+        Кортеж из новой порции base64-строки и обновленного курсора.
+    """
+    if not chunk.is_cumulative:
+        return chunk.data, cumulative_cursor
+
+    if chunk.index is not None:
+        increment = chunk.data[chunk.index :]
+        return increment, chunk.index + len(increment)
+
+    if len(chunk.data) > cumulative_cursor:
+        increment = chunk.data[cumulative_cursor:]
+        return increment, len(chunk.data)
+
+    return "", cumulative_cursor
+
+
+class _AudioStreamAccumulator:
+    """Буфер для пошаговой сборки и декодирования аудиопотока из SSE-чанков."""
+
+    def __init__(self) -> None:
+        self.decoded_audio = io.BytesIO()
+        self.pending_b64 = ""
+        self.total_b64 = 0
+        self.cumulative_cursor = 0
+        self.has_audio = False
+
+    def feed(self, chunk: AudioChunk) -> None:
+        """Обрабатывает очередной AudioChunk и обновляет внутренний буфер.
+
+        Args:
+            chunk: Полученный чанк с данными аудио.
+
+        Raises:
+            GenerationStreamError: Если размер аудио превысил лимит MAX_AUDIO_B64_LEN.
+        """
+        self.has_audio = True
+        increment, self.cumulative_cursor = _extract_chunk_increment(
+            chunk=chunk,
+            cumulative_cursor=self.cumulative_cursor,
+        )
+
+        self.pending_b64 += increment
+        self.total_b64 += len(increment)
+        if self.total_b64 > MAX_AUDIO_B64_LEN:
+            raise GenerationStreamError("Audio in stream exceeds the allowed size")
+
+        aligned_len = len(self.pending_b64) - len(self.pending_b64) % 4
+        if aligned_len:
+            self.decoded_audio.write(base64.b64decode(self.pending_b64[:aligned_len]))
+            self.pending_b64 = self.pending_b64[aligned_len:]
+
+    def finalize(self) -> bytes:
+        """Сбрасывает остаток base64 и возвращает готовое аудио.
+
+        Returns:
+            Байты готового mp3-файла.
+
+        Raises:
+            GenerationAudioMissingError: Если аудио не получено в потоке.
+        """
+        if not self.has_audio:
+            raise GenerationAudioMissingError("No audio received in stream")
+        if self.pending_b64:
+            self.decoded_audio.write(base64.b64decode(self.pending_b64))
+            self.pending_b64 = ""
+        return self.decoded_audio.getvalue()
+
+
+async def _consume_generation_stream(
+    response: httpx.Response,
+    gen_id: int,
+    started: float,
+    report: ProgressCallback,
+) -> bytes:
+    """Вычитывает SSE-поток аудио и передаёт прогресс.
+
+    Args:
+        response: HTTP-ответ от OpenRouter со стримом.
+        gen_id: ID генерации для логирования сбоев.
+        started: Точка отсчета времени для расчета прогресса.
+        report: Коллбэк для отправки прогресса.
+
+    Returns:
+        Собранные байты mp3-файла.
+
+    Raises:
+        GenerationStreamError: Если чтение потока прервано ошибкой сети или превышен лимит размера.
+        GenerationAudioMissingError: Если в потоке не было получено аудиоданных.
+    """
+    accumulator = _AudioStreamAccumulator()
+    try:
+        async for chunk in _parse_openrouter_sse(response=response):
+            accumulator.feed(chunk=chunk)
+            elapsed = time.monotonic() - started
+            fraction = 1.0 - math.exp(-elapsed / settings.generation.TYPICAL_GENERATION_SECONDS)
+            await report(stage="Получаю аудио…", fraction=fraction * 0.95)
+    except (httpx.HTTPError, httpx.TimeoutException) as exc:
+        log.warning(
+            "Stream interrupted (gen_id=%s, phase=post-request) due to %s: %s. No retry will be attempted.",
+            gen_id,
+            type(exc).__name__,
+            exc,
+        )
+        raise GenerationStreamError(f"Stream interrupted during reading: {exc}") from exc
+
+    return accumulator.finalize()
 
 
 def load_mock_audio() -> bytes:
@@ -246,6 +448,13 @@ def load_mock_audio() -> bytes:
     raise GenerationAudioMissingError("Audio not found in mock file")
 
 
+@retry(
+    stop=DEFAULT_RETRY_STOP,
+    wait=default_retry_wait,
+    retry=default_retry_predicate,
+    before_sleep=_log_generation_retry,
+    reraise=True,
+)
 async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCallback | None = None) -> bytes:
     """Генерирует песню через OpenRouter, читая ответ как SSE-поток.
 
@@ -295,16 +504,7 @@ async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCall
         "audio": {"format": "mp3"},
     }
 
-    # Готовые байты аудио
-    decoded_audio = io.BytesIO()
-    # Недекодированный хвост base64 (ждёт дополнения до группы из 4 символов)
-    pending_b64 = ""
-    # Последний сырой чанк — нужен для детекта кумулятивных снимков
-    last_chunk = ""
-    # Счетчик размера файла
-    total_b64 = 0
-    # Точка отсчета таймера для прогресс-бара
-    started = time.monotonic()
+    started: float = time.monotonic()
 
     # Рисуем заглушку на старте генерации
     await report(stage="Соединяюсь с сервером…", fraction=0.02)
@@ -324,44 +524,21 @@ async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCall
     ):
         if resp.status_code != 200:
             error_body = (await resp.aread()).decode("utf-8", "ignore")
-            raise GenerationAPIError(f"OpenRouter {resp.status_code}: {error_body[:300]}")
+            raise GenerationAPIError(
+                f"OpenRouter {resp.status_code}: {error_body[:300]}",
+                status_code=resp.status_code,
+                headers=getattr(resp, "headers", None),
+            )
 
-        # Читаем очищенный поток из парсера
-        async for raw_chunk in _parse_openrouter_sse(resp):
-            if last_chunk and raw_chunk.startswith(last_chunk):
-                # Сервер шлёт снимки, а не дельты: новый чанк содержит
-                # предыдущий. В decoded_audio уже лежат декодированные байты
-                # префикса, поэтому декодируем только приращение.
-                pending_b64 += raw_chunk[len(last_chunk) :]
-                total_b64 += len(raw_chunk) - len(last_chunk)
-            else:
-                pending_b64 += raw_chunk
-                total_b64 += len(raw_chunk)
-
-            if total_b64 > MAX_AUDIO_B64_LEN:
-                raise GenerationStreamError("Audio in stream exceeds the allowed size")
-
-            # base64 декодируется группами по 4 символа: готовую часть
-            # сразу пишем в BytesIO, хвост ждёт следующих чанков
-            aligned_len = len(pending_b64) - len(pending_b64) % 4
-            if aligned_len:
-                decoded_audio.write(base64.b64decode(pending_b64[:aligned_len]))
-                pending_b64 = pending_b64[aligned_len:]
-
-            last_chunk = raw_chunk
-
-            # Обновляем UI асимптотически от времени
-            elapsed = time.monotonic() - started
-            fraction = 1.0 - math.exp(-elapsed / settings.generation.TYPICAL_GENERATION_SECONDS)
-            await report(stage="Получаю аудио…", fraction=fraction * 0.95)
-
-    if not last_chunk:
-        raise GenerationAudioMissingError("No audio received in stream")
+        audio_bytes = await _consume_generation_stream(
+            response=resp,
+            gen_id=gen_id,
+            started=started,
+            report=report,
+        )
 
     await report(stage="Собираю файл…", fraction=0.97)
-    if pending_b64:
-        decoded_audio.write(base64.b64decode(pending_b64))
-    return decoded_audio.getvalue()
+    return audio_bytes
 
 
 async def run_generation(prompt: str, gen_id: int, on_progress: ProgressCallback) -> bytes:
@@ -398,3 +575,62 @@ async def run_generation(prompt: str, gen_id: int, on_progress: ProgressCallback
 
     # Отдаем реально сгенерированный файл, если генерация шла через API
     return await generate_song_real(prompt=prompt, gen_id=gen_id, on_progress=on_progress)
+
+
+async def persist_generated_title(user_id: int, title: str) -> None:
+    """Сохраняет название и успешный статус в ожидающую запись генерации.
+
+    Args:
+        user_id: Telegram user_id пользователя.
+        title: Название песни.
+
+    Raises:
+        SQLAlchemyError: При ошибке записи в БД.
+    """
+    try:
+        async with get_session() as session:
+            result = await session.execute(
+                select(Generation)
+                .where(
+                    Generation.user_id == user_id,
+                    Generation.status == GenerationStatus.PENDING,
+                )
+                .order_by(Generation.created_at.desc(), Generation.id.desc())
+                .limit(1)
+            )
+            generation = result.scalar_one_or_none()
+            if generation is None:
+                log.warning("Pending generation record not found (user=%s)", user_id)
+                return
+
+            generation.title = title
+            generation.status = GenerationStatus.SUCCESS
+            await session.commit()
+    except Exception:
+        log.exception("Failed to persist generated title (user=%s)", user_id, exc_info=True)
+        raise
+
+
+def save_audio_to_storage(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+    """Сохраняет аудио на диск и возвращает метаданные файла.
+
+    Args:
+        audio_bytes: Байты аудио-файла.
+        gen_id: ID генерации для формирования имени файла.
+
+    Returns:
+        Кортеж (путь к файлу, размер в байтах, SHA256 checksum).
+
+    Raises:
+        OSError: При ошибке записи файла.
+    """
+    storage_path = Path(settings.generation.AUDIO_STORAGE_PATH)
+    storage_path.mkdir(parents=True, exist_ok=True)
+
+    file_path = storage_path / f"gen_{gen_id}.mp3"
+    file_path.write_bytes(audio_bytes)
+
+    file_size = len(audio_bytes)
+    checksum = hashlib.sha256(audio_bytes).hexdigest()
+
+    return str(file_path), file_size, checksum

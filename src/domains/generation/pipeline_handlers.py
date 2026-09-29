@@ -14,7 +14,6 @@ from uuid import uuid4
 from aiogram.enums import ChatAction
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, Message
-from sqlalchemy import select
 
 from core.broker import generation_broker
 from core.database.engine import get_session
@@ -29,7 +28,12 @@ from domains.generation.generation_messages import (
 from domains.generation.keyboards import get_retry_keyboard
 from domains.generation.models import Generation, GenerationStatus
 from domains.generation.registries.task_registry import register_active_task, unregister_active_task
-from domains.generation.service import ProgressCallback, make_throttled_progress, user_generation_lock
+from domains.generation.service import (
+    ProgressCallback,
+    make_throttled_progress,
+    persist_generated_title,
+    user_generation_lock,
+)
 from domains.generation.state_models import GenerationFlowState
 from shared.contracts.commands import RunGeneration
 
@@ -264,39 +268,10 @@ async def _deliver_result(gen_context: GenerationContext, status: Message, audio
         flow_state.generating = False
         await update_fsm_data(state=gen_context.state, model=flow_state)
 
-    await _persist_generated_title(gen_context=gen_context)
+    await persist_generated_title(user_id=gen_context.user_id, title=gen_context.title)
 
     with contextlib.suppress(Exception):
         await status.delete()
-
-
-async def _persist_generated_title(gen_context: GenerationContext) -> None:
-    """Сохраняет название и успешный статус в ожидающую запись генерации.
-
-    Args:
-        gen_context: Контекст запуска генерации.
-    """
-    try:
-        async with get_session() as session:
-            result = await session.execute(
-                select(Generation)
-                .where(
-                    Generation.user_id == gen_context.user_id,
-                    Generation.status == GenerationStatus.PENDING,
-                )
-                .order_by(Generation.created_at.desc(), Generation.id.desc())
-                .limit(1)
-            )
-            generation = result.scalar_one_or_none()
-            if generation is None:
-                log.warning("Pending generation record not found (user=%s)", gen_context.user_id)
-                return
-
-            generation.title = gen_context.title
-            generation.status = GenerationStatus.SUCCESS
-            await session.commit()
-    except Exception:
-        log.exception("Failed to persist generated title (user=%s)", gen_context.user_id, exc_info=True)
 
 
 async def _release_slot(gen_context: GenerationContext) -> None:

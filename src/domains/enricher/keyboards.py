@@ -46,6 +46,19 @@ def get_enrich_failed_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_enrich_exhausted_keyboard() -> InlineKeyboardMarkup:
+    """Создаёт клавиатуру продолжения без обогащения или отмены после исчерпания попыток.
+
+    Returns:
+        Клавиатура с действиями после исчерпания попыток обогащения.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text=PROMPT_FALLBACK_BUTTON, callback_data=CB_PROMPT_FALLBACK)
+    builder.button(text=PROMPT_CANCEL_BUTTON, callback_data=CB_PROMPT_CANCEL)
+    builder.adjust(2)
+    return builder.as_markup()
+
+
 def get_title_keyboard() -> InlineKeyboardMarkup:
     """Создаёт клавиатуру выбора названия песни.
 

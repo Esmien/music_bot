@@ -4,7 +4,7 @@
 импортируют только этот файл, ничего не читая из окружения напрямую.
 """
 
-from pydantic import computed_field
+from pydantic import computed_field, field_validator
 from pydantic_core import MultiHostUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -19,6 +19,10 @@ class BaseModelConfig(BaseSettings):
 class BotConfig(BaseModelConfig):
     """Токены и идентификаторы, связанные с ботом и внешними API."""
 
+    """Настройки Telegram-бота и внешних API.
+
+    Содержит токен бота, режим webhook, ключи OpenRouter и access key."""
+
     BOT_TOKEN: str
     WEBHOOK_MODE: bool = False
     WEBHOOK_BASE_URL: str = ""
@@ -32,9 +36,9 @@ class BotConfig(BaseModelConfig):
 class EnrichPromptConfig(BaseModelConfig):
     """Настройки модели обогащения пользовательского промпта.
 
-    Пустые значения допустимы: обогатитель опционален. При незаданных
-    настройках enrich_prompt сигнализирует ValueError, а хендлер
-    предлагает продолжить сценарий с исходным описанием песни.
+    Пустые значения допустимы: обогатитель опционален.
+    При незаданных настройках enrich_prompt сигнализирует ValueError,
+    а хендлер предлагает продолжить сценарий с исходным описанием песни.
     """
 
     ENRICH_URL: str = ""
@@ -45,21 +49,24 @@ class EnrichPromptConfig(BaseModelConfig):
 class GenerationConfig(BaseModelConfig):
     """Настройки генерации песен.
 
-    SONG_PRICE обязательна: без цены генерации расчёт остатков песен
-    невозможен — pydantic упадёт с ValidationError при старте (fail fast).
+    SONG_PRICE обязательна для расчёта остатка генераций.
+    MOCK_MODE позволяет тестировать без реальных API-вызовов.
+    AUDIO_STORAGE_PATH — директория для сохранения аудио-файлов.
     """
 
     SONG_PRICE: float
     MOCK_MODE: bool = False
     MOCK_FILE: str = ""
     TYPICAL_GENERATION_SECONDS: float = 30.0
+    AUDIO_STORAGE_PATH: str = "/var/lib/lyria/audio"
 
 
 class DatabaseConfig(BaseModelConfig):
     """Параметры подключения к PostgreSQL.
 
-    asyncpg — асинхронный драйвер, обязательный для SQLAlchemy в async-режиме.
-    В Docker переопределяется через docker-compose, aiosqlite остаётся для локальных тестов.
+    asyncpg — асинхронный драйвер для SQLAlchemy в async-режиме.
+    В Docker переопределяется через docker-compose,
+    aiosqlite используется для локальных тестов.
     """
 
     POSTGRES_USER: str
@@ -68,6 +75,7 @@ class DatabaseConfig(BaseModelConfig):
     POSTGRES_PORT: int
     POSTGRES_DB: str
 
+    @computed_field
     @property
     def postgres_host(self) -> str:
         return "localhost" if self.DEV_MODE else self.POSTGRES_HOST
@@ -89,9 +97,18 @@ class DatabaseConfig(BaseModelConfig):
 class RabbitMQConfig(BaseModelConfig):
     """Параметры RabbitMQ и именования очередей TaskIQ."""
 
-    RABBITMQ_URL: str = "amqp://guest:guest@localhost:5672/"
+    RABBITMQ_USER: str = "guest"
+    RABBITMQ_PASSWORD: str = "guest"
+    RABBITMQ_URL: str = ""
     RABBITMQ_PREFETCH: int = 10
     RABBITMQ_QUEUE_PREFIX: str = "dev"
+
+    @field_validator("RABBITMQ_USER", "RABBITMQ_PASSWORD", mode="after")
+    @classmethod
+    def validate_non_empty(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Field must not be empty")
+        return value
 
     @property
     def queue_prefix(self) -> str:
@@ -126,12 +143,13 @@ class RabbitMQConfig(BaseModelConfig):
 
 
 class RedisConfig(BaseModelConfig):
-    """Redis: хранение FSM-состояний (переживают рестарт контейнера)."""
+    """Настройки Redis для FSM и служебных реестров."""
 
     REDIS_HOST: str
     REDIS_PORT: int
     REDIS_VAULT: str = "0"
 
+    @computed_field
     @property
     def redis_host(self) -> str:
         return "localhost" if self.DEV_MODE else self.REDIS_HOST

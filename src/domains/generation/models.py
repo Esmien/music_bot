@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import JSON, BigInteger, DateTime, Enum, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,6 +19,7 @@ class GenerationStatus(StrEnum):
     """Статус жизненного цикла генерации."""
 
     PENDING = "pending"
+    PROCESSING = "processing"
     SUCCESS = "success"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -52,10 +53,14 @@ class Generation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     enriched_prompt: Mapped[dict] = mapped_column(
-        JSON().with_variant(JSONB(), "postgresql"),
+        JSON().with_variant(JSONB(), "postgresql"),  # type: ignore[arg-type]
         nullable=False,
     )
     title: Mapped[str | None] = mapped_column(String, nullable=True)
+    attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    audio_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    audio_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    audio_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

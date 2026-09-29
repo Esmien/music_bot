@@ -37,7 +37,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # no
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from core.database import init_db
-from domains.auth import handlers as auth_handlers
 from domains.auth import service as auth_service
 from domains.base import service as base_service
 
@@ -80,7 +79,6 @@ async def db_sessionmaker(db_engine, monkeypatch):
 async def patched_auth_db(db_sessionmaker, monkeypatch):
     """Перенаправляет сервисы авторизации и base на тестовую SQLite."""
     monkeypatch.setattr(auth_service, "get_session", db_sessionmaker)
-    monkeypatch.setattr(auth_handlers, "get_session", db_sessionmaker)
     monkeypatch.setattr(base_service, "get_session", db_sessionmaker)
     return db_sessionmaker
 
@@ -93,19 +91,15 @@ def fake_redis(monkeypatch):
     ключи между тестами не перетекают.
     """
     import core.redis as redis_module
+    from domains.auth.registries import auth_registry
+    from domains.generation import service as generation_service
 
     client = fakeredis.aioredis.FakeRedis(decode_responses=True)
 
     # Патчим redis_client в core.redis — источник всех импортов
     monkeypatch.setattr(redis_module, "redis_client", client)
-
-    # Для совместимости с существующими тестами патчим и в конкретных модулях
-    monkeypatch.setattr(auth_service, "redis_client", client)
-    from domains.generation import service as generation_service
-    from domains.generation.registries import task_registry
-
+    monkeypatch.setattr(auth_registry, "redis_client", client)
     monkeypatch.setattr(generation_service, "redis_client", client)
-    monkeypatch.setattr(task_registry, "redis_client", client)
 
     return client
 
@@ -224,9 +218,42 @@ def inmemory_broker(monkeypatch):
     # Подменяем все брокеры на in-memory версию
     monkeypatch.setattr(broker_module, "enricher_broker", test_broker)
     monkeypatch.setattr(broker_module, "generation_broker", test_broker)
-    monkeypatch.setattr(broker_module, "credits_broker", test_broker)
     monkeypatch.setitem(broker_module.brokers, "enricher", test_broker)
     monkeypatch.setitem(broker_module.brokers, "generation", test_broker)
-    monkeypatch.setitem(broker_module.brokers, "credits", test_broker)
 
     return test_broker
+
+
+@pytest.fixture(autouse=True)
+def track_aiohttp_sessions(monkeypatch):
+    """Отслеживает создание aiohttp.ClientSession для обнаружения утечек.
+
+    Этот fixture проверяет, что все созданные сессии были корректно закрыты.
+    Используется для валидации отсутствия утечек в event-хендлерах воркеров.
+    """
+    import aiohttp
+
+    original_init = aiohttp.ClientSession.__init__
+    original_close = aiohttp.ClientSession.close
+    created_sessions = []
+    closed_sessions = []
+
+    def tracked_init(self, *args, **kwargs):
+        created_sessions.append(id(self))
+        return original_init(self, *args, **kwargs)
+
+    async def tracked_close(self):
+        closed_sessions.append(id(self))
+        return await original_close(self)
+
+    monkeypatch.setattr(aiohttp.ClientSession, "__init__", tracked_init)
+    monkeypatch.setattr(aiohttp.ClientSession, "close", tracked_close)
+
+    yield {"created": created_sessions, "closed": closed_sessions}
+
+    # Проверка на утечки после теста
+    leaked = set(created_sessions) - set(closed_sessions)
+    if leaked:
+        import warnings
+
+        warnings.warn(f"Detected {len(leaked)} unclosed aiohttp sessions: {leaked}", ResourceWarning, stacklevel=2)

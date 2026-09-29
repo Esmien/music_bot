@@ -2,8 +2,8 @@
 
 from sqlalchemy import select
 
-from core.database.engine import get_session
-from domains.generation.models import Generation, GenerationStatus
+from core.database.engine import get_session  # type: ignore[attr-defined]
+from domains.generation.models import Generation, GenerationStatus  # type: ignore[attr-defined]
 
 
 async def get_last_generated_title(uid: int) -> str | None:

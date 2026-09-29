@@ -8,14 +8,14 @@ import logging
 
 from taskiq import Context, TaskiqDepends
 
-from core.broker import enricher_broker
-from core.utils.error_notify import notify_owner
-from core.utils.exceptions import EnricherResponseInvalidError
-from domains.enricher.service import enrich_prompt
-from domains.enricher.validator import validate_enriched_prompt
-from shared.contracts.commands import StartEnrichment
-from shared.contracts.events import EnrichmentCompleted, GenerationFailed
-from shared.ports.telegram import TelegramPort
+from core.broker import enricher_broker  # type: ignore[attr-defined]
+from core.utils.error_notify import notify_owner  # type: ignore[attr-defined]
+from core.utils.exceptions import EnricherResponseInvalidError  # type: ignore[attr-defined]
+from domains.enricher.service import enrich_prompt  # type: ignore[attr-defined]
+from domains.enricher.validator import validate_enriched_prompt  # type: ignore[attr-defined]
+from shared.contracts.commands import StartEnrichment  # type: ignore[attr-defined]
+from shared.contracts.events import EnrichmentCompleted, GenerationFailed  # type: ignore[attr-defined]
+from shared.ports.telegram import TelegramPort  # type: ignore[attr-defined]
 
 logger = logging.getLogger(__name__)
 
@@ -122,34 +122,42 @@ async def enrich_prompt_task(
 
 
 @enricher_broker.task(task_name="handle_enrichment_completed")
-async def handle_enrichment_completed_task(event: EnrichmentCompleted | dict | str) -> None:
+async def handle_enrichment_completed_task(
+    event: EnrichmentCompleted | dict | str,
+    context: Context = TaskiqDepends(),
+) -> None:
     """Передаёт событие успешного обогащения обработчику бота.
 
     Args:
         event: Событие с результатом обогащения.
+        context: Контекст TaskIQ с зависимостями.
     """
     if isinstance(event, str):
         event = EnrichmentCompleted.model_validate_json(event)
     elif not isinstance(event, EnrichmentCompleted):
         event = EnrichmentCompleted.model_validate(event)
 
-    from domains.enricher.handlers import handle_enrichment_completed_event
+    from domains.enricher.handlers import handle_enrichment_completed_event  # type: ignore[attr-defined]
 
-    await handle_enrichment_completed_event(event=event)
+    await handle_enrichment_completed_event(event=event, context=context)
 
 
 @enricher_broker.task(task_name="handle_generation_failed")
-async def handle_generation_failed_task(event: GenerationFailed | dict | str) -> None:
+async def handle_generation_failed_task(
+    event: GenerationFailed | dict | str,
+    context: Context = TaskiqDepends(),
+) -> None:
     """Передаёт событие сбоя обработчику бота.
 
     Args:
         event: Событие с описанием ошибки.
+        context: Контекст TaskIQ с зависимостями.
     """
     if isinstance(event, str):
         event = GenerationFailed.model_validate_json(event)
     elif not isinstance(event, GenerationFailed):
         event = GenerationFailed.model_validate(event)
 
-    from domains.enricher.handlers import handle_generation_failed_event
+    from domains.enricher.handlers import handle_generation_failed_event  # type: ignore[attr-defined]
 
-    await handle_generation_failed_event(event=event)
+    await handle_generation_failed_event(event=event, context=context)

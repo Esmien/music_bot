@@ -7,12 +7,9 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, Filter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, ReplyKeyboardRemove
-from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.config import settings
-from core.database import User
-from core.database.engine import get_session
 from core.utils.error_notify import notify_owner
 from core.utils.exceptions import AccessKeyNotSet
 from domains.auth.auth_messages import (
@@ -24,11 +21,11 @@ from domains.auth.auth_messages import (
     LOGOUT_SUCCESS,
     UNKNOWN_MESSAGE,
 )
+from domains.auth.registries.auth_registry import discard_pending_auth, is_pending_auth
 from domains.auth.service import (
     check_key_with_attempts,
-    discard_pending_auth,
     is_authorized,
-    is_pending_auth,
+    logout_user,
     mark_user_authorized,
 )
 from domains.base.keyboards import LOGOUT_BUTTON, get_main_keyboard
@@ -90,21 +87,6 @@ async def require_auth(message: Message) -> bool:
     return True
 
 
-async def _logout_user(uid: int) -> None:
-    """Снимает авторизацию пользователя в базе данных.
-
-    Args:
-        uid: Telegram user_id.
-    """
-    async with get_session() as session:
-        result = await session.execute(select(User).where(User.tg_id == uid))
-        db_user = result.scalar_one_or_none()
-        if db_user:
-            db_user.is_authorized = False
-            session.add(db_user)
-            await session.commit()
-
-
 @router.message(Command("logout"))
 @router.message(F.text == LOGOUT_BUTTON)
 async def cmd_logout(message: Message, state: FSMContext) -> None:
@@ -116,7 +98,7 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
     """
     uid = message.from_user.id
     try:
-        await _logout_user(uid=uid)
+        await logout_user(uid=uid)
     except SQLAlchemyError as error:
         log.warning("User %s failed to logout (DB error)", uid)
         await notify_owner(

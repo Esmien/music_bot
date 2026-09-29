@@ -1,13 +1,21 @@
 """HTTP-клиент обогащения промптов и сохранение результата в БД."""
 
 import logging
+from typing import Any
 
 import httpx
 from sqlalchemy.exc import SQLAlchemyError
+from tenacity import retry
 
 from core.config import settings
 from core.database.engine import get_session
 from core.utils.exceptions import EnricherNotConfiguredError
+from core.utils.retry import (
+    DEFAULT_RETRY_STOP,
+    default_retry_predicate,
+    default_retry_wait,
+    make_retry_logger,
+)
 from domains.enricher.validator import parse_enricher_json, validate_enriched_prompt
 from domains.generation.models import Generation
 
@@ -16,6 +24,8 @@ logger = logging.getLogger(__name__)
 _parse_enricher_json = parse_enricher_json
 
 REQUEST_TIMEOUT_SECONDS = 120.0
+
+_log_enricher_retry = make_retry_logger("LLM Enricher API")
 
 _ENRICHED_FIELD_TITLES: tuple[tuple[str, str], ...] = (
     ("genre_and_style", "🎵 Жанр и стиль"),
@@ -56,19 +66,30 @@ async def enrich_prompt(prompt: str, history: list[dict[str, str]] | None = None
     }
     headers = {"Authorization": f"Bearer {settings.enrich.ENRICH_TOKEN}"}
 
-    try:
+    @retry(
+        stop=DEFAULT_RETRY_STOP,
+        wait=default_retry_wait,
+        retry=default_retry_predicate,
+        before_sleep=_log_enricher_retry,
+        reraise=True,
+    )
+    async def _post_enrich_request() -> httpx.Response:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
-            response = await client.post(url=settings.enrich.ENRICH_URL, json=payload, headers=headers)
-            response.raise_for_status()
+            resp = await client.post(url=settings.enrich.ENRICH_URL, json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp
+
+    try:
+        response = await _post_enrich_request()
     except httpx.HTTPError as exc:
         logger.exception("Enricher request failed: %s", exc)
         return None
 
-    enriched = _extract_message_content(response.json())
-    if not enriched:
+    data = _extract_message_content(response.json())
+    if not data:
         logger.error("Enricher returned empty or unexpected response body")
         return None
-    return validate_enriched_prompt(enriched)
+    return validate_enriched_prompt(data)
 
 
 def format_enriched_prompt(raw: str) -> str:
@@ -102,7 +123,7 @@ def format_enriched_prompt(raw: str) -> str:
     return "\n\n".join(sections) if sections else raw.strip()
 
 
-def _enriched_prompt_to_dict(enriched_prompt: str) -> dict:
+def _enriched_prompt_to_dict(enriched_prompt: str) -> dict[str, Any]:
     """Преобразует строку обогащённого промпта в JSON-объект для хранения.
 
     Args:
@@ -117,6 +138,7 @@ def _enriched_prompt_to_dict(enriched_prompt: str) -> dict:
     except ValueError:
         return {"text": enriched_prompt}
 
+    # parse_enricher_json возвращает dict, но для type checker явно проверяем
     return parsed_prompt if isinstance(parsed_prompt, dict) else {"text": enriched_prompt}
 
 
@@ -146,7 +168,7 @@ async def save_enriched_prompt(tg_id: int, initial_prompt: str, enriched_prompt:
         raise
 
 
-def _extract_message_content(data: dict) -> str | None:
+def _extract_message_content(data: dict[str, Any]) -> str | None:
     """Извлекает текст из OpenAI-совместимого ответа.
 
     Args:

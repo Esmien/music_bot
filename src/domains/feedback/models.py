@@ -5,10 +5,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy import Boolean, ForeignKey, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from core.database.models import Base
+from core.database.models import Base  # type: ignore[attr-defined]
 
 if TYPE_CHECKING:
-    from domains.generation.models import Generation
+    from domains.generation.models import Generation  # type: ignore[attr-defined]
 
 
 class GenerationFeedback(Base):

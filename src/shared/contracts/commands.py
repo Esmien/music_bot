@@ -55,3 +55,6 @@ class GetCredits(BaseModel):
     """
 
     chat_id: int = Field(..., description="ID чата для отправки результата")
+
+
+CheckCreditsCommand = GetCredits
