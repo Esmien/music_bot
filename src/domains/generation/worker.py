@@ -1,6 +1,7 @@
 """TaskIQ-воркер генерации песни."""
 
 import asyncio
+import io
 import logging
 import uuid
 from pathlib import Path
@@ -73,13 +74,13 @@ async def deliver_generation_audio(
             log.info("Delivery cancelled by user (gen_id=%s)", command.gen_id)
             return
 
-        with audio_file_path.open("rb") as audio_file:
-            await telegram.send_audio(
-                chat_id=command.chat_id,
-                audio=audio_file,
-                title=command.title,
-                caption="🎵 Готово!",
-            )
+        audio_bytes = await asyncio.to_thread(audio_file_path.read_bytes)
+        await telegram.send_audio(
+            chat_id=command.chat_id,
+            audio=io.BytesIO(audio_bytes),
+            title=command.title,
+            caption="🎵 Готово!",
+        )
 
         if command.status_message_id is not None:
             await telegram.edit_message(
@@ -147,6 +148,198 @@ async def _publish_event(*, task_name: str, event: GenerationSucceeded | Generat
     await task_kiq(event)
 
 
+async def _claim_generation(
+    *,
+    command: RunGeneration,
+    attempt_id: str,
+    telegram: TelegramPort,
+) -> bool:
+    """Атомарно переводит генерацию в статус PROCESSING или доставляет готовый артефакт.
+
+    Args:
+        command: Команда запуска генерации.
+        attempt_id: Идентификатор текущей попытки.
+        telegram: Порт Telegram для доставки сообщений и аудио.
+
+    Returns:
+        True, если генерация успешно зарезервирована для выполнения, иначе False.
+    """
+    async with get_session() as session:
+        claim_stmt = (
+            update(Generation)
+            .where(
+                Generation.id == command.gen_id,
+                Generation.status == GenerationStatus.PENDING,
+            )
+            .values(status=GenerationStatus.PROCESSING, attempt_id=attempt_id)
+            .returning(Generation.id)
+        )
+        result = await session.execute(claim_stmt)
+        claimed_id = result.scalar_one_or_none()
+        await session.commit()
+
+        if claimed_id is not None:
+            return True
+
+        generation = await session.get(Generation, command.gen_id)
+        if (
+            generation is not None
+            and generation.status == GenerationStatus.SUCCESS
+            and generation.audio_path
+            and Path(generation.audio_path).exists()
+        ):
+            log.info(
+                "Generation %s already has audio artifact at %s, proceeding to delivery",
+                command.gen_id,
+                generation.audio_path,
+            )
+            await deliver_generation_audio(
+                telegram=telegram,
+                command=command,
+                audio_path=generation.audio_path,
+            )
+            return False
+
+        log.info("Generation %s already claimed or processed, skipping", command.gen_id)
+        return False
+
+
+async def _save_generation_success(
+    *,
+    gen_id: int,
+    attempt_id: str,
+    audio_path: str,
+    audio_size: int,
+    audio_checksum: str,
+) -> bool:
+    """Сохраняет метаданные успешной генерации в БД.
+
+    Args:
+        gen_id: Идентификатор генерации.
+        attempt_id: Идентификатор попытки.
+        audio_path: Путь к сохранённому файлу на диске.
+        audio_size: Размер аудио в байтах.
+        audio_checksum: Контрольная сумма файла.
+
+    Returns:
+        True, если запись обновлена успешно, False при конкурентной модификации.
+    """
+    async with get_session() as session:
+        success_stmt = (
+            update(Generation)
+            .where(
+                Generation.id == gen_id,
+                Generation.attempt_id == attempt_id,
+                Generation.status == GenerationStatus.PROCESSING,
+            )
+            .values(
+                audio_path=audio_path,
+                audio_size=audio_size,
+                audio_checksum=audio_checksum,
+                status=GenerationStatus.SUCCESS,
+            )
+            .returning(Generation.id)
+        )
+        result = await session.execute(success_stmt)
+        updated_id = result.scalar_one_or_none()
+        await session.commit()
+        return updated_id is not None
+
+
+async def _handle_generation_cancel(
+    *,
+    command: RunGeneration,
+    attempt_id: str,
+    telegram: TelegramPort,
+) -> None:
+    """Обрабатывает отмену генерации пользователем.
+
+    Args:
+        command: Команда генерации.
+        attempt_id: Идентификатор попытки.
+        telegram: Порт Telegram для отправки уведомления.
+    """
+    async with get_session() as session:
+        cancel_stmt = (
+            update(Generation)
+            .where(
+                Generation.id == command.gen_id,
+                Generation.attempt_id == attempt_id,
+            )
+            .values(status=GenerationStatus.CANCELLED)
+            .returning(Generation.id)
+        )
+        await session.execute(cancel_stmt)
+        await session.commit()
+    await clear_generation_cancel(gen_id=command.gen_id)
+
+    if command.status_message_id is not None:
+        await telegram.send_message(chat_id=command.chat_id, text="Генерация отменена.")
+
+
+async def _handle_generation_failure(
+    *,
+    command: RunGeneration,
+    attempt_id: str,
+    telegram: TelegramPort,
+    error: Exception,
+) -> None:
+    """Обрабатывает сбой выполнения генерации и публикует событие ошибки.
+
+    Args:
+        command: Команда генерации.
+        attempt_id: Идентификатор попытки.
+        telegram: Порт Telegram для уведомления владельца.
+        error: Возникшее исключение.
+    """
+    log.exception("Generation failed (gen_id=%s)", command.gen_id)
+    try:
+        async with get_session() as session:
+            fail_stmt = (
+                update(Generation)
+                .where(
+                    Generation.id == command.gen_id,
+                    Generation.attempt_id == attempt_id,
+                )
+                .values(status=GenerationStatus.FAILED)
+                .returning(Generation.id)
+            )
+            await session.execute(fail_stmt)
+            await session.commit()
+    except Exception as db_error:
+        log.exception(
+            "Failed to update generation %s status to FAILED in DB: %s",
+            command.gen_id,
+            db_error,
+        )
+
+    try:
+        await notify_owner(
+            telegram_port=telegram,
+            context=f"Ошибка генерации gen_id={command.gen_id}",
+            err=error,
+        )
+    except Exception:
+        log.exception(
+            "Failed to notify owner about generation failure (gen_id=%s)",
+            command.gen_id,
+        )
+
+    failure_event = GenerationFailed(
+        user_id=command.user_id,
+        chat_id=command.chat_id,
+        gen_id=command.gen_id,
+        error_message=f"Generation failed: {type(error).__name__}: {error}",
+        stage="generation",
+        status_message_id=command.status_message_id,
+    )
+    await _publish_event(
+        task_name="handle_generation_failed",
+        event=failure_event,
+        task=handle_generation_failed_task,
+    )
+
+
 @generation_broker.task(
     task_name="run_generation",
     queue_name=settings.rabbitmq.queue_name("generation"),
@@ -165,43 +358,13 @@ async def run_generation_task(
     telegram: TelegramPort = state_dict["telegram_port"]
 
     attempt_id = str(uuid.uuid4())
-    async with get_session() as session:
-        claim_stmt = (
-            update(Generation)
-            .where(
-                Generation.id == command.gen_id,
-                Generation.status == GenerationStatus.PENDING,
-            )
-            .values(status=GenerationStatus.PROCESSING, attempt_id=attempt_id)
-            .returning(Generation.id)
-        )
-        result = await session.execute(claim_stmt)
-        claimed_id = result.scalar_one_or_none()
-        await session.commit()
-
-        if claimed_id is None:
-            generation = await session.get(Generation, command.gen_id)
-            # Если артефакт уже готов на диске, повторяем доставку без вызова генерации
-            if (
-                generation is not None
-                and generation.status == GenerationStatus.SUCCESS
-                and generation.audio_path
-                and Path(generation.audio_path).exists()
-            ):
-                log.info(
-                    "Generation %s already has audio artifact at %s, proceeding to delivery",
-                    command.gen_id,
-                    generation.audio_path,
-                )
-                await deliver_generation_audio(
-                    telegram=telegram,
-                    command=command,
-                    audio_path=generation.audio_path,
-                )
-                return
-
-            log.info("Generation %s already claimed or processed, skipping", command.gen_id)
-            return
+    claimed = await _claim_generation(
+        command=command,
+        attempt_id=attempt_id,
+        telegram=telegram,
+    )
+    if not claimed:
+        return
 
     async def on_progress(stage: str, fraction: float) -> None:
         if await is_generation_cancelled(gen_id=command.gen_id):
@@ -222,106 +385,41 @@ async def run_generation_task(
         if await is_generation_cancelled(gen_id=command.gen_id):
             raise asyncio.CancelledError
 
-        # Сохраняем аудио на диск и записываем метаданные в БД
         audio_path, audio_size, audio_checksum = await save_audio_to_storage(
             audio_bytes=audio_bytes,
             gen_id=command.gen_id,
         )
 
-        async with get_session() as session:
-            success_stmt = (
-                update(Generation)
-                .where(
-                    Generation.id == command.gen_id,
-                    Generation.attempt_id == attempt_id,
-                    Generation.status == GenerationStatus.PROCESSING,
-                )
-                .values(
-                    audio_path=audio_path,
-                    audio_size=audio_size,
-                    audio_checksum=audio_checksum,
-                    status=GenerationStatus.SUCCESS,
-                )
-                .returning(Generation.id)
+        is_saved = await _save_generation_success(
+            gen_id=command.gen_id,
+            attempt_id=attempt_id,
+            audio_path=audio_path,
+            audio_size=audio_size,
+            audio_checksum=audio_checksum,
+        )
+        if not is_saved:
+            log.warning(
+                "Generation %s was modified concurrently (attempt %s), skipping delivery",
+                command.gen_id,
+                attempt_id,
             )
-            result = await session.execute(success_stmt)
-            updated_id = result.scalar_one_or_none()
-            await session.commit()
-            if updated_id is None:
-                log.warning(
-                    "Generation %s was modified concurrently (attempt %s), skipping delivery",
-                    command.gen_id,
-                    attempt_id,
-                )
-                return
+            return
     except asyncio.CancelledError:
-        async with get_session() as session:
-            cancel_stmt = (
-                update(Generation)
-                .where(
-                    Generation.id == command.gen_id,
-                    Generation.attempt_id == attempt_id,
-                )
-                .values(status=GenerationStatus.CANCELLED)
-                .returning(Generation.id)
-            )
-            await session.execute(cancel_stmt)
-            await session.commit()
-        await clear_generation_cancel(gen_id=command.gen_id)
-
-        if command.status_message_id is not None:
-            await telegram.send_message(chat_id=command.chat_id, text="Генерация отменена.")
+        await _handle_generation_cancel(
+            command=command,
+            attempt_id=attempt_id,
+            telegram=telegram,
+        )
         return
     except Exception as error:
-        log.exception("Generation failed (gen_id=%s)", command.gen_id)
-        try:
-            async with get_session() as session:
-                fail_stmt = (
-                    update(Generation)
-                    .where(
-                        Generation.id == command.gen_id,
-                        Generation.attempt_id == attempt_id,
-                    )
-                    .values(status=GenerationStatus.FAILED)
-                    .returning(Generation.id)
-                )
-                await session.execute(fail_stmt)
-                await session.commit()
-        except Exception as db_error:
-            log.exception(
-                "Failed to update generation %s status to FAILED in DB: %s",
-                command.gen_id,
-                db_error,
-            )
-
-        try:
-            await notify_owner(
-                telegram_port=telegram,
-                context=f"Ошибка генерации gen_id={command.gen_id}",
-                err=error,
-            )
-        except Exception:
-            log.exception(
-                "Failed to notify owner about generation failure (gen_id=%s)",
-                command.gen_id,
-            )
-
-        failure_event = GenerationFailed(
-            user_id=command.user_id,
-            chat_id=command.chat_id,
-            gen_id=command.gen_id,
-            error_message=f"Generation failed: {type(error).__name__}: {error}",
-            stage="generation",
-            status_message_id=command.status_message_id,
-        )
-        await _publish_event(
-            task_name="handle_generation_failed",
-            event=failure_event,
-            task=handle_generation_failed_task,
+        await _handle_generation_failure(
+            command=command,
+            attempt_id=attempt_id,
+            telegram=telegram,
+            error=error,
         )
         return
 
-    # Отдельный шаг доставки аудио в Telegram
     await deliver_generation_audio(
         telegram=telegram,
         command=command,

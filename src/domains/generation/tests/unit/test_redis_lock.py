@@ -136,26 +136,28 @@ async def test_redis_lock_different_users_no_blocking(redis_connections):
     assert len(events) == 4
 
 
-async def test_redis_lock_timeout_raises_exception(redis_connections):
+async def test_redis_lock_timeout_raises_exception(redis_connections, monkeypatch):
     """Превышение таймаута ожидания лока вызывает GenerationLockTimeoutError."""
     _, client2 = redis_connections
     user_id = 456
 
+    from domains.generation import service
+
+    monkeypatch.setattr(service, "DEFAULT_LOCK_TIMEOUT", 0.1)
+
     async def holding_process():
         """Первый процесс держит блокировку 0.3 секунды."""
-        async with user_generation_lock(user_id=user_id, timeout=1.0):
+        async with user_generation_lock(user_id=user_id):
             await asyncio.sleep(0.3)
 
     async def waiting_process():
         """Второй процесс пытается захватить блокировку с коротким таймаутом."""
-        from domains.generation import service
-
         original = service.redis_client
         service.redis_client = client2
         try:
             await asyncio.sleep(0.05)
             with pytest.raises(GenerationLockTimeoutError):
-                async with user_generation_lock(user_id=user_id, timeout=0.1, retry_interval=0.02):
+                async with user_generation_lock(user_id=user_id, retry_interval=0.02):
                     pass
         finally:
             service.redis_client = original
