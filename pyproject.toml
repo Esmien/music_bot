@@ -21,6 +21,10 @@ alembic = ">=1.14.0,<2.0.0"
 redis = ">=5.2.0,<6.0.0"
 pydantic = "^2.13.5"
 pydantic-settings = "^2.15.0"
+taskiq = ">=0.11.7,<0.12.0"
+taskiq-aio-pika = ">=0.4.1,<0.5.0"
+tenacity = ">=8.0.0,<9.0.0"
+mypy = "^2.3.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.4.2,<9.0.0"
@@ -28,6 +32,7 @@ pytest-asyncio = ">=1.0.0,<2.0.0"
 pytest-cov = ">=6.1.1,<7.0.0"
 ruff = ">=0.9.0"
 fakeredis = "^2.38.0"
+lupa = "^2.8"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
@@ -75,7 +80,7 @@ line-ending = "auto"
 
 [tool.ruff.lint.isort]
 # Группировка импортов, чтобы всё было красиво
-known-first-party = ["core", "fsm", "handlers", "keyboards", "services"] # Модули проекта отделяются пустой строкой
+known-first-party = ["core", "domains", "fsm", "handlers", "keyboards", "services"] # Модули проекта отделяются пустой строкой
 
 [tool.pytest.ini_options]
 # Режим "auto" — то самое "always": async-тесты и фикстуры выполняются
@@ -86,7 +91,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # Корень проекта и каталог src в sys.path: тесты импортируют config, models, handlers напрямую
 pythonpath = [".", "src"]
-testpaths = ["tests"]
+testpaths = ["src/domains", "tests"]
 markers = [
     "unit: быстрые изолированные тесты (сеть и БД замоканы)",
     "integration: тесты с реальной in-memory БД",
@@ -98,8 +103,42 @@ addopts = "--cov --cov-report=term-missing:skip-covered"
 # Измеряем только код проекта — тесты и зависимости не считаем.
 # bot.py не включён: это точка входа с polling, в тестах не импортируется,
 # из-за чего coverage предупреждал "Module bot was never imported"
-source = ["core", "handlers", "services"]
+source = ["core", "domains"]
+omit = ["*/tests/*", "*/test_*.py"]
 
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+# Исключаем алембик и миграции из строгих проверок
+exclude = [
+    "^migrations/",
+    "^alembic/",
+]
+
+# Постепенное внедрение: начинаем с core и domains, тесты пока без strict mode
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+disallow_incomplete_defs = false
+disallow_untyped_decorators = false

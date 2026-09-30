@@ -5,6 +5,34 @@ services:
       dockerfile: infra/Dockerfile
     container_name: ${COMPOSE_PROJECT_NAME}-bot
     restart: always
+    stop_grace_period: 30s
+    env_file:
+      - ../.env
+    environment:
+      - REDIS_URL=redis://${REDIS_HOST}:${REDIS_PORT}/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  generation-worker:
+    build:
+      context: ../
+      dockerfile: infra/Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME}-generation-worker
+    restart: always
+    stop_grace_period: 30s
+    command: ["python", "-u", "-m", "workers.taskiq_worker", "generation"]
     env_file:
       - ../.env
     environment:
@@ -14,11 +42,28 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      rabbitmq:
+        condition: service_healthy
+
+  enricher-worker:
+    build:
+      context: ../
+      dockerfile: infra/Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME}-enricher-worker
+    restart: always
+    stop_grace_period: 30s
+    command: ["python", "-u", "-m", "workers.taskiq_worker", "enricher"]
+    env_file:
+      - ../.env
+    environment:
+      - REDIS_URL=redis://${REDIS_HOST}:${REDIS_PORT}/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
   postgres:
     image: postgres:17-alpine
@@ -32,9 +77,6 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # Для локального взаимодействия
-    #ports:
-    #  - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -47,15 +89,28 @@ services:
     restart: always
     volumes:
       - redis_data:/data
-    # Для локального взаимодействия
-    #ports:
-    #  - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: ${COMPOSE_PROJECT_NAME}-rabbitmq
+    restart: always
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   redis_data:
+  rabbitmq_data:

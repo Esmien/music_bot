@@ -4,7 +4,7 @@
 импортируют только этот файл, ничего не читая из окружения напрямую.
 """
 
-from pydantic import computed_field
+from pydantic import computed_field, field_validator
 from pydantic_core import MultiHostUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -19,7 +19,14 @@ class BaseModelConfig(BaseSettings):
 class BotConfig(BaseModelConfig):
     """Токены и идентификаторы, связанные с ботом и внешними API."""
 
+    """Настройки Telegram-бота и внешних API.
+
+    Содержит токен бота, режим webhook, ключи OpenRouter и access key."""
+
     BOT_TOKEN: str
+    WEBHOOK_MODE: bool = False
+    WEBHOOK_BASE_URL: str = ""
+    WEBHOOK_SECRET: str = ""
     OPENROUTER_API_KEY: str = ""
     MODEL_ID: str = "google/lyria-3-pro-preview"
     BOT_ACCESS_KEY: str = ""
@@ -29,9 +36,9 @@ class BotConfig(BaseModelConfig):
 class EnrichPromptConfig(BaseModelConfig):
     """Настройки модели обогащения пользовательского промпта.
 
-    Пустые значения допустимы: обогатитель опционален. При незаданных
-    настройках enrich_prompt сигнализирует ValueError, а хендлер
-    предлагает продолжить сценарий с исходным описанием песни.
+    Пустые значения допустимы: обогатитель опционален.
+    При незаданных настройках enrich_prompt сигнализирует ValueError,
+    а хендлер предлагает продолжить сценарий с исходным описанием песни.
     """
 
     ENRICH_URL: str = ""
@@ -42,21 +49,24 @@ class EnrichPromptConfig(BaseModelConfig):
 class GenerationConfig(BaseModelConfig):
     """Настройки генерации песен.
 
-    SONG_PRICE обязательна: без цены генерации расчёт остатков песен
-    невозможен — pydantic упадёт с ValidationError при старте (fail fast).
+    SONG_PRICE обязательна для расчёта остатка генераций.
+    MOCK_MODE позволяет тестировать без реальных API-вызовов.
+    AUDIO_STORAGE_PATH — директория для сохранения аудио-файлов.
     """
 
     SONG_PRICE: float
     MOCK_MODE: bool = False
     MOCK_FILE: str = ""
     TYPICAL_GENERATION_SECONDS: float = 30.0
+    AUDIO_STORAGE_PATH: str = "/var/lib/lyria/audio"
 
 
 class DatabaseConfig(BaseModelConfig):
     """Параметры подключения к PostgreSQL.
 
-    asyncpg — асинхронный драйвер, обязательный для SQLAlchemy в async-режиме.
-    В Docker переопределяется через docker-compose, aiosqlite остаётся для локальных тестов.
+    asyncpg — асинхронный драйвер для SQLAlchemy в async-режиме.
+    В Docker переопределяется через docker-compose,
+    aiosqlite используется для локальных тестов.
     """
 
     POSTGRES_USER: str
@@ -65,6 +75,7 @@ class DatabaseConfig(BaseModelConfig):
     POSTGRES_PORT: int
     POSTGRES_DB: str
 
+    @computed_field
     @property
     def postgres_host(self) -> str:
         return "localhost" if self.DEV_MODE else self.POSTGRES_HOST
@@ -83,13 +94,62 @@ class DatabaseConfig(BaseModelConfig):
         return str(url)
 
 
+class RabbitMQConfig(BaseModelConfig):
+    """Параметры RabbitMQ и именования очередей TaskIQ."""
+
+    RABBITMQ_USER: str = "guest"
+    RABBITMQ_PASSWORD: str = "guest"
+    RABBITMQ_URL: str = ""
+    RABBITMQ_PREFETCH: int = 10
+    RABBITMQ_QUEUE_PREFIX: str = "dev"
+
+    @field_validator("RABBITMQ_USER", "RABBITMQ_PASSWORD", mode="after")
+    @classmethod
+    def validate_non_empty(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Field must not be empty")
+        return value
+
+    @property
+    def queue_prefix(self) -> str:
+        """Возвращает нормализованный префикс очередей.
+
+        Returns:
+            Префикс без начальных и конечных разделителей.
+        """
+        return self.RABBITMQ_QUEUE_PREFIX.strip(". ")
+
+    def queue_name(self, domain: str) -> str:
+        """Формирует имя очереди домена.
+
+        Args:
+            domain: Имя домена, например `enricher`.
+
+        Returns:
+            Полное имя очереди домена.
+        """
+        return f"{self.queue_prefix}.{domain}.tasks"
+
+    def dead_letter_queue_name(self, domain: str) -> str:
+        """Формирует имя dead-letter очереди домена.
+
+        Args:
+            domain: Имя домена, например `enricher`.
+
+        Returns:
+            Полное имя DLQ домена.
+        """
+        return f"{self.queue_prefix}.{domain}.tasks.dlq"
+
+
 class RedisConfig(BaseModelConfig):
-    """Redis: хранение FSM-состояний (переживают рестарт контейнера)."""
+    """Настройки Redis для FSM и служебных реестров."""
 
     REDIS_HOST: str
     REDIS_PORT: int
     REDIS_VAULT: str = "0"
 
+    @computed_field
     @property
     def redis_host(self) -> str:
         return "localhost" if self.DEV_MODE else self.REDIS_HOST
@@ -108,64 +168,13 @@ class RedisConfig(BaseModelConfig):
         return str(url)
 
 
-class UIConfig:
-    """Тексты кнопок интерфейса: единая панель управления.
-
-    Единственный источник истины для текстов кнопок: клавиатуры
-    собирают их отсюда, хендлеры фильтруют по этим же константам —
-    текст и его «ловушка» не разъезжаются при правках.
-    Не pydantic-настройки: тексты не приходят из окружения, а меняются в коде.
-
-    Attributes:
-        GENERATE_BUTTON: Кнопка запуска генерации.
-        CREDITS_BUTTON: Кнопка проверки кредитов.
-        LOGOUT_BUTTON: Кнопка выхода.
-        CANCEL_BUTTON: Кнопка отмены текущей операции.
-        PROMPT_APPROVE_BUTTON: Кнопка аппрува сгенерированного промпта.
-        PROMPT_EDIT_BUTTON: Кнопка правки сгенерированного промпта.
-        PROMPT_CANCEL_BUTTON: Кнопка отмены сценария обогащения.
-        PROMPT_RETRY_BUTTON: Кнопка повтора обогащения после сбоя.
-        PROMPT_FALLBACK_BUTTON: Кнопка продолжения сценария без обогащения.
-        DEFAULT_TITLE: Название песни по умолчанию.
-        EVALUATION_LIKE_BUTTON: Кнопка «нравится» при оценке генерации.
-        EVALUATION_DISLIKE_BUTTON: Кнопка «не нравится» при оценке генерации.
-        FEEDBACK_SEND_BUTTON: Кнопка отправки фидбека.
-        FEEDBACK_FINISH_BUTTON: Кнопка завершения сценария фидбека.
-        FEEDBACK_CHOICE_TEXT: Текст просьбы выбрать действие после оценки.
-        EVALUATION_PROMPT_TEXT: Текст просьбы оценить сгенерированную композицию.
-        FEEDBACK_PROMPT_TEXT: Текст просьбы написать отзыв.
-        FEEDBACK_RECEIVED_TEXT: Текст подтверждения приёма отзыва в FSM.
-        FEEDBACK_THANKS_TEXT: Текст благодарности после сохранения оценки/отзыва.
-    """
-
-    GENERATE_BUTTON = "🎵 Сгенерировать"
-    CREDITS_BUTTON = "💳 Кредиты"
-    LOGOUT_BUTTON = "🚪 Выйти"
-    CANCEL_BUTTON = "❌ Отмена"
-
-    PROMPT_APPROVE_BUTTON = "✅ Подтвердить"
-    PROMPT_EDIT_BUTTON = "✏️ Изменить"
-    PROMPT_CANCEL_BUTTON = "❌ Отменить"
-    PROMPT_RETRY_BUTTON = "🔄 Попробовать снова"
-    PROMPT_FALLBACK_BUTTON = "⏭ Без обогащения"
-    DEFAULT_TITLE = "Lyria's_Generated_song"
-    EVALUATION_LIKE_BUTTON = "👍"
-    EVALUATION_DISLIKE_BUTTON = "👎"
-    FEEDBACK_SEND_BUTTON = "📝 Отправить фидбек"
-    FEEDBACK_FINISH_BUTTON = "✅ Завершить без отзыва"
-    FEEDBACK_CHOICE_TEXT = "👇 Выберите действие кнопками ниже."
-    EVALUATION_PROMPT_TEXT = "🎧 Оцените сгенерированную композицию"
-    FEEDBACK_PROMPT_TEXT = "✍️ Напишите, что понравилось или нет"
-    FEEDBACK_RECEIVED_TEXT = "💬 Отзыв принят. Нажмите «✅ Завершить без отзыва», чтобы сохранить."
-    FEEDBACK_THANKS_TEXT = "✅ Спасибо, ваша оценка принята!"
-
-
 class Settings(BaseModelConfig):
     MIN_FEEDBACK_TEXT: int = 20
     bot: BotConfig = BotConfig()
     generation: GenerationConfig = GenerationConfig()
     db: DatabaseConfig = DatabaseConfig()
     redis: RedisConfig = RedisConfig()
+    rabbitmq: RabbitMQConfig = RabbitMQConfig()
     enrich: EnrichPromptConfig = EnrichPromptConfig()
 
 
