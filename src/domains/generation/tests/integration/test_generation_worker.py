@@ -121,7 +121,7 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, t
         await on_progress(stage="Получаю аудио…", fraction=0.5)
         return b"audio_content"
 
-    async def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+    def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
         audio_path = tmp_path / f"gen_{gen_id}.mp3"
         audio_path.write_bytes(audio_bytes)
         return str(audio_path), len(audio_bytes), "fake_checksum"
@@ -314,7 +314,7 @@ async def test_worker_telegram_delivery_failure_keeps_generation_success(
     async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
         return b"audio_content"
 
-    async def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+    def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
         return str(audio_path), len(audio_bytes), "checksum"
 
     async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
@@ -416,7 +416,7 @@ async def test_worker_atomic_claim_concurrent(monkeypatch: pytest.MonkeyPatch) -
         await asyncio.sleep(0.01)
         return b"audio"
 
-    async def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+    def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
         return f"/tmp/gen_{gen_id}.mp3", len(audio_bytes), "fake_checksum"
 
     telegram = FakeTelegramPort()
@@ -567,7 +567,7 @@ async def test_worker_save_audio_failure_marks_generation_failed(
     async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
         return b"valid_audio_bytes"
 
-    async def failing_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+    def failing_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
         raise OSError("Disk full: no space left on device")
 
     async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
