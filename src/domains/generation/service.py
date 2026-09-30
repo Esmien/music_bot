@@ -58,12 +58,16 @@ DEFAULT_LOCK_TIMEOUT = 10.0
 _log_generation_retry = make_retry_logger("OpenRouter Generation API")
 
 
-# Максимальный размер отдельной строки SSE (1 МБ) для защиты от OOM до парсинга JSON
-MAX_SSE_LINE_LENGTH = 1024 * 1024
-
 # Максимальный размер аудио в base64-символах (~30 МБ после декодирования).
 # Защита от исчерпания памяти, если сервер шлёт аномально большой поток.
 MAX_AUDIO_B64_LEN = 40 * 1024 * 1024
+
+# Максимальный размер одной строки SSE.
+# Должен быть БОЛЬШЕ MAX_AUDIO_B64_LEN: одна cumulative-строка может содержать
+# весь накопленный base64-снимок целиком (Lyria шлёт по ~3 МБ на чанк),
+# плюс JSON-обёртку (choices/delta/audio) и префикс "data: ".
+# 10 МБ запаса покрывает JSON-эскейпинг и служебные поля.
+MAX_SSE_LINE_LENGTH = MAX_AUDIO_B64_LEN + 10 * 1024 * 1024
 
 # Ожидаемый формат аудио
 AUDIO_B64_RE = re.compile(r"data:audio/mpeg;base64,([A-Za-z0-9+/=]+)")
