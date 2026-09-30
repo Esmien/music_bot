@@ -385,7 +385,7 @@ async def run_generation_task(
         if await is_generation_cancelled(gen_id=command.gen_id):
             raise asyncio.CancelledError
 
-        audio_path, audio_size, audio_checksum = await save_audio_to_storage(
+        audio_path, audio_size, audio_checksum = save_audio_to_storage(
             audio_bytes=audio_bytes,
             gen_id=command.gen_id,
         )
