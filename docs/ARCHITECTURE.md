@@ -347,11 +347,13 @@
 | Данные | Где хранятся | Назначение |
 | --- | --- | --- |
 | FSM-состояния и данные диалогов | Redis через RedisStorage aiogram | Сохранение текущего этапа сценария между обновлениями и рестартами |
+| FSM-флаг generating | Redis FSM-storage в GenerationFlowState | Блокировка повторного запуска генерации пользователем |
 | Пользователи и авторизация | PostgreSQL, таблица `users` | Статус доступа пользователя (is_authorized, created_at) |
 | Ожидающие авторизацию и счётчики попыток | Redis, ключи `auth:pending:{user_id}` | Авторизация и защита от перебора ключа (лимит попыток) |
-| Глобальный реестр активных генераций | Redis, множество `generations:active` | Проверка одновременных генераций пользователя |
-| Флаги отмены генерации | Redis, ключи `generation:cancel:{gen_id}` | Сигнал воркеру о необходимости остановки задачи |
+| Флаги отмены генерации | Redis, ключи `bot:cancel:gen:{gen_id}` | Source of truth для запроса отмены пользователем |
+| In-memory реестр активных задач | Память процесса бота, dict[user_id, asyncio.Task] | Локальная отмена asyncio.Task через /cancel |
 | Промпты и названия генераций | PostgreSQL, таблица `generations` | История генераций (user_id, prompt, title, status, created_at) |
+| attempt_id генерации | PostgreSQL, поле `Generation.attempt_id` | Защита от race condition при конкурентных воркерах |
 | Аудио-артефакты генераций | Локальное файловое хранилище (AUDIO_STORAGE_PATH) | Сохраненные mp3-файлы с метаданными (путь, размер, checksum) в БД |
 | Оценки и отзывы | PostgreSQL, таблица `generation_feedbacks` | Обратная связь о генерациях (generation_id, is_positive, comment) |
 | Очереди и сообщения TaskIQ | RabbitMQ (продакшн) или InMemoryBroker (тесты) | Асинхронная обработка команд и событий |
