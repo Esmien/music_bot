@@ -224,6 +224,18 @@ def inmemory_broker(monkeypatch):
     return test_broker
 
 
+@pytest.fixture
+def fake_telegram_port():
+    """Фейковый TelegramPort для тестирования воркеров без aiogram.
+
+    Сохраняет историю всех вызовов методов порта для последующей проверки.
+    Используется в integration-тестах воркеров.
+    """
+    from shared.ports.fake_telegram import FakeTelegramPort
+
+    return FakeTelegramPort()
+
+
 @pytest.fixture(autouse=True)
 def track_aiohttp_sessions(monkeypatch):
     """Отслеживает создание aiohttp.ClientSession для обнаружения утечек.

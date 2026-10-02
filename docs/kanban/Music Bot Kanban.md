@@ -18,12 +18,6 @@ kanban-plugin: board
 
 ## 🟡 P2 — MEDIUM
 
-- [ ] AUD-016 — Зафиксировать границы framework-зависимости портов
-	  - Описание: порты принимают конкретные `aiogram.Message` и `FSMContext`.
-	  - ТЗ: решить, является ли это осознанной pragmatic-архитектурой; документировать границу либо ввести DTO; добавить архитектурную проверку.
-	  - DoD:
-	- [ ] Документировано, где допустим импорт aiogram.
-	- [ ] Междоменные зависимости идут через единый контракт.
 
 
 ## 🟢 P3 — LOW
@@ -40,8 +34,15 @@ kanban-plugin: board
 ## In progress
 
 
+
 ## Done
 
+- [ ] AUD-016 — Зафиксировать границы framework-зависимости портов
+	  - Описание: порты принимают конкретные `aiogram.Message` и `FSMContext`.
+	  - ТЗ: решить, является ли это осознанной pragmatic-архитектурой; документировать границу либо ввести DTO; добавить архитектурную проверку.
+	  - DoD:
+	- [ ] Документировано, где допустим импорт aiogram.
+	- [ ] Междоменные зависимости идут через единый контракт.
 - [x] AUD-015 — Добавить настоящий Redis integration-профиль
 	  - Описание: Lua `EVAL` частично эмулируется monkeypatch.
 	  - ТЗ: оставить unit-тесты; добавить Redis integration profile и CI-команду; проверить `SET NX PX` и compare-and-delete.
@@ -157,6 +158,6 @@ kanban-plugin: board
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[true,true,true,false,true,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[true,true,true,true,false,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%
