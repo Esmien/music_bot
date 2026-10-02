@@ -37,6 +37,7 @@ from domains.enricher.enricher_messages import (
     PROMPT_TOO_LONG_MSG,
     RETURN_TO_START,
     RUN_AGAIN,
+    SAVE_PROMPT_FAILED_MSG,
     WAITING_PROMPT_EDITS,
 )
 from domains.enricher.fsm import PromptEnricherStates
@@ -112,25 +113,32 @@ async def _ensure_callback_authorized(callback: CallbackQuery, state: FSMContext
     return False
 
 
-async def _save_feedback_best_effort(status: Message, uid: int, initial_prompt: str, enriched_prompt: str) -> None:
-    """Сохраняет промпты в БД, не прерывая пользовательский сценарий.
+async def _save_prompt_blocking(message: Message, uid: int, initial_prompt: str, enriched_prompt: str) -> bool:
+    """Сохраняет промпты в БД, блокируя продолжение при ошибке.
 
     Args:
-        status: Сообщение, используемое для уведомления владельца.
+        message: Сообщение для отправки ошибки пользователю.
         uid: Telegram user_id пользователя.
         initial_prompt: Исходный промпт.
         enriched_prompt: Обогащённый промпт.
+
+    Returns:
+        True, если сохранение успешно, False при ошибке.
     """
     try:
         await save_enriched_prompt(tg_id=uid, initial_prompt=initial_prompt, enriched_prompt=enriched_prompt)
+        return True
     except (SQLAlchemyError, ValueError) as error:
-        log.error("Failed to save enriched prompt (user=%s): %s", uid, error)
+        log.error("Failed to save enriched prompt (user=%s, error=%s)", uid, error)
         with contextlib.suppress(Exception):
             await notify_owner(
-                bot=status.bot,
-                context=NOTIFY_SAVE_PROMPT_FAILED_CTX.format(uid=uid),
+                bot=message.bot,
+                context=NOTIFY_SAVE_PROMPT_FAILED_CTX.format(uid=uid, error=str(error)),
                 err=error,
             )
+        with contextlib.suppress(Exception):
+            await message.answer(text=SAVE_PROMPT_FAILED_MSG, reply_markup=get_main_keyboard())
+        return False
 
 
 async def _publish_enrich_command(command: StartEnrichment) -> None:
@@ -243,17 +251,21 @@ async def handle_prompt_approve(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
-    await _save_feedback_best_effort(
-        status=callback.message,
+    await callback.answer()
+    with contextlib.suppress(Exception):
+        await callback.message.edit_reply_markup(reply_markup=None)
+
+    saved = await _save_prompt_blocking(
+        message=callback.message,
         uid=callback.from_user.id,
         initial_prompt=flow_state.prompt or "",
         enriched_prompt=enriched,
     )
+    if not saved:
+        await state.clear()
+        return
 
     final_prompt = _build_generation_prompt(text=enriched)
-    await callback.answer()
-    with contextlib.suppress(Exception):
-        await callback.message.edit_reply_markup(reply_markup=None)
     await generation_flow_starter.start_title_input(
         message=callback.message,
         state=state,

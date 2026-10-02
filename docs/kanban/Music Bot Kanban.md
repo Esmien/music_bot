@@ -14,14 +14,6 @@ kanban-plugin: board
 
 ## 🟠 P1 — HIGH
 
-- [ ] AUD-011 — Определить политику ошибки сохранения истории промпта
-	  - Описание: best-effort сохранение может потерять запись и продолжить flow.
-	  - ТЗ: решить blocking или best-effort; для best-effort добавить метрику/алерт; для blocking не запускать генерацию после ошибки; добавить тесты.
-	  - DoD:
-	- [ ] Политика описана в документации.
-	- [ ] Flow соответствует выбранной политике.
-	- [ ] Ошибка логируется с user/generation context.
-	- [ ] `SQLAlchemyError` покрыт тестом.
 
 
 ## 🟡 P2 — MEDIUM
@@ -78,6 +70,22 @@ kanban-plugin: board
 
 ## Done
 
+- [ ] AUD-011 — Определить политику ошибки сохранения истории промпта
+	  - Описание: best-effort сохранение может потерять запись и продолжить flow.
+	  - ТЗ: решить blocking или best-effort; для best-effort добавить метрику/алерт; для blocking не запускать генерацию после ошибки; добавить тесты.
+	  - DoD:
+	- [ ] Политика описана в документации.
+	- [ ] Flow соответствует выбранной политике.
+	- [ ] Ошибка логируется с user/generation context.
+	- [ ] `SQLAlchemyError` покрыт тестом.
+- [x] AUD-011 — Определить политику ошибки сохранения истории промпта
+	  - Описание: best-effort сохранение может потерять запись и продолжить flow.
+	  - ТЗ: решить blocking или best-effort; для best-effort добавить метрику/алерт; для blocking не запускать генерацию после ошибки; добавить тесты.
+	  - DoD:
+	- [x] Политика описана в документации.
+	- [x] Flow соответствует выбранной политике.
+	- [x] Ошибка логируется с user/generation context.
+	- [x] `SQLAlchemyError` покрыт тестом.
 - [x] AUD-010 — Формализовать единый cancellation flow
 	  - Описание: отмена распределена между `asyncio.Task`, Redis, FSM и БД.
 	  - ТЗ: описать state machine и source of truth; проверить отмену до claim, во время API, после сохранения MP3 и во время Telegram delivery; добавить конкурентные тесты.
@@ -86,7 +94,6 @@ kanban-plugin: board
 	- [x] Stale `attempt_id` не меняет статус и не отправляет результат.
 	- [x] Cancel-token очищается или истекает по задокументированному TTL.
 	- [x] Есть тесты четырёх этапов отмены.
-
 - [x] AUD-007 — Синхронизировать тесты отмены с registry-контрактом
 	  - Описание: часть тестов обращается к Redis registry как к словарю.
 	  - ТЗ: найти старые фикстуры; разделить local `asyncio` cancellation и Redis cancel-token; проверить очистку registry и FSM.
@@ -151,6 +158,6 @@ kanban-plugin: board
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[true,true,false,true,true,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[true,true,true,true,true,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%

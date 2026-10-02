@@ -169,3 +169,70 @@ async def test_fallback_saves_generation_with_raw_prompt(
     assert record is not None
     assert record.prompt == "идея без обогащения"
     assert record.enriched_prompt == {"text": "идея без обогащения"}
+
+
+async def test_approve_db_error_blocks_generation(
+    patched_auth_db,
+    patched_enricher_db,
+    clean_auth_state,
+    fake_state,
+    make_callback,
+    make_callback_message,
+    monkeypatch,
+):
+    """Ошибка сохранения промпта блокирует запуск генерации."""
+    await _make_authorized_user(patched_auth_db, tg_id=8)
+    state = fake_state()
+    await state.update_data(prompt="тест", enriched_prompt="обогащённый")
+    await state.set_state(PromptEnricherStates.waiting_for_approval)
+
+    async def failing_save(*args, **kwargs):
+        from sqlalchemy.exc import OperationalError
+
+        raise OperationalError("DB connection lost", None, None)
+
+    monkeypatch.setattr(enricher, "save_enriched_prompt", failing_save)
+
+    callback = make_callback(uid=8, message=make_callback_message())
+    await enricher_handlers.handle_prompt_approve(callback=callback, state=state)
+
+    assert state.cleared
+    assert any("сохранить описание" in msg for msg in callback.message.answers)
+
+    async with patched_enricher_db() as session:
+        record = await session.scalar(select(Generation).where(Generation.user_id == 8))
+
+    assert record is None
+
+
+async def test_fallback_db_error_blocks_generation(
+    patched_auth_db,
+    patched_enricher_db,
+    clean_auth_state,
+    fake_state,
+    make_callback,
+    make_callback_message,
+    monkeypatch,
+):
+    """Ошибка сохранения при fallback блокирует запуск генерации."""
+    await _make_authorized_user(patched_auth_db, tg_id=9)
+    state = fake_state()
+    await state.update_data(prompt="тест fallback")
+
+    async def failing_save(*args, **kwargs):
+        from sqlalchemy.exc import IntegrityError
+
+        raise IntegrityError("Constraint violation", None, None)
+
+    monkeypatch.setattr(enricher, "save_enriched_prompt", failing_save)
+
+    callback = make_callback(uid=9, message=make_callback_message())
+    await enricher_handlers.handle_prompt_fallback(callback=callback, state=state)
+
+    assert state.cleared
+    assert any("сохранить описание" in msg for msg in callback.message.answers)
+
+    async with patched_enricher_db() as session:
+        record = await session.scalar(select(Generation).where(Generation.user_id == 9))
+
+    assert record is None
