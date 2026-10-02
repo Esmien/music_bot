@@ -133,8 +133,9 @@
 │   │       └── fake_telegram.py       # Фейковая реализация порта для тестов
 │   ├── conftest.py                    # Общие фикстуры для тестов (make_message, fake_state)
 │   └── mock_generation.json           # Mock-данные для локальной генерации
-├── workers/
-│   └── taskiq_worker.py               # Главный воркер TaskIQ с регистрацией всех доменных воркеров
+├── src/
+│   ├── workers/
+│   │   └── taskiq_worker.py           # Главный воркер TaskIQ с регистрацией всех доменных воркеров
 ├── tests/                             # Smoke-тесты инфраструктуры (вне src)
 │   └── smoke/
 │       ├── test_broker_connection.py  # Проверка подключения к RabbitMQ
@@ -310,7 +311,7 @@
 - `domains/evaluation/handlers.py` — событие-листенер GenerationSucceeded (отправка клавиатуры оценки)
 - `domains/generation/handlers.py` — событие-листенер GenerationFailed (уведомление об ошибке)
 
-Все воркеры и event listeners регистрируются в главном процессе воркера: `workers/taskiq_worker.py`
+Все воркеры и event listeners регистрируются в главном процессе воркера: `src/workers/taskiq_worker.py`
 
 ### 5. Обработка ошибок
 
