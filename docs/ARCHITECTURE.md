@@ -24,6 +24,7 @@
 │   ├── core/
 │   │   ├── __init__.py                # Сборка доменных Router в единый Router
 │   │   ├── broker.py                  # Инициализация TaskIQ брокера (RabbitMQ или InMemory)
+│   │   ├── instance.py                # Управление жизненным циклом экземпляра бота (instance_id, heartbeat)
 │   │   ├── lifecycle.py               # Управление жизненным циклом приложения и graceful shutdown
 │   │   ├── config.py                  # Настройки окружения (BotConfig, DatabaseConfig, RabbitMQConfig и т.д.)
 │   │   ├── redis.py                   # Единый async-клиент Redis и функции для ключей реестров
@@ -111,13 +112,14 @@
 │   │       ├── generation_messages.py # Текстовые сообщения домена генерации
 │   │       ├── state_models.py        # Pydantic-модели для FSM-данных генерации
 │   │       ├── registries/
-│   │       │   └── task_registry.py   # Доменный реестр активных задач генерации (legacy)
+│   │       │   └── task_registry.py   # Доменный реестр активных задач генерации
 │   │       └── tests/
 │   │           ├── integration/
 │   │           │   ├── taskiq_test_runner.py      # Вспомогательные утилиты для тестов воркера
 │   │           │   ├── test_generation_flow.py    # Интеграционные тесты флоу генерации
 │   │           │   └── test_generation_worker.py  # Интеграционные тесты воркера
 │   │           └── unit/
+│   │               ├── test_instance_cleanup.py   # Юнит-тесты безопасного cleanup при rolling restart
 │   │               ├── test_progress_bar.py       # Юнит-тесты прогресс-бара
 │   │               ├── test_redis_lock.py         # Юнит-тесты Redis-локов
 │   │               ├── test_services_generation.py # Юнит-тесты сервиса генерации
@@ -378,7 +380,16 @@
 - **Polling** — для разработки и тестирования (флаг `WEBHOOK_ENABLED=false`)
 - **Webhook** — для продакшна (флаг `WEBHOOK_ENABLED=true`)
 
+**Rolling restart и instance management** (core/instance.py):
+- Каждый экземпляр бота получает уникальный `instance_id`
+- Heartbeat обновляется каждые 15 секунд (TTL 30 секунд)
+- При startup cleanup проверяется наличие других живых экземпляров
+- Если обнаружены другие экземпляры с активным heartbeat, cleanup пропускается
+- Это защищает от удаления состояния работающих экземпляров при rolling restart
+- **Deployment constraint**: поддерживается rolling restart, но не рекомендуется одновременная работа множества экземпляров с одним Redis (возможна race condition в FSM)
+
 **Graceful shutdown** (core/lifecycle.py):
+- Снятие регистрации экземпляра (unregister) перед закрытием ресурсов
 - Корректное завершение обработки текущих апдейтов
 - Закрытие соединений с БД, Redis и брокером
 - Очистка реестров и временных ресурсов

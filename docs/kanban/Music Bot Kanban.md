@@ -14,13 +14,6 @@ kanban-plugin: board
 
 ## 🟠 P1 — HIGH
 
-- [ ] AUD-004 — Сделать startup cleanup Redis безопасным
-	  - Описание: общая очистка active-task и FSM-ключей опасна при rolling restart.
-	  - ТЗ: выбрать ownership/lease либо явно закрепить single-instance; добавить тест перекрывающегося запуска; логировать обработанные и пропущенные ключи.
-	  - DoD:
-	- [ ] Один экземпляр не удаляет состояние другого.
-	- [ ] Deployment constraint документирован или есть ownership-тест.
-	- [ ] `RedisError` покрыт тестом.
 - [ ] AUD-007 — Синхронизировать тесты отмены с registry-контрактом
 	  - Описание: часть тестов обращается к Redis registry как к словарю.
 	  - ТЗ: найти старые фикстуры; разделить local `asyncio` cancellation и Redis cancel-token; проверить очистку registry и FSM.
@@ -94,10 +87,19 @@ kanban-plugin: board
 	- [ ] CI проходит.
 
 
+## In progress
+
 
 
 ## Done
 
+- [x] AUD-004 — Сделать startup cleanup Redis безопасным
+	  - Описание: общая очистка active-task и FSM-ключей опасна при rolling restart.
+	  - ТЗ: выбрать ownership/lease либо явно закрепить single-instance; добавить тест перекрывающегося запуска; логировать обработанные и пропущенные ключи.
+	  - DoD:
+	- [x] Один экземпляр не удаляет состояние другого.
+	- [x] Deployment constraint документирован или есть ownership-тест.
+	- [x] `RedisError` покрыт тестом.
 - [x] AUD-002 — Определить единственный `task_registry.py`
 	  - Описание: обнаружены in-memory и Redis-версии реестра.
 	  - ТЗ: найти физические пути и импорты; зафиксировать canonical вариант; удалить или переименовать legacy; привести тесты к контракту.
@@ -148,6 +150,6 @@ kanban-plugin: board
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[true,true,false,true,true,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[true,true,false,true,true,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%

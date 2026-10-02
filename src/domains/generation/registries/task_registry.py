@@ -12,9 +12,12 @@ task_id перед отправкой результата или отменит
 """
 
 import asyncio
+import logging
 import uuid
 
 from core.redis import redis_client  # type: ignore[attr-defined]
+
+log = logging.getLogger(__name__)
 
 # Ключ множества uid с живой задачей генерации
 ACTIVE_TASKS_KEY = "bot:active_tasks"
@@ -86,24 +89,47 @@ async def get_task_id(uid: int) -> str | None:
     return task_id.decode("utf-8") if isinstance(task_id, bytes) else task_id
 
 
-async def clear_active_tasks() -> int:
+async def clear_active_tasks(skip_if_other_instances: bool = False) -> dict[str, int | bool]:
     """Чистит реестр активных задач в памяти и в Redis на старте бота.
 
     Задачи генерации рестарт не переживают: без чистки Redis-набор
     остался бы с uid, которых в памяти процесса уже нет.
 
+    Args:
+        skip_if_other_instances: Если True, пропускает cleanup при наличии
+            других активных экземпляров бота (защита от race condition
+            при rolling restart).
+
     Returns:
-        Количество удалённых ключей Redis (0 или 1).
+        Словарь с результатами: {"skipped": bool, "deleted_set": int, "deleted_keys": int}.
+
+    Raises:
+        RedisError: При ошибке работы с Redis.
     """
+    from core.instance import current_instance
+
+    if skip_if_other_instances and await current_instance.has_other_active_instances():
+        log.info("Skipping active tasks cleanup: other active instances are running")
+        return {"skipped": True, "deleted_set": 0, "deleted_keys": 0}
+
     _active_tasks.clear()
+
     # Чистим набор активных uid
     deleted_set = await redis_client.delete(ACTIVE_TASKS_KEY)
+
     # Чистим все task_id ключи через паттерн
+    deleted_keys = 0
     cursor = 0
     while True:  # type: ignore[unreachable]
         cursor, keys = await redis_client.scan(cursor, match=f"{TASK_ID_KEY_PREFIX}:*", count=100)
         if keys:
-            await redis_client.delete(*keys)
+            deleted_keys += await redis_client.delete(*keys)
         if cursor == 0:
             break
-    return deleted_set
+
+    log.info(
+        "Active tasks registry cleaned: deleted_set=%d, deleted_task_id_keys=%d",
+        deleted_set,
+        deleted_keys,
+    )
+    return {"skipped": False, "deleted_set": deleted_set, "deleted_keys": deleted_keys}

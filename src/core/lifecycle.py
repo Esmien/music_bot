@@ -23,6 +23,15 @@ async def shutdown_all(bot: Bot | None = None) -> None:
     """
     log.info("Starting graceful shutdown")
 
+    # Снимаем регистрацию экземпляра перед закрытием других ресурсов
+    try:
+        from core.instance import current_instance
+
+        await current_instance.unregister()
+        log.info("Bot instance unregistered")
+    except Exception as e:
+        log.exception("Error unregistering bot instance: %s", e)
+
     if bot:
         try:
             await bot.session.close()
