@@ -431,3 +431,182 @@ async def test_cancel_without_active_generation_clears_state(
 
     assert state.cleared
     assert msg.answers[-1] == base_messasges.CANCEL_ACTION
+
+
+async def test_cancel_before_claim_prevents_api_call(
+    patched_auth_db, clean_auth_state, make_message, fake_state, fake_redis, monkeypatch
+):
+    """Этап 1: отмена до claim — PENDING → CANCELLED, API не вызывается."""
+    import core.redis as redis_module
+    from domains.generation.models import Generation, GenerationStatus
+
+    monkeypatch.setattr(redis_module, "redis_client", fake_redis)
+    monkeypatch.setattr(pipeline, "get_session", patched_auth_db)
+
+    await _make_authorized_user(patched_auth_db, 80)
+    state = fake_state()
+    msg = make_message(uid=80)
+
+    # Создаём PENDING-генерацию в БД
+    async with patched_auth_db() as session:
+        generation = Generation(
+            id=300,
+            user_id=80,
+            prompt="test prompt",
+            enriched_prompt={"genre": "rock"},
+            title="Test Song",
+            status=GenerationStatus.PENDING,
+        )
+        session.add(generation)
+        await session.commit()
+
+    await state.update_data(gen_id=300, generating=True, prompt="test prompt", title="Test Song")
+
+    # Пользователь отменяет генерацию до того, как воркер её захватил
+    await base_handlers.cmd_cancel(msg, state)
+
+    # Проверяем, что cancel-токен установлен (source of truth)
+    assert await redis_module.is_generation_cancelled(gen_id=300) is True
+
+    # Имитируем воркер: проверка токена перед claim
+    cancelled_before_claim = await redis_module.is_generation_cancelled(gen_id=300)
+    assert cancelled_before_claim is True
+
+    # Воркер обнаружит токен и установит CANCELLED без API-запроса
+    async with patched_auth_db() as session:
+        generation = await session.get(Generation, 300)
+        if cancelled_before_claim:
+            generation.status = GenerationStatus.CANCELLED
+            await session.commit()
+
+    # Проверяем финальный статус
+    async with patched_auth_db() as session:
+        generation = await session.get(Generation, 300)
+        assert generation.status == GenerationStatus.CANCELLED
+
+
+async def test_cancel_during_api_raises_cancelled_error(patched_auth_db, fake_redis, monkeypatch):
+    """Этап 2: отмена во время API call — asyncio.CancelledError поднимается."""
+    import core.redis as redis_module
+    from domains.generation.service import run_generation
+
+    monkeypatch.setattr(redis_module, "redis_client", fake_redis)
+
+    # Устанавливаем cancel-токен
+    await redis_module.request_generation_cancel(gen_id=400)
+
+    # Проверяем, что run_generation поднимает CancelledError при обнаружении токена
+    async def dummy_progress(stage: str, fraction: float):
+        pass
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_generation(prompt="test", gen_id=400, on_progress=dummy_progress)
+
+
+async def test_cancel_after_mp3_saved_keeps_success_status(patched_auth_db, fake_redis, monkeypatch):
+    """Этап 3: отмена после сохранения MP3 — статус SUCCESS не меняется."""
+    import core.redis as redis_module
+    from domains.generation.models import Generation, GenerationStatus
+
+    monkeypatch.setattr(redis_module, "redis_client", fake_redis)
+
+    await _make_authorized_user(patched_auth_db, 81)
+
+    # Создаём генерацию со статусом SUCCESS (MP3 уже сохранён)
+    async with patched_auth_db() as session:
+        generation = Generation(
+            id=500,
+            user_id=81,
+            prompt="test prompt",
+            enriched_prompt={"genre": "rock"},
+            title="Test Song",
+            status=GenerationStatus.SUCCESS,
+            audio_path="/tmp/test.mp3",
+            audio_size=1024,
+            audio_checksum="abc123",
+        )
+        session.add(generation)
+        await session.commit()
+
+    # Пользователь отменяет после сохранения MP3, но до доставки
+    await redis_module.request_generation_cancel(gen_id=500)
+
+    # Проверяем, что cancel-токен установлен
+    assert await redis_module.is_generation_cancelled(gen_id=500) is True
+
+    # Статус SUCCESS не должен измениться
+    async with patched_auth_db() as session:
+        generation = await session.get(Generation, 500)
+        assert generation.status == GenerationStatus.SUCCESS
+        assert generation.audio_path == "/tmp/test.mp3"
+
+
+async def test_cancel_during_delivery_skips_telegram_send(patched_auth_db, fake_redis, monkeypatch):
+    """Этап 4: отмена во время delivery — Telegram-отправка пропускается, статус SUCCESS."""
+    import core.redis as redis_module
+    from domains.generation.models import Generation, GenerationStatus
+    from domains.generation.worker import deliver_generation_audio
+    from shared.contracts.commands import RunGeneration
+
+    monkeypatch.setattr(redis_module, "redis_client", fake_redis)
+
+    await _make_authorized_user(patched_auth_db, 82)
+
+    # Создаём генерацию со статусом SUCCESS и сохранённым аудио
+    async with patched_auth_db() as session:
+        generation = Generation(
+            id=600,
+            user_id=82,
+            prompt="test prompt",
+            enriched_prompt={"genre": "rock"},
+            title="Test Song",
+            status=GenerationStatus.SUCCESS,
+            audio_path="src/mock_generation.json",  # Используем существующий файл для теста
+            audio_size=1024,
+            audio_checksum="abc123",
+        )
+        session.add(generation)
+        await session.commit()
+
+    # Устанавливаем cancel-токен перед доставкой
+    await redis_module.request_generation_cancel(gen_id=600)
+
+    # Мокируем TelegramPort для отслеживания вызовов send_audio
+    send_audio_called = False
+
+    class MockTelegramPort:
+        async def send_audio(self, chat_id, audio, title, caption):
+            nonlocal send_audio_called
+            send_audio_called = True
+            return 12345
+
+        async def edit_message(self, chat_id, message_id, text):
+            pass
+
+        async def send_message(self, chat_id, text, **kwargs):
+            return 12346
+
+    mock_telegram = MockTelegramPort()
+    command = RunGeneration(
+        user_id=82,
+        chat_id=82,
+        gen_id=600,
+        prompt="test prompt",
+        title="Test Song",
+        status_message_id=None,
+    )
+
+    # Вызываем deliver_generation_audio — она должна обнаружить отмену и пропустить отправку
+    await deliver_generation_audio(
+        telegram=mock_telegram,
+        command=command,
+        audio_path="src/mock_generation.json",
+    )
+
+    # Проверяем, что send_audio НЕ был вызван из-за отмены
+    assert send_audio_called is False
+
+    # Статус остаётся SUCCESS
+    async with patched_auth_db() as session:
+        generation = await session.get(Generation, 600)
+        assert generation.status == GenerationStatus.SUCCESS

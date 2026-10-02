@@ -57,14 +57,20 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     """Отменяет текущий сценарий и возвращает пользователя в главное меню.
 
+    Отмена генерации выполняется через два механизма:
+    1. Redis cancel-токен (source of truth) — проверяется воркером на всех этапах
+    2. asyncio.Task — отменяет локальную задачу в процессе бота (если генерация ещё не ушла в TaskIQ)
+
     Args:
         message: Сообщение с командой /cancel или кнопкой отмены.
         state: FSM-контекст текущего пользователя.
     """
     flow_state = await get_fsm_data(state=state, model_class=GenerationFlowState)
+    # Устанавливаем Redis cancel-токен для воркера (source of truth)
     if flow_state.gen_id is not None and flow_state.generating:
         await request_generation_cancel(gen_id=flow_state.gen_id)
 
+    # Отменяем локальную задачу в процессе бота (если есть)
     task = get_active_task(uid=message.from_user.id)
     if task is not None and not task.done():
         task.cancel()

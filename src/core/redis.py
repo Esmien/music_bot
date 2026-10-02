@@ -23,6 +23,8 @@ else:
         decode_responses=True,
     )
 
+# Source of truth для запроса отмены генерации пользователем.
+# Этот токен проверяется воркером на всех этапах генерации (до API, во время, перед доставкой).
 GENERATION_CANCEL_KEY_PREFIX = "bot:cancel:gen"
 
 # Lua-скрипт для атомарного освобождения лока по токену владельца
@@ -48,11 +50,14 @@ def generation_cancel_key(gen_id: int) -> str:
 
 
 async def request_generation_cancel(*, gen_id: int, ttl_seconds: int = 600) -> None:
-    """Устанавливает cancel-token для генерации.
+    """Устанавливает cancel-token для генерации (source of truth для отмены).
+
+    TTL 600 секунд покрывает максимальное время генерации (~3 мин) + запас на retry.
+    Токен автоматически удаляется Redis через TTL либо явно воркером после обработки отмены.
 
     Args:
         gen_id: ID генерации в базе данных.
-        ttl_seconds: Время жизни токена в Redis.
+        ttl_seconds: Время жизни токена в Redis (по умолчанию 10 минут).
 
     Returns:
         None.
