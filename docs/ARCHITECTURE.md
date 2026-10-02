@@ -237,9 +237,10 @@
 
 При успешной генерации
   └─> domains/generation/worker.py: run_generation_task
-        ├─> публикация события GenerationSucceeded
-        └─> domains/evaluation/handlers.py: handle_generation_succeeded_event
-              ├─> проверка соответствия gen_id в FSM
+        ├─> публикация события GenerationSucceeded в TaskIQ
+        └─> (event listener) domains/evaluation/handlers.py: handle_generation_succeeded_event
+              ├─> получение FSM-контекста через StorageKey (bot, chat_id)
+              ├─> проверка соответствия gen_id в FSM state
               ├─> FSM: FeedbackStates.waiting_evaluation
               └─> отправка клавиатуры оценки пользователю через TelegramPort
 
@@ -253,14 +254,19 @@
               └─> отправка сообщения об ошибке
 ```
 
-`/cancel` и `/logout` могут отменить задачу через Redis-флаг `generation:cancel:{gen_id}`, который проверяется воркером генерации во время выполнения.
+**Отмена генерации:**
+
+`/cancel` и `/logout` устанавливают Redis cancel-токен (`bot:cancel:gen:{gen_id}`), который является единственным source of truth для запроса отмены. Воркер проверяет токен перед каждым необратимым действием (API-запрос, доставка).
+
+Подробное описание state machine, четырёх этапов отмены и защиты от race condition см. в [cancellation_flow.md](cancellation_flow.md).
 
 ### 4. Оценка и отзыв (Telegram-хендлеры)
 
 ```text
 Пользователь ставит оценку (лайк/дизлайк)
   └─> domains/evaluation/handlers.py: handle_evaluate
-        ├─> извлечение gen_id из callback_data и проверка соответствия FSM state
+        ├─> shared/callback_parser.py: CallbackData.parse() — извлечение gen_id и action
+        ├─> проверка соответствия gen_id в FSM state
         ├─> domains/feedback/service.py: save_feedback (с gen_id и user_id)
         │     └─> PostgreSQL: upsert в GenerationFeedback с проверкой принадлежности
         ├─> обновление FSM state с gen_id и оценкой
@@ -297,12 +303,14 @@
 - `GenerationSucceeded` — генерация завершена успешно
 - `GenerationFailed` — генерация завершена с ошибкой
 
-**Воркеры**:
-- `domains/enricher/worker.py` — обработка обогащения промптов
-- `domains/generation/worker.py` — обработка генерации музыки
-- `domains/base/worker.py` — проверка кредитов по команде
+**Воркеры и event listeners**:
+- `domains/enricher/worker.py` — обработка команды EnrichPromptCommand и событие-листенер EnrichmentCompleted
+- `domains/generation/worker.py` — обработка команды StartGenerationCommand
+- `domains/base/worker.py` — обработка команды CheckCreditsCommand
+- `domains/evaluation/handlers.py` — событие-листенер GenerationSucceeded (отправка клавиатуры оценки)
+- `domains/generation/handlers.py` — событие-листенер GenerationFailed (уведомление об ошибке)
 
-Все воркеры регистрируются в главном процессе воркера: `workers/taskiq_worker.py`
+Все воркеры и event listeners регистрируются в главном процессе воркера: `workers/taskiq_worker.py`
 
 ### 5. Обработка ошибок
 
