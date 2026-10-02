@@ -18,14 +18,6 @@ kanban-plugin: board
 
 ## 🟡 P2 — MEDIUM
 
-- [ ] AUD-015 — Добавить настоящий Redis integration-профиль
-	  - Описание: Lua `EVAL` частично эмулируется monkeypatch.
-	  - ТЗ: оставить unit-тесты; добавить Redis integration profile и CI-команду; проверить `SET NX PX` и compare-and-delete.
-	  - DoD:
-	- [ ] Реальный Redis подтверждает mutual exclusion.
-	- [ ] Чужой token не удаляет lock.
-	- [ ] Expired lock захватывается повторно.
-	- [ ] CI явно требует Redis.
 - [ ] AUD-016 — Зафиксировать границы framework-зависимости портов
 	  - Описание: порты принимают конкретные `aiogram.Message` и `FSMContext`.
 	  - ТЗ: решить, является ли это осознанной pragmatic-архитектурой; документировать границу либо ввести DTO; добавить архитектурную проверку.
@@ -50,6 +42,14 @@ kanban-plugin: board
 
 ## Done
 
+- [x] AUD-015 — Добавить настоящий Redis integration-профиль
+	  - Описание: Lua `EVAL` частично эмулируется monkeypatch.
+	  - ТЗ: оставить unit-тесты; добавить Redis integration profile и CI-команду; проверить `SET NX PX` и compare-and-delete.
+	  - DoD:
+	- [x] Реальный Redis подтверждает mutual exclusion.
+	- [x] Чужой token не удаляет lock.
+	- [x] Expired lock захватывается повторно.
+	- [x] CI явно требует Redis.
 - [x] AUD-014 — Устранить дублирование `task_id` и `attempt_id`
 	  - Описание: конкурентная защита реализована через `attempt_id`, а `task_id` остаётся незавершённой концепцией.
 	  - ТЗ: описать назначение, владельца и TTL каждого ID; удалить неиспользуемый либо связать со state machine; обновить тесты.

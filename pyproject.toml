@@ -96,6 +96,7 @@ testpaths = ["src/domains", "tests"]
 markers = [
     "unit: быстрые изолированные тесты (сеть и БД замоканы)",
     "integration: тесты с реальной in-memory БД",
+    "redis: интеграционные тесты, требующие реального Redis-сервера",
 ]
 # Покрытие включено по умолчанию; источники заданы в [tool.coverage.run]
 addopts = "--cov --cov-report=term-missing:skip-covered"
