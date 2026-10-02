@@ -17,6 +17,7 @@ from domains.feedback.keyboards import get_feedback_keyboard
 from domains.feedback.service import save_feedback
 from domains.feedback.state_models import FeedbackFlowState
 from domains.generation.state_models import GenerationFlowState
+from shared.callback_parser import FeedbackAction, parse_feedback_callback
 from shared.contracts.events import GenerationSucceeded
 from shared.ports.telegram import TelegramPort
 
@@ -100,10 +101,14 @@ async def handle_evaluate(callback: CallbackQuery, state: FSMContext) -> None:
         callback: Нажатие кнопки «нравится» или «не нравится».
         state: FSM-контекст пользователя.
     """
-    raw_data = callback.data or ""
-    parts = raw_data.split(":")
-    callback_gen_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
-    evaluation = parts[1] == "like" if len(parts) > 1 else (raw_data == CB_FEEDBACK_LIKE)
+    parsed = parse_feedback_callback(callback.data)
+    if parsed is None or parsed.action not in (FeedbackAction.LIKE, FeedbackAction.DISLIKE):
+        log.warning("Malformed evaluation callback (data=%s, user=%s)", callback.data, callback.from_user.id)
+        await callback.answer(text="Некорректный запрос оценки.", show_alert=True)
+        return
+
+    callback_gen_id = parsed.gen_id
+    evaluation = parsed.action == FeedbackAction.LIKE
 
     flow_state = await get_fsm_data(state=state, model_class=FeedbackFlowState)
     if callback_gen_id is not None and flow_state.gen_id is not None and callback_gen_id != flow_state.gen_id:

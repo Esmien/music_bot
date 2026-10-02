@@ -6,13 +6,6 @@ kanban-plugin: board
 
 ## Quick wins
 
-- [ ] AUD-013 — Ввести единый typed parser callback-data
-	  - Описание: feedback и evaluation handlers по-разному разбирают `fb:action:gen_id`.
-	  - ТЗ: создать enum action и typed parser; перевести оба обработчика; добавить valid, malformed и stale callback-тесты.
-	  - DoD:
-	- [ ] В handlers нет ручного `split` для этого формата.
-	- [ ] Malformed callback безопасно отклоняется.
-	- [ ] Stale `gen_id` не записывается в БД.
 
 
 ## 🔴 P0 — BLOCKER
@@ -114,6 +107,13 @@ kanban-plugin: board
 
 ## Done
 
+- [x] AUD-013 — Ввести единый typed parser callback-data
+	  - Описание: feedback и evaluation handlers по-разному разбирают `fb:action:gen_id`.
+	  - ТЗ: создать enum action и typed parser; перевести оба обработчика; добавить valid, malformed и stale callback-тесты.
+	  - DoD:
+	- [x] В handlers нет ручного `split` для этого формата.
+	- [x] Malformed callback безопасно отклоняется.
+	- [x] Stale `gen_id` не записывается в БД.
 - [x] AUD-012 — Исправить docstring `_save_feedback_best_effort`
 	  - Описание: docstring содержит отсутствующий параметр `chat_id`.
 	  - ТЗ: синхронизировать `Args` с сигнатурой и проверить остальные описания.
@@ -150,6 +150,6 @@ kanban-plugin: board
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[false,true,true,true,true,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[true,true,false,true,true,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%

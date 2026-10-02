@@ -21,27 +21,11 @@ from domains.feedback.keyboards import (
 )
 from domains.feedback.service import save_feedback
 from domains.feedback.state_models import FeedbackFlowState
+from shared.callback_parser import FeedbackAction, parse_feedback_callback
 
 log = logging.getLogger(__name__)
 
 router = Router()
-
-
-def _extract_callback_gen_id(callback_data: str | None) -> int | None:
-    """Извлекает gen_id из callback_data вида 'fb:action:gen_id'.
-
-    Args:
-        callback_data: Строка данных callback-запроса.
-
-    Returns:
-        Целочисленный gen_id или None.
-    """
-    if not callback_data:
-        return None
-    parts = callback_data.split(":")
-    if len(parts) > 2 and parts[2].isdigit():
-        return int(parts[2])
-    return None
 
 
 async def _finish_feedback(
@@ -139,7 +123,13 @@ async def _show_feedback_prompt(callback: CallbackQuery, state: FSMContext) -> N
         callback: Нажатие кнопки «Отправить фидбек».
         state: FSM-контекст пользователя.
     """
-    callback_gen_id = _extract_callback_gen_id(callback.data)
+    parsed = parse_feedback_callback(callback.data)
+    if parsed is None or parsed.action != FeedbackAction.SEND:
+        log.warning("Malformed feedback send callback (data=%s, user=%s)", callback.data, callback.from_user.id)
+        await callback.answer(text="Некорректный запрос отправки отзыва.", show_alert=True)
+        return
+
+    callback_gen_id = parsed.gen_id
     flow_state = await get_fsm_data(state=state, model_class=FeedbackFlowState)
     if callback_gen_id is not None and flow_state.gen_id is not None and callback_gen_id != flow_state.gen_id:
         log.warning(
@@ -198,7 +188,13 @@ async def _finish_from_callback(callback: CallbackQuery, state: FSMContext) -> N
         callback: Нажатие кнопки «Завершить без отзыва».
         state: FSM-контекст пользователя.
     """
-    callback_gen_id = _extract_callback_gen_id(callback.data)
+    parsed = parse_feedback_callback(callback.data)
+    if parsed is None or parsed.action != FeedbackAction.FINISH:
+        log.warning("Malformed feedback finish callback (data=%s, user=%s)", callback.data, callback.from_user.id)
+        await callback.answer(text="Некорректный запрос завершения.", show_alert=True)
+        return
+
+    callback_gen_id = parsed.gen_id
     flow_state = await get_fsm_data(state=state, model_class=FeedbackFlowState)
     if callback_gen_id is not None and flow_state.gen_id is not None and callback_gen_id != flow_state.gen_id:
         log.warning(
