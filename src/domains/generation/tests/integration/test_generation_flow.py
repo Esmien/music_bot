@@ -260,7 +260,6 @@ async def test_cancel_generation_kills_running_task(
     assert msg.answers[-1] == base_messasges.CANCEL_ACTION
     # Проверяем очистку registry
     assert task_registry.get_active_task(uid=57) is None
-    assert await task_registry.get_task_id(uid=57) is None
 
 
 async def test_retry_generation_requires_auth(
@@ -417,7 +416,6 @@ async def test_cancel_sets_redis_cancel_token(
     assert await redis_module.is_generation_cancelled(gen_id=200) is True
     assert state.cleared
     assert task_registry.get_active_task(uid=58) is None
-    assert await task_registry.get_task_id(uid=58) is None
 
 
 async def test_cancel_without_active_generation_clears_state(

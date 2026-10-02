@@ -1,4 +1,4 @@
-"""Тесты реестра задач генерации с параллельным хранением task_id в Redis."""
+"""Тесты реестра задач генерации."""
 
 import asyncio
 from contextlib import suppress
@@ -6,14 +6,13 @@ from contextlib import suppress
 from domains.generation.registries.task_registry import (
     clear_active_tasks,
     get_active_task,
-    get_task_id,
     register_active_task,
     unregister_active_task,
 )
 
 
-async def test_register_and_get_task_id(fake_redis, monkeypatch):
-    """Регистрация задачи сохраняет task_id в Redis."""
+async def test_register_and_get_active_task(fake_redis, monkeypatch):
+    """Регистрация задачи добавляет её в реестр и Redis."""
     from domains.generation.registries import task_registry
 
     monkeypatch.setattr(task_registry, "redis_client", fake_redis)
@@ -21,26 +20,22 @@ async def test_register_and_get_task_id(fake_redis, monkeypatch):
     user_id = 42
     task = asyncio.create_task(asyncio.sleep(0))
 
-    task_id = await register_active_task(uid=user_id, task=task)
-
-    # task_id должен быть uuid-строкой
-    assert isinstance(task_id, str)
-    assert len(task_id) == 36  # формат uuid4
-
-    # task_id должен читаться из Redis
-    stored_task_id = await get_task_id(uid=user_id)
-    assert stored_task_id == task_id
+    await register_active_task(uid=user_id, task=task)
 
     # Задача должна быть в памяти
     assert get_active_task(uid=user_id) is task
+
+    # uid должен быть в Redis-множестве
+    is_member = await fake_redis.sismember("bot:active_tasks", user_id)
+    assert is_member
 
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
 
 
-async def test_unregister_clears_task_id(fake_redis, monkeypatch):
-    """Снятие регистрации удаляет task_id из Redis."""
+async def test_unregister_removes_task(fake_redis, monkeypatch):
+    """Снятие регистрации удаляет задачу из реестра и Redis."""
     from domains.generation.registries import task_registry
 
     monkeypatch.setattr(task_registry, "redis_client", fake_redis)
@@ -51,18 +46,20 @@ async def test_unregister_clears_task_id(fake_redis, monkeypatch):
     await register_active_task(uid=user_id, task=task)
     await unregister_active_task(uid=user_id, task=task)
 
-    # task_id должен быть удалён
-    assert await get_task_id(uid=user_id) is None
     # Задача должна быть удалена из памяти
     assert get_active_task(uid=user_id) is None
+
+    # uid должен быть удалён из Redis-множества
+    is_member = await fake_redis.sismember("bot:active_tasks", user_id)
+    assert not is_member
 
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
 
 
-async def test_clear_active_tasks_removes_all_task_ids(fake_redis, monkeypatch):
-    """clear_active_tasks удаляет все task_id ключи из Redis."""
+async def test_clear_active_tasks_removes_all(fake_redis, monkeypatch):
+    """clear_active_tasks удаляет все задачи из реестра и Redis."""
     from domains.generation.registries import task_registry
 
     monkeypatch.setattr(task_registry, "redis_client", fake_redis)
@@ -73,17 +70,26 @@ async def test_clear_active_tasks_removes_all_task_ids(fake_redis, monkeypatch):
         tasks.append(task)
         await register_active_task(uid=user_id, task=task)
 
-    # Проверяем, что task_id записаны
-    assert await get_task_id(uid=10) is not None
-    assert await get_task_id(uid=20) is not None
-    assert await get_task_id(uid=30) is not None
+    # Проверяем, что uid записаны в Redis
+    assert await fake_redis.sismember("bot:active_tasks", 10)
+    assert await fake_redis.sismember("bot:active_tasks", 20)
+    assert await fake_redis.sismember("bot:active_tasks", 30)
 
-    await clear_active_tasks()
+    result = await clear_active_tasks()
 
-    # Все task_id должны быть удалены
-    assert await get_task_id(uid=10) is None
-    assert await get_task_id(uid=20) is None
-    assert await get_task_id(uid=30) is None
+    # Все задачи должны быть удалены из памяти
+    assert get_active_task(uid=10) is None
+    assert get_active_task(uid=20) is None
+    assert get_active_task(uid=30) is None
+
+    # Redis-множество должно быть очищено
+    assert not await fake_redis.sismember("bot:active_tasks", 10)
+    assert not await fake_redis.sismember("bot:active_tasks", 20)
+    assert not await fake_redis.sismember("bot:active_tasks", 30)
+
+    # Проверяем результат
+    assert result["deleted_set"] == 1
+    assert result["skipped"] is False
 
     for task in tasks:
         task.cancel()

@@ -126,7 +126,6 @@ async def test_clear_active_tasks_skips_when_other_instances():
 
         assert result["skipped"] is True
         assert result["deleted_set"] == 0
-        assert result["deleted_keys"] == 0
 
 
 async def test_clear_active_tasks_proceeds_when_no_other_instances():

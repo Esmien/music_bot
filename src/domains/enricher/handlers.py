@@ -402,12 +402,15 @@ async def handle_prompt_fallback(callback: CallbackQuery, state: FSMContext):
 
     await callback.answer()
     final_text = flow_state.enriched_prompt or prompt
-    await _save_feedback_best_effort(
-        status=callback.message,
+    saved = await _save_prompt_blocking(
+        message=callback.message,
         uid=callback.from_user.id,
         initial_prompt=prompt,
         enriched_prompt=final_text,
     )
+    if not saved:
+        await state.clear()
+        return
     final_prompt = _build_generation_prompt(text=final_text)
     log.info("Enrichment fallback used (user=%s)", callback.from_user.id)
     with contextlib.suppress(Exception):

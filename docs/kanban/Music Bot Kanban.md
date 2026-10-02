@@ -18,12 +18,6 @@ kanban-plugin: board
 
 ## 🟡 P2 — MEDIUM
 
-- [ ] AUD-003 — Удалить или подключить `task_id` к реальному flow
-	  - Описание: Redis хранит `task_id`, но worker не использует его для проверки актуальности результата.
-	  - ТЗ: проверить вызовы `get_task_id`; удалить API либо встроить проверку перед результатом; обновить тесты и документацию.
-	  - DoD:
-	- [ ] `task_id` участвует в инварианте либо полностью удалён.
-	- [ ] Нет тестов несуществующей функциональности.
 - [ ] AUD-009 — Синхронизировать `ARCHITECTURE.md` с кодом
 	  - Описание: документация содержит устаревшие имена FSM и handlers.
 	  - ТЗ: сверить диаграммы с исходниками; обновить имена, пути и cancellation flow; проверить ссылки.
@@ -69,6 +63,13 @@ kanban-plugin: board
 
 
 ## Done
+
+- [x] AUD-003 — Удалить или подключить `task_id` к реальному flow
+	  - Описание: Redis хранит `task_id`, но worker не использует его для проверки актуальности результата.
+	  - ТЗ: проверить вызовы `get_task_id`; удалить API либо встроить проверку перед результатом; обновить тесты и документацию.
+	  - DoD:
+	- [x] `task_id` участвует в инварианте либо полностью удалён.
+	- [x] Нет тестов несуществующей функциональности.
 
 - [ ] AUD-011 — Определить политику ошибки сохранения истории промпта
 	  - Описание: best-effort сохранение может потерять запись и продолжить flow.
@@ -158,6 +159,6 @@ kanban-plugin: board
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[true,true,true,true,true,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[true,true,true,false,true,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%

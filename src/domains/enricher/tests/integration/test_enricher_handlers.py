@@ -191,7 +191,7 @@ async def test_approve_db_error_blocks_generation(
 
         raise OperationalError("DB connection lost", None, None)
 
-    monkeypatch.setattr(enricher, "save_enriched_prompt", failing_save)
+    monkeypatch.setattr(enricher_handlers, "save_enriched_prompt", failing_save)
 
     callback = make_callback(uid=8, message=make_callback_message())
     await enricher_handlers.handle_prompt_approve(callback=callback, state=state)
@@ -224,7 +224,7 @@ async def test_fallback_db_error_blocks_generation(
 
         raise IntegrityError("Constraint violation", None, None)
 
-    monkeypatch.setattr(enricher, "save_enriched_prompt", failing_save)
+    monkeypatch.setattr(enricher_handlers, "save_enriched_prompt", failing_save)
 
     callback = make_callback(uid=9, message=make_callback_message())
     await enricher_handlers.handle_prompt_fallback(callback=callback, state=state)
