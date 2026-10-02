@@ -118,7 +118,6 @@ async def _save_feedback_best_effort(status: Message, uid: int, initial_prompt: 
     Args:
         status: Сообщение, используемое для уведомления владельца.
         uid: Telegram user_id пользователя.
-        chat_id: ID чата для публикации результата.
         initial_prompt: Исходный промпт.
         enriched_prompt: Обогащённый промпт.
     """
