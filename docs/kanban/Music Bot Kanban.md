@@ -14,13 +14,6 @@ kanban-plugin: board
 
 ## 🟠 P1 — HIGH
 
-- [ ] AUD-002 — Определить единственный `task_registry.py`
-	  - Описание: обнаружены in-memory и Redis-версии реестра.
-	  - ТЗ: найти физические пути и импорты; зафиксировать canonical вариант; удалить или переименовать legacy; привести тесты к контракту.
-	  - DoD:
-	- [ ] Один production registry API.
-	- [ ] Все импорты используют canonical API.
-	- [ ] Тесты регистрации, отмены и очистки проходят.
 - [ ] AUD-004 — Сделать startup cleanup Redis безопасным
 	  - Описание: общая очистка active-task и FSM-ключей опасна при rolling restart.
 	  - ТЗ: выбрать ownership/lease либо явно закрепить single-instance; добавить тест перекрывающегося запуска; логировать обработанные и пропущенные ключи.
@@ -101,12 +94,17 @@ kanban-plugin: board
 	- [ ] CI проходит.
 
 
-## In Progress
-
 
 
 ## Done
 
+- [x] AUD-002 — Определить единственный `task_registry.py`
+	  - Описание: обнаружены in-memory и Redis-версии реестра.
+	  - ТЗ: найти физические пути и импорты; зафиксировать canonical вариант; удалить или переименовать legacy; привести тесты к контракту.
+	  - DoD:
+	- [x] Один production registry API.
+	- [x] Все импорты используют canonical API.
+	- [x] Тесты регистрации, отмены и очистки проходят.
 - [x] AUD-013 — Ввести единый typed parser callback-data
 	  - Описание: feedback и evaluation handlers по-разному разбирают `fb:action:gen_id`.
 	  - ТЗ: создать enum action и typed parser; перевести оба обработчика; добавить valid, malformed и stale callback-тесты.
