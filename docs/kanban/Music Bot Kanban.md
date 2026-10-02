@@ -14,13 +14,6 @@ kanban-plugin: board
 
 ## 🟠 P1 — HIGH
 
-- [ ] AUD-007 — Синхронизировать тесты отмены с registry-контрактом
-	  - Описание: часть тестов обращается к Redis registry как к словарю.
-	  - ТЗ: найти старые фикстуры; разделить local `asyncio` cancellation и Redis cancel-token; проверить очистку registry и FSM.
-	  - DoD:
-	- [ ] В тестах нет несуществующего dictionary API.
-	- [ ] Локальная отмена и Redis cancel-token проверяются отдельно.
-	- [ ] После отмены очищаются registry и FSM.
 - [ ] AUD-010 — Формализовать единый cancellation flow
 	  - Описание: отмена распределена между `asyncio.Task`, Redis, FSM и БД.
 	  - ТЗ: описать state machine и source of truth; проверить отмену до claim, во время API, после сохранения MP3 и во время Telegram delivery; добавить конкурентные тесты.
@@ -93,6 +86,13 @@ kanban-plugin: board
 
 ## Done
 
+- [x] AUD-007 — Синхронизировать тесты отмены с registry-контрактом
+	  - Описание: часть тестов обращается к Redis registry как к словарю.
+	  - ТЗ: найти старые фикстуры; разделить local `asyncio` cancellation и Redis cancel-token; проверить очистку registry и FSM.
+	  - DoD:
+	- [x] В тестах нет несуществующего dictionary API.
+	- [x] Локальная отмена и Redis cancel-token проверяются отдельно.
+	- [x] После отмены очищаются registry и FSM.
 - [x] AUD-004 — Сделать startup cleanup Redis безопасным
 	  - Описание: общая очистка active-task и FSM-ключей опасна при rolling restart.
 	  - ТЗ: выбрать ownership/lease либо явно закрепить single-instance; добавить тест перекрывающегося запуска; логировать обработанные и пропущенные ключи.

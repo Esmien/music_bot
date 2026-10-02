@@ -18,7 +18,7 @@ from domains.generation import handlers as handlers_generation
 from domains.generation import pipeline_handlers as pipeline
 from domains.generation.generation_messages import GENERATION_IN_PROGRESS_TEXT
 from domains.generation.models import Generation, GenerationStatus
-from domains.generation.registries.task_registry import _active_tasks as registry
+from domains.generation.registries import task_registry
 
 pytestmark = pytest.mark.integration
 
@@ -51,11 +51,12 @@ def recording_broker(monkeypatch):
 
 
 @pytest.fixture
-def clean_generation_registry():
-    """Пустой реестр активных задач генерации до и после теста."""
-    registry.clear()
+async def clean_generation_registry(fake_redis, monkeypatch):
+    """Пустой реестр активных задач генерации через канонический API до и после теста."""
+    monkeypatch.setattr(task_registry, "redis_client", fake_redis)
+    await task_registry.clear_active_tasks()
     yield
-    registry.clear()
+    await task_registry.clear_active_tasks()
 
 
 @pytest.fixture
@@ -239,13 +240,17 @@ async def test_handle_title_creates_pending_generation_and_publishes_command(
 
 
 async def test_cancel_generation_kills_running_task(
-    patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state
+    patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state, fake_redis, monkeypatch
 ):
-    """Кнопка «❌ Отмена» гасит живую фоновую задачу генерации."""
+    """Кнопка «❌ Отмена» гасит живую фоновую задачу генерации и очищает registry."""
+    monkeypatch.setattr(task_registry, "redis_client", fake_redis)
+
     msg = make_message(uid=57)
     state = fake_state()
+    await state.update_data(gen_id=100, generating=True)
+
     task = asyncio.create_task(asyncio.sleep(60))
-    registry[57] = task
+    await task_registry.register_active_task(uid=57, task=task)
 
     await base_handlers.cmd_cancel(msg, state)
 
@@ -253,6 +258,9 @@ async def test_cancel_generation_kills_running_task(
         await task
     assert state.cleared
     assert msg.answers[-1] == base_messasges.CANCEL_ACTION
+    # Проверяем очистку registry
+    assert task_registry.get_active_task(uid=57) is None
+    assert await task_registry.get_task_id(uid=57) is None
 
 
 async def test_retry_generation_requires_auth(
@@ -389,3 +397,37 @@ async def test_retry_generation_publishes_command(
     assert task_name == "run_generation"
     assert command.title == "Ретрай"
     assert command.prompt == "промпт"
+
+
+async def test_cancel_sets_redis_cancel_token(
+    patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state, fake_redis, monkeypatch
+):
+    """Отмена генерации устанавливает Redis cancel-token для воркера."""
+    import core.redis as redis_module
+
+    monkeypatch.setattr(redis_module, "redis_client", fake_redis)
+
+    msg = make_message(uid=58)
+    state = fake_state()
+    await state.update_data(gen_id=200, generating=True)
+
+    await base_handlers.cmd_cancel(msg, state)
+
+    # Проверяем, что cancel-token установлен в Redis
+    assert await redis_module.is_generation_cancelled(gen_id=200) is True
+    assert state.cleared
+    assert task_registry.get_active_task(uid=58) is None
+    assert await task_registry.get_task_id(uid=58) is None
+
+
+async def test_cancel_without_active_generation_clears_state(
+    patched_auth_db, clean_auth_state, make_message, fake_state
+):
+    """Отмена без активной генерации просто очищает FSM и возвращает в меню."""
+    msg = make_message(uid=59)
+    state = fake_state()
+
+    await base_handlers.cmd_cancel(msg, state)
+
+    assert state.cleared
+    assert msg.answers[-1] == base_messasges.CANCEL_ACTION
