@@ -6,13 +6,6 @@ kanban-plugin: board
 
 ## Quick wins
 
-- [ ] AUD-006 — Убрать compatibility FSM-реэкспорт
-	  - Описание: legacy `fsm.py` создаёт альтернативную точку импорта `FeedbackStates`.
-	  - ТЗ: найти импорты; перевести их на `domains.feedback.fsm`; удалить реэкспорт или пометить deprecated; обновить тесты.
-	  - DoD:
-	- [ ] Используется один canonical import.
-	- [ ] `pytest` проходит.
-	- [ ] Ruff проходит.
 - [ ] AUD-008 — Устранить дублирующий `COPY workers` в Dockerfile
 	  - Описание: после `COPY src/ ./` каталог `workers` копируется повторно.
 	  - ТЗ: проверить структуру `src/workers`; оставить один способ копирования; собрать bot и worker-образы.
@@ -135,6 +128,13 @@ kanban-plugin: board
 
 ## Done
 
+- [x] AUD-006 — Убрать compatibility FSM-реэкспорт
+	  - Описание: legacy `fsm.py` создаёт альтернативную точку импорта `FeedbackStates`.
+	  - ТЗ: найти импорты; перевести их на `domains.feedback.fsm`; удалить реэкспорт или пометить deprecated; обновить тесты.
+	  - DoD:
+	- [x] Используется один canonical import.
+	- [x] `pytest` проходит.
+	- [x] Ruff проходит.
 - [x] AUD-001 — Сделать feedback upsert совместимым с SQLite и PostgreSQL
 	  - Описание: сервис использует PostgreSQL-specific `insert/on_conflict_do_update`, а тесты используют SQLite.
 	  - ТЗ: выбрать dialect-independent стратегию или реализации по dialect; сохранить ownership, статус `SUCCESS` и отсутствие дублей; добавить SQLite и PostgreSQL проверки.
@@ -148,9 +148,8 @@ kanban-plugin: board
 
 
 
-
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[false,false,false,false,false,false,true],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[false,false,false,false,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%

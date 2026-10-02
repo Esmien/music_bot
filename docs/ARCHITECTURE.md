@@ -81,7 +81,6 @@
 │   │   │           └── test_services_enricher.py  # Юнит-тесты сервиса
 │   │   ├── evaluation/
 │   │   │   ├── handlers.py            # Приём оценки, публикация события EvaluationCompleted
-│   │   │   ├── fsm.py                 # Реэкспорт FeedbackStates для совместимости
 │   │   │   ├── keyboards.py           # Клавиатура оценки (лайк/дизлайк)
 │   │   │   ├── service.py             # Сохранение оценки в БД
 │   │   │   ├── evaluation_messages.py # Текстовые сообщения домена оценки
