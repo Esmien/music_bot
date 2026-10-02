@@ -6,20 +6,6 @@ kanban-plugin: board
 
 ## Quick wins
 
-- [ ] AUD-008 — Устранить дублирующий `COPY workers` в Dockerfile
-	  - Описание: после `COPY src/ ./` каталог `workers` копируется повторно.
-	  - ТЗ: проверить структуру `src/workers`; оставить один способ копирования; собрать bot и worker-образы.
-	  - DoD:
-	- [ ] Дублирующего `COPY` нет.
-	- [ ] Bot-образ собирается.
-	- [ ] Generation и enricher worker запускаются.
-- [ ] AUD-012 — Исправить docstring `_save_feedback_best_effort`
-	  - Описание: docstring содержит отсутствующий параметр `chat_id`.
-	  - ТЗ: синхронизировать `Args` с сигнатурой и проверить остальные описания.
-	  - DoD:
-	- [ ] Все параметры сигнатуры описаны.
-	- [ ] Лишних параметров нет.
-	- [ ] Ruff проходит.
 - [ ] AUD-013 — Ввести единый typed parser callback-data
 	  - Описание: feedback и evaluation handlers по-разному разбирают `fb:action:gen_id`.
 	  - ТЗ: создать enum action и typed parser; перевести оба обработчика; добавить valid, malformed и stale callback-тесты.
@@ -124,10 +110,24 @@ kanban-plugin: board
 
 ## In Progress
 
+- [ ] AUD-012 — Исправить docstring `_save_feedback_best_effort`
+	  - Описание: docstring содержит отсутствующий параметр `chat_id`.
+	  - ТЗ: синхронизировать `Args` с сигнатурой и проверить остальные описания.
+	  - DoD:
+	- [ ] Все параметры сигнатуры описаны.
+	- [ ] Лишних параметров нет.
+	- [ ] Ruff проходит.
 
 
 ## Done
 
+- [x] AUD-008 — Устранить дублирующий `COPY workers` в Dockerfile
+	  - Описание: после `COPY src/ ./` каталог `workers` копируется повторно.
+	  - ТЗ: проверить структуру `src/workers`; оставить один способ копирования; собрать bot и worker-образы.
+	  - DoD:
+	- [x] Дублирующего `COPY` нет.
+	- [x] Bot-образ собирается.
+	- [x] Generation и enricher worker запускаются.
 - [x] AUD-006 — Убрать compatibility FSM-реэкспорт
 	  - Описание: legacy `fsm.py` создаёт альтернативную точку импорта `FeedbackStates`.
 	  - ТЗ: найти импорты; перевести их на `domains.feedback.fsm`; удалить реэкспорт или пометить deprecated; обновить тесты.
@@ -150,6 +150,6 @@ kanban-plugin: board
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[false,false,false,false,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[false,true,true,true,true,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%

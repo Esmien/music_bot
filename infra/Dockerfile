@@ -17,9 +17,6 @@ RUN useradd -m botuser \
 # Копируем исходники из корня проекта в /app
 COPY src/ ./
 
-# Копируем workers как top-level модуль (Python ищет workers.taskiq_worker)
-COPY src/workers/ workers/
-
 # Миграции Alembic
 COPY alembic.ini ./
 COPY migrations/ migrations/

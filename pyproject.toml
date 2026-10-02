@@ -50,7 +50,8 @@ exclude = [
     "venv",
     "__pypackages__",
     "alembic",
-    "migrations"
+    "migrations",
+    "infra"
 ]
 
 line-length = 120
