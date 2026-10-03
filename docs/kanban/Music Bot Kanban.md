@@ -14,22 +14,6 @@ kanban-plugin: board
 
 ## 🟠 P1 — HIGH
 
-- [ ] AUD-023 — Сделать startup cleanup Redis ownership-safe
-	  - Описание: `clear_active_tasks()` может удалить общий Redis-set активных задач.
-	  - ТЗ:
-	- Проверить все вызовы `clear_active_tasks`.
-	- Убрать опасное поведение по умолчанию.
-	- Привязать активные задачи к `instance_id` или lease.
-	- Удалять только ключи текущего экземпляра.
-	- Добавить сценарий двух экземпляров при rolling restart.
-	- Обработать `RedisError` и частичный cleanup.
-	  - DoD:
-	- [ ] Один экземпляр не удаляет задачи другого.
-	- [ ] Cleanup без ownership-параметров невозможен или запрещён.
-	- [ ] Есть тест overlapping startup.
-	- [ ] Есть тест stale instance cleanup.
-	- [ ] Логи содержат `instance_id`, количество найденных и удалённых ключей.
-	- [ ] Документирован deployment protocol.
 - [ ] AUD-026 — Синхронизировать RabbitMQ smoke tests с конфигурацией
 	  - Описание: тест использует захардкоженный URL `amqp://songai:songai@localhost:5672/`, не совпадающий с Compose-конфигурацией.
 	  - ТЗ:
@@ -142,6 +126,25 @@ kanban-plugin: board
 
 ## In Progress
 
+
+## Done
+
+- [x] AUD-023 — Сделать startup cleanup Redis ownership-safe
+	  - Описание: `clear_active_tasks()` может удалить общий Redis-set активных задач.
+	  - ТЗ:
+	- Проверить все вызовы `clear_active_tasks`.
+	- Убрать опасное поведение по умолчанию.
+	- Привязать активные задачи к `instance_id` или lease.
+	- Удалять только ключи текущего экземпляра.
+	- Добавить сценарий двух экземпляров при rolling restart.
+	- Обработать `RedisError` и частичный cleanup.
+	  - DoD:
+	- [x] Один экземпляр не удаляет задачи другого.
+	- [x] Cleanup всегда ownership-safe, параметр `skip_if_other_instances` удалён.
+	- [x] Есть тест overlapping startup.
+	- [x] Есть тест stale instance cleanup.
+	- [x] Логи содержат `instance_id`, количество найденных и удалённых ключей.
+	- [x] Документирован deployment protocol в ARCHITECTURE.md.
 - [x] AUD-022 — Разделить отмену генерации и отмену delivery
 	  - Описание: один Redis cancel-token используется для разных бизнес-сценариев.
 	  - ТЗ:
@@ -157,10 +160,6 @@ kanban-plugin: board
 	- [x] Cancel-token очищается после обработки или его TTL документирован.
 	- [x] Есть тесты отмены до claim, во время API, после сохранения MP3 и во время delivery.
 	- [x] Stale `attempt_id` не меняет статус и не отправляет результат.
-
-
-## Done
-
 - [x] AUD-022 — Разделить отмену генерации и отмену delivery
 - [x] AUD-021 — Сделать сохранение MP3 атомарным и проверять целостность
 	  - Описание: `write_bytes()` пишет напрямую в финальный путь `gen_{gen_id}.mp3`.

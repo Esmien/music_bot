@@ -7,6 +7,7 @@ from typing import Any
 from aiogram.fsm.state import State, StatesGroup
 from redis.exceptions import RedisError
 
+from core.instance import current_instance
 from core.redis import redis_client
 
 log = logging.getLogger(__name__)
@@ -57,8 +58,6 @@ async def clear_orphaned_generation_flags(skip_if_other_instances: bool = False)
     Raises:
         RedisError: При ошибке работы с Redis.
     """
-    from core.instance import current_instance
-
     if skip_if_other_instances and await current_instance.has_other_active_instances():
         log.info("Skipping orphaned generation flags cleanup: other active instances are running")
         return {"skipped": True, "cleared": 0}

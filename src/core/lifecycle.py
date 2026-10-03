@@ -23,6 +23,15 @@ async def shutdown_all(bot: Bot | None = None) -> None:
     """
     log.info("Starting graceful shutdown")
 
+    # Чистим реестр активных задач текущего экземпляра перед shutdown
+    try:
+        from domains.generation.registries.task_registry import clear_active_tasks
+
+        await clear_active_tasks()
+        log.info("Active tasks registry cleaned")
+    except Exception as e:
+        log.exception("Error cleaning active tasks: %s", e)
+
     # Снимаем регистрацию экземпляра перед закрытием других ресурсов
     try:
         from core.instance import current_instance

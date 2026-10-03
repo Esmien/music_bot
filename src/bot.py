@@ -179,9 +179,10 @@ async def main() -> None:
         # чистим осиротевшие флаги generating, иначе пользователь
         # останется с «Дождитесь окончания текущей генерации» навсегда
         await clear_orphaned_generation_flags(skip_if_other_instances=True)
-        # Реестр активных задач хранит uid в Redis: после рестарта записи
-        # неактуальны, сами задачи в памяти процесса не выжили
-        await clear_active_tasks(skip_if_other_instances=True)
+        # Реестр активных задач хранит uid в Redis под ключом instance_id:
+        # после рестарта записи неактуальны, сами задачи в памяти не выжили.
+        # Каждый экземпляр чистит только свой набор — ownership-safe.
+        await clear_active_tasks()
 
         bot = Bot(
             token=settings.bot.BOT_TOKEN,

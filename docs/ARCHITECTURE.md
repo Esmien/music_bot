@@ -354,7 +354,8 @@
 | Пользователи и авторизация | PostgreSQL, таблица `users` | Статус доступа пользователя (is_authorized, created_at) |
 | Ожидающие авторизацию и счётчики попыток | Redis, ключи `auth:pending:{user_id}` | Авторизация и защита от перебора ключа (лимит попыток) |
 | Флаги отмены генерации | Redis, ключи `bot:cancel:gen:{gen_id}` | Source of truth для запроса отмены пользователем |
-| In-memory реестр активных задач | Память процесса бота, dict[user_id, asyncio.Task] | Локальная отмена asyncio.Task через /cancel |
+| Реестр активных задач | Redis, ключи `bot:active_tasks:{instance_id}` + память процесса | Ownership-safe регистрация задач генерации по экземплярам |
+| In-memory задачи генерации | Память процесса бота, dict[user_id, asyncio.Task] | Локальная отмена asyncio.Task через /cancel |
 | Промпты и названия генераций | PostgreSQL, таблица `generations` | История генераций (user_id, prompt, title, status, created_at) |
 | attempt_id генерации | PostgreSQL, поле `Generation.attempt_id` | Защита от race condition при конкурентных воркерах |
 | Аудио-артефакты генераций | Локальное файловое хранилище (AUDIO_STORAGE_PATH, `/var/lib/lyria/audio`) | Сохраненные mp3-файлы с метаданными (путь, размер, checksum) в БД. При старте контейнера владелец рекурсивно меняется на `botuser` |
@@ -396,16 +397,17 @@
 **Rolling restart и instance management** (core/instance.py):
 - Каждый экземпляр бота получает уникальный `instance_id`
 - Heartbeat обновляется каждые 15 секунд (TTL 30 секунд)
-- При startup cleanup проверяется наличие других живых экземпляров
-- Если обнаружены другие экземпляры с активным heartbeat, cleanup пропускается
+- Реестр активных задач генерации привязан к `instance_id`: каждый экземпляр хранит свой набор `bot:active_tasks:{instance_id}` в Redis
+- При startup и shutdown cleanup чистит только собственный набор задач — ownership-safe
+- FSM-флаги `generating` чистятся при наличии других активных экземпляров только если они осиротели
 - Это защищает от удаления состояния работающих экземпляров при rolling restart
 - **Deployment constraint**: поддерживается rolling restart, но не рекомендуется одновременная работа множества экземпляров с одним Redis (возможна race condition в FSM)
 
 **Graceful shutdown** (core/lifecycle.py):
+- Очистка реестра активных задач текущего экземпляра (ownership-safe)
 - Снятие регистрации экземпляра (unregister) перед закрытием ресурсов
 - Корректное завершение обработки текущих апдейтов
 - Закрытие соединений с БД, Redis и брокером
-- Очистка реестров и временных ресурсов
 - Обработка сигналов SIGINT и SIGTERM
 
 **Права на volume** (infra/entrypoint.sh):

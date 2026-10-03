@@ -1,21 +1,37 @@
 """Реестр живых задач генерации по user_id.
 
-Единая точка реестров — Redis: набор активных user_id переживает
-перезапуск процесса. Сам asyncio.Task в Redis не сериализуется, поэтому
-он хранится в памяти процесса, а Redis-набор хранит только uid тех, кто
-сейчас генерирует. На старте бота набор чистится clear_active_tasks,
-а след в FSM — clear_orphaned_generation_flags.
+Каждый экземпляр бота хранит свой набор активных user_id в Redis
+под ключом bot:active_tasks:{instance_id}. Это защищает от race condition
+при rolling restart: один экземпляр не удаляет задачи другого.
+
+asyncio.Task не сериализуется в Redis, поэтому хранится в памяти процесса.
+Redis-набор хранит только uid тех, кто сейчас генерирует.
+
+При старте cleanup чистит только собственный набор. При shutdown также
+чистим только свои задачи. FSM-флаги generating чистятся отдельно через
+clear_orphaned_generation_flags.
 """
 
 import asyncio
 import logging
 
+from core.instance import current_instance
 from core.redis import redis_client  # type: ignore[attr-defined]
 
 log = logging.getLogger(__name__)
 
-# Ключ множества uid с живой задачей генерации
-ACTIVE_TASKS_KEY = "bot:active_tasks"
+
+def _active_tasks_key(instance_id: str) -> str:
+    """Формирует Redis-ключ набора активных задач для конкретного экземпляра.
+
+    Args:
+        instance_id: Уникальный идентификатор экземпляра бота.
+
+    Returns:
+        Redis-ключ формата bot:active_tasks:{instance_id}.
+    """
+    return f"bot:active_tasks:{instance_id}"
+
 
 # Живые задачи в памяти процесса: asyncio.Task не сериализуется в Redis
 _active_tasks: dict[int, asyncio.Task] = {}
@@ -24,12 +40,17 @@ _active_tasks: dict[int, asyncio.Task] = {}
 async def register_active_task(uid: int, task: "asyncio.Task[None]") -> None:
     """Регистрирует живую задачу генерации пользователя.
 
+    Записывает задачу в память процесса и добавляет user_id в Redis-набор
+    текущего экземпляра.
+
     Args:
         uid: Telegram user_id.
         task: Фоновая задача генерации.
     """
     _active_tasks[uid] = task
-    await redis_client.sadd(ACTIVE_TASKS_KEY, uid)
+    key = _active_tasks_key(current_instance.instance_id)
+    await redis_client.sadd(key, uid)
+    log.debug("Registered active task for user_id=%d, instance_id=%s", uid, current_instance.instance_id)
 
 
 async def unregister_active_task(uid: int, task: "asyncio.Task[None]") -> None:
@@ -43,7 +64,9 @@ async def unregister_active_task(uid: int, task: "asyncio.Task[None]") -> None:
     """
     if _active_tasks.get(uid) is task:
         _active_tasks.pop(uid, None)
-        await redis_client.srem(ACTIVE_TASKS_KEY, uid)
+        key = _active_tasks_key(current_instance.instance_id)
+        await redis_client.srem(key, uid)
+        log.debug("Unregistered active task for user_id=%d, instance_id=%s", uid, current_instance.instance_id)
 
 
 def get_active_task(uid: int) -> "asyncio.Task[None] | None":
@@ -58,33 +81,31 @@ def get_active_task(uid: int) -> "asyncio.Task[None] | None":
     return _active_tasks.get(uid)
 
 
-async def clear_active_tasks(skip_if_other_instances: bool = False) -> dict[str, int | bool]:
-    """Чистит реестр активных задач в памяти и в Redis на старте бота.
+async def clear_active_tasks() -> dict[str, int]:
+    """Чистит реестр активных задач текущего экземпляра в памяти и в Redis.
 
-    Задачи генерации рестарт не переживают: без чистки Redis-набор
-    остался бы с uid, которых в памяти процесса уже нет.
+    Вызывается при старте и shutdown. Задачи генерации рестарт не переживают:
+    без чистки Redis-набор остался бы с uid, которых в памяти процесса уже нет.
 
-    Args:
-        skip_if_other_instances: Если True, пропускает cleanup при наличии
-            других активных экземпляров бота (защита от race condition
-            при rolling restart).
+    Cleanup всегда ownership-safe: каждый экземпляр чистит только свой набор
+    bot:active_tasks:{instance_id}, не трогая задачи других экземпляров.
 
     Returns:
-        Словарь с результатами: {"skipped": bool, "deleted_set": int}.
+        Словарь с результатами: {"deleted_count": int, "memory_cleared": int}.
 
     Raises:
         RedisError: При ошибке работы с Redis.
     """
-    from core.instance import current_instance
-
-    if skip_if_other_instances and await current_instance.has_other_active_instances():
-        log.info("Skipping active tasks cleanup: other active instances are running")
-        return {"skipped": True, "deleted_set": 0}
-
+    memory_count = len(_active_tasks)
     _active_tasks.clear()
 
-    # Чистим набор активных uid
-    deleted_set = await redis_client.delete(ACTIVE_TASKS_KEY)
+    key = _active_tasks_key(current_instance.instance_id)
+    deleted_count = await redis_client.delete(key)
 
-    log.info("Active tasks registry cleaned: deleted_set=%d", deleted_set)
-    return {"skipped": False, "deleted_set": deleted_set}
+    log.info(
+        "Active tasks registry cleaned: instance_id=%s, memory_cleared=%d, redis_deleted=%d",
+        current_instance.instance_id,
+        memory_count,
+        deleted_count,
+    )
+    return {"deleted_count": deleted_count, "memory_cleared": memory_count}

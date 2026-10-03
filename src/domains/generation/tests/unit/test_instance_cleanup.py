@@ -112,59 +112,51 @@ async def test_cleanup_stale_instances(bot_instance):
         assert mock_redis.srem.call_count == 2
 
 
-async def test_clear_active_tasks_skips_when_other_instances():
-    """Cleanup пропускается при наличии других активных экземпляров."""
+async def test_clear_active_tasks_removes_own_instance_tasks():
+    """Cleanup удаляет задачи только текущего экземпляра."""
+    from types import SimpleNamespace
+
     from domains.generation.registries.task_registry import clear_active_tasks
 
-    with (
-        patch("domains.generation.registries.task_registry.redis_client"),
-        patch("core.instance.current_instance") as mock_instance,
-    ):
-        mock_instance.has_other_active_instances = AsyncMock(return_value=True)
-
-        result = await clear_active_tasks(skip_if_other_instances=True)
-
-        assert result["skipped"] is True
-        assert result["deleted_set"] == 0
-
-
-async def test_clear_active_tasks_proceeds_when_no_other_instances():
-    """Cleanup выполняется при отсутствии других экземпляров."""
-    from domains.generation.registries.task_registry import clear_active_tasks
+    mock_instance = SimpleNamespace(instance_id="test-instance-123")
 
     with (
         patch("domains.generation.registries.task_registry.redis_client") as mock_redis,
-        patch("core.instance.current_instance") as mock_instance,
+        patch("domains.generation.registries.task_registry.current_instance", mock_instance),
     ):
         mock_redis.delete = AsyncMock(return_value=1)
-        mock_redis.scan = AsyncMock(return_value=(0, []))
-        mock_instance.has_other_active_instances = AsyncMock(return_value=False)
 
-        result = await clear_active_tasks(skip_if_other_instances=True)
+        result = await clear_active_tasks()
 
-        assert result["skipped"] is False
-        assert result["deleted_set"] == 1
+        # Проверяем вызов delete с правильным ключом
+        mock_redis.delete.assert_called_once_with("bot:active_tasks:test-instance-123")
+        assert result["deleted_count"] == 1
+        assert result["memory_cleared"] >= 0
 
 
 async def test_clear_active_tasks_handles_redis_error():
     """Cleanup корректно обрабатывает RedisError."""
+    from types import SimpleNamespace
+
     from domains.generation.registries.task_registry import clear_active_tasks
 
+    mock_instance = SimpleNamespace(instance_id="test-instance-456")
+
     with (
-        patch("domains.generation.registries.task_registry.redis_client"),
-        patch("core.instance.current_instance") as mock_instance,
+        patch("domains.generation.registries.task_registry.redis_client") as mock_redis,
+        patch("domains.generation.registries.task_registry.current_instance", mock_instance),
     ):
-        mock_instance.has_other_active_instances = AsyncMock(side_effect=RedisError("Connection failed"))
+        mock_redis.delete = AsyncMock(side_effect=RedisError("Connection failed"))
 
         with pytest.raises(RedisError):
-            await clear_active_tasks(skip_if_other_instances=True)
+            await clear_active_tasks()
 
 
 async def test_clear_orphaned_flags_skips_when_other_instances():
     """FSM cleanup пропускается при наличии других активных экземпляров."""
     from domains.generation.fsm import clear_orphaned_generation_flags
 
-    with patch("core.instance.current_instance") as mock_instance:
+    with patch("domains.generation.fsm.current_instance") as mock_instance:
         mock_instance.has_other_active_instances = AsyncMock(return_value=True)
 
         result = await clear_orphaned_generation_flags(skip_if_other_instances=True)
@@ -177,7 +169,7 @@ async def test_clear_orphaned_flags_handles_redis_error():
     """FSM cleanup корректно обрабатывает RedisError."""
     from domains.generation.fsm import clear_orphaned_generation_flags
 
-    with patch("core.instance.current_instance") as mock_instance:
+    with patch("domains.generation.fsm.current_instance") as mock_instance:
         mock_instance.has_other_active_instances = AsyncMock(side_effect=RedisError("Connection failed"))
 
         with pytest.raises(RedisError):
