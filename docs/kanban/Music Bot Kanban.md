@@ -14,21 +14,6 @@ kanban-plugin: board
 
 ## 🟠 P1 — HIGH
 
-- [ ] AUD-026 — Синхронизировать RabbitMQ smoke tests с конфигурацией
-	  - Описание: тест использует захардкоженный URL `amqp://songai:songai@localhost:5672/`, не совпадающий с Compose-конфигурацией.
-	  - ТЗ:
-	- Использовать единый `RABBITMQ_URL` из settings.
-	- Разделить connection smoke и worker end-to-end smoke.
-	- Добавить отдельный Compose/CI profile с RabbitMQ.
-	- Подтвердить фактическое выполнение тестовой задачи worker-ом.
-	- Удалить захардкоженные production credentials.
-	  - DoD:
-	- [ ] В smoke-тестах нет захардкоженных RabbitMQ credentials.
-	- [ ] URL берётся из тестовой конфигурации.
-	- [ ] Реальный RabbitMQ проходит connection smoke.
-	- [ ] Реальный worker обрабатывает тестовую задачу.
-	- [ ] Недоступный RabbitMQ приводит к явному skip только в локальном профиле.
-	- [ ] CI infrastructure profile требует RabbitMQ.
 - [ ] AUD-027 — Добавить integration-профиль настоящего Redis
 	  - Описание: Redis Lua и lock behavior сейчас частично проверяются через fakeredis и monkeypatch.
 	  - ТЗ:
@@ -127,8 +112,24 @@ kanban-plugin: board
 ## In Progress
 
 
+
 ## Done
 
+- [ ] AUD-026 — Синхронизировать RabbitMQ smoke tests с конфигурацией
+	  - Описание: тест использует захардкоженный URL `amqp://songai:songai@localhost:5672/`, не совпадающий с Compose-конфигурацией.
+	  - ТЗ:
+	- Использовать единый `RABBITMQ_URL` из settings.
+	- Разделить connection smoke и worker end-to-end smoke.
+	- Добавить отдельный Compose/CI profile с RabbitMQ.
+	- Подтвердить фактическое выполнение тестовой задачи worker-ом.
+	- Удалить захардкоженные production credentials.
+	  - DoD:
+	- [ ] В smoke-тестах нет захардкоженных RabbitMQ credentials.
+	- [ ] URL берётся из тестовой конфигурации.
+	- [ ] Реальный RabbitMQ проходит connection smoke.
+	- [ ] Реальный worker обрабатывает тестовую задачу.
+	- [ ] Недоступный RabbitMQ приводит к явному skip только в локальном профиле.
+	- [ ] CI infrastructure profile требует RabbitMQ.
 - [x] AUD-023 — Сделать startup cleanup Redis ownership-safe
 	  - Описание: `clear_active_tasks()` может удалить общий Redis-set активных задач.
 	  - ТЗ:
