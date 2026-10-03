@@ -95,6 +95,19 @@ services:
       timeout: 5s
       retries: 5
 
+  redis-test:
+    image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME}-redis-test
+    profiles:
+      - test
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   rabbitmq:
     image: rabbitmq:3-management
     container_name: ${COMPOSE_PROJECT_NAME}-rabbitmq

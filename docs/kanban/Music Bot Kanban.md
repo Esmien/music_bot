@@ -14,22 +14,6 @@ kanban-plugin: board
 
 ## 🟠 P1 — HIGH
 
-- [ ] AUD-027 — Добавить integration-профиль настоящего Redis
-	  - Описание: Redis Lua и lock behavior сейчас частично проверяются через fakeredis и monkeypatch.
-	  - ТЗ:
-	- Оставить fakeredis для быстрых unit-тестов.
-	- Добавить pytest marker `redis_real`.
-	- Подключить Redis service в CI/Compose profile.
-	- Выполнить настоящий `SET NX PX`.
-	- Выполнить настоящий compare-and-delete через `EVAL`.
-	- Проверить expiration и повторный захват lock.
-	  - DoD:
-	- [ ] Реальный Redis подтверждает mutual exclusion.
-	- [ ] Чужой token не удаляет lock.
-	- [ ] Expired lock захватывается повторно.
-	- [ ] Lua script выполняется без monkeypatch.
-	- [ ] CI явно поднимает Redis для профиля.
-	- [ ] Fakeredis-тесты помечены как unit/in-process.
 
 
 ## 🟡 P2 — MEDIUM
@@ -111,6 +95,22 @@ kanban-plugin: board
 
 ## In Progress
 
+- [ ] AUD-027 — Добавить integration-профиль настоящего Redis
+	  - Описание: Redis Lua и lock behavior сейчас частично проверяются через fakeredis и monkeypatch.
+	  - ТЗ:
+	- Оставить fakeredis для быстрых unit-тестов.
+	- Добавить pytest marker `redis_real`.
+	- Подключить Redis service в CI/Compose profile.
+	- Выполнить настоящий `SET NX PX`.
+	- Выполнить настоящий compare-and-delete через `EVAL`.
+	- Проверить expiration и повторный захват lock.
+	  - DoD:
+	- [ ] Реальный Redis подтверждает mutual exclusion.
+	- [ ] Чужой token не удаляет lock.
+	- [ ] Expired lock захватывается повторно.
+	- [ ] Lua script выполняется без monkeypatch.
+	- [ ] CI явно поднимает Redis для профиля.
+	- [ ] Fakeredis-тесты помечены как unit/in-process.
 
 
 ## Done
@@ -281,6 +281,6 @@ kanban-plugin: board
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[true,true,false,true,true,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[true,true,true,false,true,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%
