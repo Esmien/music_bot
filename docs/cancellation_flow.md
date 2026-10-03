@@ -30,21 +30,23 @@ PENDING → PROCESSING → SUCCESS
 
 ## Source of Truth
 
-**Два независимых Redis cancel-токена** являются **source of truth** для запросов отмены:
+**PostgreSQL является source of truth для состояний генерации и доставки** (`Generation.status`, `Generation.delivery_status`, `Generation.attempt_id`).
 
-1. **Generation cancel-токен** (`bot:cancel:gen:{gen_id}`) — отменяет генерацию в статусах PENDING/PROCESSING
-2. **Delivery cancel-токен** (`bot:cancel:delivery:{gen_id}`) — пропускает доставку после SUCCESS
+**Два независимых Redis cancel-токена** являются **источником истины для сигналов отмены от пользователя** (cancellation signal):
+
+1. **Generation cancel-токен** (`bot:cancel:gen:{gen_id}`) — сигнал отмены генерации в статусах PENDING/PROCESSING.
+2. **Delivery cancel-токен** (`bot:cancel:delivery:{gen_id}`) — сигнал пропуска доставки после SUCCESS.
 
 **Роли компонентов:**
 
 | Компонент | Роль | Область ответственности |
 |-----------|------|-------------------------|
-| Redis generation cancel-токен (`bot:cancel:gen:{gen_id}`) | Source of truth для отмены генерации | Устанавливается `/cancel` для PENDING/PROCESSING, проверяется воркером перед API-запросом |
-| Redis delivery cancel-токен (`bot:cancel:delivery:{gen_id}`) | Source of truth для пропуска доставки | Устанавливается `/cancel` для SUCCESS, проверяется воркером перед delivery |
+| БД `Generation.status` и `Generation.delivery_status` | Source of truth для состояния сущностей | Фиксирует актуальное и финальное состояние генерации и доставки, управляет переходами state machine |
+| БД `Generation.attempt_id` | Защита от race condition воркеров | Гарантирует, что только один воркер обновит статус при конкурентной обработке |
+| Redis generation cancel-токен (`bot:cancel:gen:{gen_id}`) | Сигнал отмены генерации | Устанавливается `/cancel` для PENDING/PROCESSING, проверяется воркером перед API-запросом |
+| Redis delivery cancel-токен (`bot:cancel:delivery:{gen_id}`) | Сигнал пропуска доставки | Устанавливается `/cancel` для SUCCESS, проверяется воркером перед delivery |
 | In-memory реестр `_active_tasks` | Локальная отмена asyncio.Task | Хранит Task для отмены в процессе бота; не переживает рестарт |
 | FSM флаг `generating` | UI-блокировка повторных запусков | Хранится в Redis FSM-storage, переживает рестарт, проверяется перед запуском |
-| БД статус `Generation.status` | Историческая запись результата | Фиксирует финальное состояние генерации для аналитики и отображения истории |
-| БД поле `Generation.attempt_id` | Защита от race condition воркеров | Гарантирует, что только один воркер обновит статус при конкурентной обработке |
 
 **Приоритет при проверке отмены:**
 1. Redis cancel-токены — проверяются **перед каждым необратимым действием** (generation перед API, delivery перед отправкой)
@@ -107,7 +109,7 @@ PENDING → PROCESSING → SUCCESS
 - Если обновление успешно, статус зафиксирован как `SUCCESS`
 - `/cancel` проверяет статус генерации в БД: SUCCESS → устанавливает **delivery** cancel-токен
 - Перед вызовом `deliver_generation_audio()` воркер проверяет `is_delivery_cancelled()`
-- Если отмена обнаружена, доставка пропускается, статус остаётся `SUCCESS`, delivery_status = FAILED
+- Если отмена обнаружена, доставка пропускается, статус остаётся `SUCCESS`, delivery_status = SKIPPED
 - Воркер вызывает `clear_delivery_cancel(gen_id)` после пропуска доставки
 
 **Результат:** Статус `SUCCESS`, MP3 сохранён, но не доставлен пользователю. Артефакт можно доставить позже.
@@ -122,7 +124,7 @@ PENDING → PROCESSING → SUCCESS
 - Статус уже `SUCCESS` в БД
 - `/cancel` проверяет статус генерации в БД: SUCCESS → устанавливает **delivery** cancel-токен
 - `deliver_generation_audio()` проверяет `is_delivery_cancelled()` перед отправкой аудио
-- Если отмена обнаружена, доставка прерывается, статус остаётся `SUCCESS`, delivery_status = FAILED
+- Если отмена обнаружена, доставка прерывается, статус остаётся `SUCCESS`, delivery_status = SKIPPED
 - Воркер вызывает `clear_delivery_cancel(gen_id)` после пропуска доставки
 - При ошибке отправки (сетевой или Telegram API) публикуется событие `GenerationFailed(stage="delivery")`, но статус `SUCCESS` не меняется
 

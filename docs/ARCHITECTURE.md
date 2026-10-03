@@ -26,6 +26,7 @@
 │   │   ├── broker.py                  # Инициализация TaskIQ брокера (RabbitMQ или InMemory)
 │   │   ├── instance.py                # Управление жизненным циклом экземпляра бота (instance_id, heartbeat)
 │   │   ├── lifecycle.py               # Управление жизненным циклом приложения и graceful shutdown
+│   │   ├── metrics.py                 # Prometheus-метрики для мониторинга генерации и доставки
 │   │   ├── config.py                  # Настройки окружения (BotConfig, DatabaseConfig, RabbitMQConfig и т.д.)
 │   │   ├── redis.py                   # Единый async-клиент Redis и функции для ключей реестров
 │   │   ├── database/
@@ -261,9 +262,19 @@
               └─> отправка сообщения об ошибке
 ```
 
-**Отмена генерации:**
+**Отмена генерации и доставки:**
 
-`/cancel` и `/logout` устанавливают Redis cancel-токен (`bot:cancel:gen:{gen_id}`), который является единственным source of truth для запроса отмены. Воркер проверяет токен перед каждым необратимым действием (API-запрос, доставка).
+Отмена разделена на два независимых токена в Redis:
+- `bot:cancel:gen:{gen_id}` (`generation_cancel_key`) — запрос отмены генерации (PENDING/PROCESSING).
+- `bot:cancel:delivery:{gen_id}` (`delivery_cancel_key`) — запрос пропуска Telegram-доставки (после перехода в SUCCESS).
+
+Поведение по этапам:
+1. **До запуска API (PENDING):** воркер фиксирует отмену, генерация переводится в финальный статус `CANCELLED`.
+2. **Во время стриминга OpenRouter (PROCESSING):** воркер прерывает чтение чанков, удаляет временные файлы и переводит генерацию в `CANCELLED`.
+3. **После успешного сохранения MP3 (SUCCESS):** статус генерации зафиксирован как `SUCCESS`. При наличии токена отмены доставки отправка в Telegram пропускается, а `delivery_status` выставляется в `SKIPPED`. Статус `Generation.status` остаётся `SUCCESS`.
+4. **Во время Telegram-доставки:** проверка токена перед отправкой исключает пересылку файла (`delivery_status = SKIPPED`).
+
+Персистентным источником истины для состояний генерации и доставки является PostgreSQL (`generations.status`, `generations.delivery_status` и `generations.attempt_id`), а Redis-токены служат сигналами отмены от пользователя с ограниченным TTL (600 с).
 
 Подробное описание state machine, четырёх этапов отмены и защиты от race condition см. в [cancellation_flow.md](cancellation_flow.md).
 
@@ -355,7 +366,16 @@
 - **TelegramDeliveryFailuresDetected:**
   `increase(lyria_delivery_total{status="failed"}[5m]) > 3` (Critical при сбоях доставки пользователям).
 
-### 6. Обработка ошибок
+### 6. Идемпотентность Telegram-доставки
+
+Идемпотентность доставки реализована в пределах следующего контракта:
+- Состояние доставки сохраняется в PostgreSQL в поле `Generation.delivery_status` (`NOT_DELIVERED`, `IN_PROGRESS`, `DELIVERED`, `FAILED`, `SKIPPED`) вместе с `attempt_id`.
+- Захват задачи доставки выполняется атомарно: воркер переводит статус `NOT_DELIVERED -> IN_PROGRESS` с привязкой к своему `attempt_id`.
+- Конкурентные или устаревшие (stale) попытки доставки отклоняются и увеличивают метрику `lyria_stale_attempts_total`.
+- Сбой отправки в Telegram API переводит `delivery_status` в `FAILED`, но не меняет `Generation.status = SUCCESS`.
+- Границы гарантий: внутри системы исключены повторные отправки конкурирующими воркерами. На внешней границе при падении процесса между успешным ответом Telegram API и фиксацией в PostgreSQL статус останется `IN_PROGRESS` до истечения таймаута lease.
+
+### 7. Обработка ошибок
 
 ```text
 Ошибка в Telegram-хендлере
@@ -375,15 +395,19 @@
 
 `notify_owner` записывает ошибку в лог и отправляет владельцу traceback с контекстом через Telegram, если настроен `BOT_OWNER_ID`.
 
-### 6. Порты и адаптеры
+### 8. Порты и адаптеры
 
-Для изоляции воркеров от aiogram используется паттерн портов и адаптеров (src/shared/ports/):
+Для изоляции фоновых задач от aiogram используется паттерн портов и адаптеров (src/shared/ports/):
 
 - `TelegramPort` — абстрактный интерфейс для отправки сообщений, аудио и уведомлений
-- `AiogramTelegramPort` — реализация на основе aiogram Bot для продакшна
+- `AiogramTelegramPort` — адаптер на основе aiogram Bot для рабочего окружения
 - `FakeTelegramPort` — фейковая реализация для тестов, сохраняющая историю вызовов
 
-Это позволяет воркерам работать без прямой зависимости от aiogram и упрощает тестирование.
+### 9. Границы зависимостей Aiogram
+
+В проекте действуют правила изоляции aiogram, проверяемые архитектурными тестами (`tests/architecture/test_dependency_rules.py`):
+- **Запрещено импортировать `aiogram`:** в доменных сервисах (`domains/*/service.py`), фоновых воркерах (за исключением TelegramPort адаптеров) и ядре `core/*` (кроме корневой сборки `core/__init__.py`).
+- **Разрешено импортировать `aiogram`:** в Telegram-хендлерах (`domains/*/handlers.py`), интерфейсах Telegram flow contracts (`src/shared/domain_contracts.py`), клавиатурах и адаптере `AiogramTelegramPort`.
 
 ## Хранение состояния и данных
 
@@ -393,11 +417,10 @@
 | FSM-флаг generating | Redis FSM-storage в GenerationFlowState | Блокировка повторного запуска генерации пользователем |
 | Пользователи и авторизация | PostgreSQL, таблица `users` | Статус доступа пользователя (is_authorized, created_at) |
 | Ожидающие авторизацию и счётчики попыток | Redis, ключи `auth:pending:{user_id}` | Авторизация и защита от перебора ключа (лимит попыток) |
-| Флаги отмены генерации | Redis, ключи `bot:cancel:gen:{gen_id}` | Source of truth для запроса отмены пользователем |
+| Флаги отмены генерации и доставки | Redis, ключи `bot:cancel:gen:{gen_id}` и `bot:cancel:delivery:{gen_id}` | Сигналы отмены генерации и пропуска доставки от пользователя (TTL 600 с) |
 | Реестр активных задач | Redis, ключи `bot:active_tasks:{instance_id}` + память процесса | Ownership-safe регистрация задач генерации по экземплярам |
 | In-memory задачи генерации | Память процесса бота, dict[user_id, asyncio.Task] | Локальная отмена asyncio.Task через /cancel |
-| Промпты и названия генераций | PostgreSQL, таблица `generations` | История генераций (user_id, prompt, title, status, created_at) |
-| attempt_id генерации | PostgreSQL, поле `Generation.attempt_id` | Защита от race condition при конкурентных воркерах |
+| Статус генерации и доставки | PostgreSQL, таблица `generations` (`status`, `delivery_status`, `attempt_id`) | Персистентный source of truth жизненного цикла генераций и защиты от race condition |
 | Аудио-артефакты генераций | Локальное файловое хранилище (AUDIO_STORAGE_PATH, `/var/lib/lyria/audio`) | Сохраненные mp3-файлы с метаданными (путь, размер, checksum) в БД. При старте контейнера владелец рекурсивно меняется на `botuser` |
 | Оценки и отзывы | PostgreSQL, таблица `generation_feedbacks` | Обратная связь о генерациях (generation_id, is_liked, feedback) |
 | Очереди и сообщения TaskIQ | RabbitMQ (продакшн) или InMemoryBroker (тесты) | Асинхронная обработка команд и событий |
