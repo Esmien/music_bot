@@ -18,20 +18,6 @@ kanban-plugin: board
 
 ## 🟡 P2 — MEDIUM
 
-- [ ] AUD-029 — Вынести миграции из startup bot-контейнера
-	  - Описание: Alembic запускается только при default startup bot-контейнера, а масштабирование bot replicas может привести к конкурирующим миграциям.
-	  - ТЗ:
-	- Выбрать отдельный migration job или distributed migration lock.
-	- Добавить Compose profile для migration job.
-	- Убрать зависимость worker startup от запуска Alembic.
-	- Проверить failure behavior при неуспешной миграции.
-	- Обновить deployment documentation.
-	  - DoD:
-	- [ ] Миграции выполняются отдельным контролируемым шагом.
-	- [ ] Два bot-контейнера не запускают миграции одновременно без lock.
-	- [ ] При ошибке миграции deployment не считается успешным.
-	- [ ] Worker не выполняет Alembic при старте.
-	- [ ] Deployment runbook содержит команду миграции.
 
 
 ## 🟢 P3 — LOW
@@ -71,6 +57,21 @@ kanban-plugin: board
 
 ## Done
 
+- [x] AUD-029 — Вынести миграции из startup bot-контейнера
+	  - Описание: Alembic запускается только при default startup bot-контейнера, а масштабирование bot replicas может привести к конкурирующим миграциям.
+	  - ТЗ:
+	- Выбрать отдельный migration job или distributed migration lock.
+	- Добавить Compose profile для migration job.
+	- Убрать зависимость worker startup от запуска Alembic.
+	- Проверить failure behavior при неуспешной миграции.
+	- Обновить deployment documentation.
+	  - DoD:
+	- [x] Миграции выполняются отдельным контролируемым шагом.
+	- [x] Два bot-контейнера не запускают миграции одновременно без lock.
+	- [x] При ошибке миграции deployment не считается успешным.
+	- [x] Worker не выполняет Alembic при старте.
+	- [x] Deployment runbook содержит команду миграции.
+
 - [x] AUD-028 — Добавить конкурентный тест повторной обработки generation
 	  - Описание: текущие тесты проверяют redelivery последовательно, но не доказывают безопасность двух параллельных worker-вызовов.
 	  - ТЗ:
@@ -85,7 +86,6 @@ kanban-plugin: board
 	- [x] Stale worker не меняет финальный статус.
 	- [x] Количество delivery соответствует policy.
 	- [x] Тест проходит на PostgreSQL/Redis integration profile.
-
 - [x] AUD-024 — Зафиксировать границы aiogram-зависимости
 	  - Описание: `domain_contracts.py` принимает `aiogram.Message` и `FSMContext`, хотя shared-слой заявлен как абстракция.
 	  - ТЗ:
@@ -282,6 +282,6 @@ kanban-plugin: board
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[true,true,true,false,true,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[true,true,true,true,false,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%

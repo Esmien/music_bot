@@ -41,6 +41,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.ruff]
 # Фиксируем версию Python для правильных подсказок
 target-version = "py312"
+force-exclude = true
 
 exclude = [
     ".git",
