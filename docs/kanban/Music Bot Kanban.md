@@ -6,18 +6,6 @@ kanban-plugin: board
 
 ## Quick wins
 
-- [ ] AUD-030 — Проверить права восстановленного audio volume
-	  - Описание: `entrypoint.sh` меняет владельца `/data` без рекурсивной проверки существующих файлов.
-	  - ТЗ:
-	- Проверить сценарий запуска с непустым volume.
-	- Проверить владельца и права существующих MP3.
-	- Решить, нужен ли рекурсивный `chown` или отдельная init-процедура.
-	- Добавить deployment-тест или документировать требуемые права volume.
-	  - DoD:
-	- [ ] Botuser может читать существующие MP3 после рестарта.
-	- [ ] Botuser может создавать новые MP3.
-	- [ ] Сценарий непустого volume проверяется автоматически или документирован.
-	- [ ] В контейнер не добавлены лишние права.
 
 
 ## 🔴 P0 — BLOCKER
@@ -274,12 +262,24 @@ kanban-plugin: board
 - [ ] AUD-016 — Зафиксировать границы framework-зависимости портов
 - [x] AUD-017 — Финальная зачистка legacy-импортов и комментариев
 	  - Примечание: основной cleanup выполнен, новые stale claims и documentation drift вынесены в AUD-025 и AUD-032.
+- [x] AUD-030 — Проверить права восстановленного audio volume
+	  - Описание: `entrypoint.sh` меняет владельца `/data` без рекурсивной проверки существующих файлов.
+	  - ТЗ:
+	- Проверить сценарий запуска с непустым volume.
+	- Проверить владельца и права существующих MP3.
+	- Решить, нужен ли рекурсивный `chown` или отдельная init-процедура.
+	- Добавить deployment-тест или документировать требуемые права volume.
+	  - DoD:
+	- [x] Botuser может читать существующие MP3 после рестарта.
+	- [x] Botuser может создавать новые MP3.
+	- [x] Сценарий непустого volume проверяется автоматически или документирован.
+	- [x] В контейнер не добавлены лишние права.
 
 
 
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[false,true,true,true,false,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[true,false,true,true,false,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%

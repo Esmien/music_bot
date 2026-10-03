@@ -14,6 +14,7 @@ fi
 # куда смонтирован volume, на botuser, и переключаемся на него.
 if [ "$(id -u)" = "0" ]; then
 	chown botuser:botuser /data
+	chown -R botuser:botuser /var/lib/lyria/audio
 
 	# Миграции запускаются только в контейнере бота; воркеры используют
 	# ту же БД, но не должны запускать Alembic при каждом старте.
