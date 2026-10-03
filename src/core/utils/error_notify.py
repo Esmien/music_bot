@@ -5,21 +5,27 @@
 import html
 import logging
 import traceback
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from shared.ports.telegram import TelegramPort
-
-from aiogram import Bot
 
 from core.config import settings
 
 log = logging.getLogger(__name__)
 
 
+class BotLike(Protocol):
+    """Протокол для объектов с методом send_message, совместимых с aiogram.Bot."""
+
+    async def send_message(self, chat_id: int, text: str, parse_mode: str) -> object:
+        """Отправка сообщения в Telegram."""
+        ...
+
+
 async def notify_owner(
     *,
-    bot: Bot | None = None,
+    bot: BotLike | None = None,
     context: str = "",
     err: Exception | None = None,
     telegram_port: "TelegramPort | None" = None,

@@ -5,8 +5,7 @@
 """
 
 import logging
-
-from aiogram import Bot
+from typing import Protocol
 
 from core.database.engine import shutdown_db
 from core.redis import shutdown_redis
@@ -14,7 +13,24 @@ from core.redis import shutdown_redis
 log = logging.getLogger(__name__)
 
 
-async def shutdown_all(bot: Bot | None = None) -> None:
+class BotSessionLike(Protocol):
+    """Протокол для сессии бота с методом close."""
+
+    async def close(self) -> None:
+        """Закрытие HTTP-сессии."""
+        ...
+
+
+class BotLike(Protocol):
+    """Протокол для объектов с HTTP-сессией, совместимых с aiogram.Bot."""
+
+    @property
+    def session(self) -> BotSessionLike:
+        """HTTP-сессия бота с методом close()."""
+        ...
+
+
+async def shutdown_all(bot: BotLike | None = None) -> None:
     """Закрывает все ресурсы приложения в правильном порядке.
 
     Args:

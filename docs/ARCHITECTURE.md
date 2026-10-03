@@ -125,6 +125,8 @@
 │   │               └── test_task_registry.py      # Юнит-тесты реестра задач
 │   ├── shared/
 │   │   ├── callback_parser.py         # Typed parser для callback_data формата fb:action:gen_id
+│   │   ├── domain_contracts.py        # Telegram flow contracts для междоменных вызовов (TelegramEnrichmentFlowStarter, TelegramGenerationFlowStarter)
+│   │   ├── domain_ports.py            # Конкретные реализации Telegram flow contracts (синглтоны для handlers)
 │   │   ├── contracts/
 │   │   │   ├── commands.py            # Команды для TaskIQ (EnrichPromptCommand, StartGenerationCommand и т.д.)
 │   │   │   └── events.py              # События для TaskIQ (EnrichmentCompleted, GenerationSucceeded и т.д.)
@@ -138,7 +140,9 @@
 ├── src/
 │   ├── workers/
 │   │   └── taskiq_worker.py           # Главный воркер TaskIQ с регистрацией всех доменных воркеров
-├── tests/                             # Smoke-тесты инфраструктуры (вне src)
+├── tests/                             # Тесты инфраструктуры и архитектуры (вне src)
+│   ├── architecture/
+│   │   └── test_dependency_rules.py   # Architecture tests для проверки dependency rules (запрет aiogram в services/core)
 │   └── smoke/
 │       ├── test_broker_connection.py  # Проверка подключения к RabbitMQ
 │       ├── test_db_connection.py      # Проверка подключения к PostgreSQL

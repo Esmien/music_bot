@@ -18,20 +18,6 @@ kanban-plugin: board
 
 ## 🟡 P2 — MEDIUM
 
-- [ ] AUD-024 — Зафиксировать границы aiogram-зависимости
-	  - Описание: `domain_contracts.py` принимает `aiogram.Message` и `FSMContext`, хотя shared-слой заявлен как абстракция.
-	  - ТЗ:
-	- Решить, считать ли текущие Protocol application-layer контрактом.
-	- Переименовать контракты, если они являются Telegram flow contracts.
-	- Документировать разрешённые импорты aiogram.
-	- При необходимости ввести DTO для междоменных вызовов.
-	- Добавить architecture test на запрещённые импорты.
-	  - DoD:
-	- [ ] Документировано, где разрешён импорт aiogram.
-	- [ ] Domain services не принимают `Message` и `FSMContext`.
-	- [ ] Названия Protocol отражают реальную ответственность.
-	- [ ] Architecture test проверяет dependency rule.
-	- [ ] Не добавлены необязательные слои только ради формального DDD.
 - [ ] AUD-028 — Добавить конкурентный тест повторной обработки generation
 	  - Описание: текущие тесты проверяют redelivery последовательно, но не доказывают безопасность двух параллельных worker-вызовов.
 	  - ТЗ:
@@ -95,6 +81,23 @@ kanban-plugin: board
 
 ## In Progress
 
+
+## Done
+
+- [x] AUD-024 — Зафиксировать границы aiogram-зависимости
+	  - Описание: `domain_contracts.py` принимает `aiogram.Message` и `FSMContext`, хотя shared-слой заявлен как абстракция.
+	  - ТЗ:
+	- Решить, считать ли текущие Protocol application-layer контрактом.
+	- Переименовать контракты, если они являются Telegram flow contracts.
+	- Документировать разрешённые импорты aiogram.
+	- При необходимости ввести DTO для междоменных вызовов.
+	- Добавить architecture test на запрещённые импорты.
+	  - DoD:
+	- [x] Документировано, где разрешён импорт aiogram.
+	- [x] Domain services не принимают `Message` и `FSMContext`.
+	- [x] Названия Protocol отражают реальную ответственность.
+	- [x] Architecture test проверяет dependency rule.
+	- [x] Не добавлены необязательные слои только ради формального DDD.
 - [ ] AUD-027 — Добавить integration-профиль настоящего Redis
 	  - Описание: Redis Lua и lock behavior сейчас частично проверяются через fakeredis и monkeypatch.
 	  - ТЗ:
@@ -105,16 +108,12 @@ kanban-plugin: board
 	- Выполнить настоящий compare-and-delete через `EVAL`.
 	- Проверить expiration и повторный захват lock.
 	  - DoD:
-	- [ ] Реальный Redis подтверждает mutual exclusion.
-	- [ ] Чужой token не удаляет lock.
-	- [ ] Expired lock захватывается повторно.
-	- [ ] Lua script выполняется без monkeypatch.
-	- [ ] CI явно поднимает Redis для профиля.
-	- [ ] Fakeredis-тесты помечены как unit/in-process.
-
-
-## Done
-
+	- [x] Реальный Redis подтверждает mutual exclusion.
+	- [x] Чужой token не удаляет lock.
+	- [x] Expired lock захватывается повторно.
+	- [x] Lua script выполняется без monkeypatch.
+	- [x] CI явно поднимает Redis для профиля.
+	- [x] Fakeredis-тесты помечены как unit/in-process.
 - [ ] AUD-026 — Синхронизировать RabbitMQ smoke tests с конфигурацией
 	  - Описание: тест использует захардкоженный URL `amqp://songai:songai@localhost:5672/`, не совпадающий с Compose-конфигурацией.
 	  - ТЗ:
