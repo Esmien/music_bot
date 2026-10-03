@@ -10,10 +10,241 @@ kanban-plugin: board
 
 ## 🔴 P0 — BLOCKER
 
+- [ ] AUD-033 — Исправить feedback upsert для SQLite и PostgreSQL
+	  - Описание: `feedback/service.py` безусловно использует PostgreSQL-specific `pg_insert`, хотя тестовая БД работает на SQLite. Это регрессия AUD-001 и блокер CI.
+	  - Затрагивает:
+	- `feedback/service.py`
+	- feedback unit tests
+	- feedback concurrency tests
+	- AUD-019
+	  - Агенту:
+	1. Открыть `feedback/service.py`.
+	2. Проверить текущий dialect через `session.bind.dialect.name`.
+	3. Реализовать один из вариантов:
+	   - вернуть dialect-independent `SELECT → INSERT/UPDATE` с обработкой гонки;
+	   - использовать отдельную SQLite- и PostgreSQL-ветки;
+	   - использовать portable SQLAlchemy API, если он покрывает требуемый контракт.
+	4. Сохранить ownership-проверку:
+	   - `Generation.id == gen_id`;
+	   - `Generation.user_id == user_id`;
+	   - `Generation.status == SUCCESS`.
+	5. Сохранить правило частичного обновления:
+	   - `None` не затирает существующий `feedback`;
+	   - `None` не затирает существующий `is_liked`.
+	6. Обработать конкурентный `IntegrityError`, если выбранная стратегия его допускает.
+	7. Не использовать PostgreSQL insert при SQLite-сессии.
+	  - Тесты:
+	- тест обычного feedback save на SQLite;
+	- тест обновления только `is_liked`;
+	- тест обновления только `feedback`;
+	- тест запрета доступа к чужой генерации;
+	- два параллельных вызова `save_feedback` на SQLite;
+	- PostgreSQL integration test для atomic upsert.
+	  - DoD:
+	- [ ] `test_services_feedback.py` проходит на SQLite.
+	- [ ] SQLite не компилирует PostgreSQL-specific `Insert`.
+	- [ ] PostgreSQL upsert проходит integration test.
+	- [ ] Для одной генерации существует не более одной feedback-записи.
+	- [ ] Параллельные callback-запросы не приводят к `FeedbackSaveError`.
+	- [ ] `None` не затирает сохранённые значения.
+	- [ ] AUD-019 не отмечен выполненным до прохождения SQLite и PostgreSQL тестов.
+- [ ] AUD-034 — Сделать migration job обязательным gate деплоя
+	  - Описание: `migrate` запускает Alembic, но `bot` и workers не зависят от успешного завершения миграции. Приложение может стартовать параллельно с обновлением схемы.
+	  - Затрагивает:
+	- `docker-compose.yml`
+	- `ARCHITECTURE.md`
+	- deployment runbook
+	- CI/deploy scripts
+	  - Агенту:
+	1. Выбрать и зафиксировать единый deployment protocol.
+	2. Предпочтительный вариант:
+	   - добавить migration profile;
+	   - запускать миграцию отдельным контролируемым шагом;
+	   - запускать bot/workers только после успешного exit code migration job.
+	3. Если используется Compose dependency gate:
+	   - добавить зависимость на `migrate`;
+	   - использовать `condition: service_completed_successfully`;
+	   - проверить поведение при активном и неактивном profile.
+	4. Проверить конфигурацию командой:
+	   ```bash
+	   docker compose config
+	   ```
+	5. Проверить, что добавленный profile действительно активируется в deploy-команде.
+	6. Обновить `ARCHITECTURE.md`, чтобы он описывал фактический протокол.
+	7. Добавить smoke-сценарий с намеренно падающей миграцией.
+	  - Важно:
+	- Нельзя добавить `profiles: ["migration"]`, но оставить `depends_on` на сервис, который не включён в активный profile.
+	- Нельзя считать healthcheck PostgreSQL эквивалентом успешного применения Alembic.
+	  - DoD:
+	- [ ] Migration protocol выбран и записан в runbook.
+	- [ ] Bot не стартует до успешного завершения миграции.
+	- [ ] Generation worker не стартует до успешного завершения миграции.
+	- [ ] Enricher worker не стартует до успешного завершения миграции.
+	- [ ] Ошибка Alembic возвращает ненулевой код.
+	- [ ] Ошибка миграции блокирует успешный deploy.
+	- [ ] `docker compose config` проходит.
+	- [ ] Документация соответствует фактическому Compose-поведению.
 
 
 ## 🟠 P1 — HIGH
 
+- [ ] AUD-035 — Добавить корректный статус `DeliveryStatus.SKIPPED`
+	  - Описание: документация и метрики используют `SKIPPED`, но enum его не содержит. Сейчас пользовательская отмена delivery записывается как `FAILED`.
+	  - Затрагивает:
+	- `domains/generation/models.py`
+	- `domains/generation/worker.py`
+	- Alembic migration
+	- metrics
+	- cancellation documentation
+	  - Агенту:
+	1. Добавить:
+	   ```python
+	   SKIPPED = "skipped"
+	   ```
+	2. Проверить длину SQLAlchemy Enum.
+	3. Создать миграцию, если фактическая схема БД требует изменения.
+	4. В ветке delivery cancellation записывать `SKIPPED`.
+	5. В ветке ошибки Telegram записывать `FAILED`.
+	6. Проверить, что `Generation.status` остаётся `SUCCESS` при skip delivery.
+	7. Синхронизировать документацию и метрику.
+	  - DoD:
+	- [ ] `DeliveryStatus.SKIPPED` существует в Python enum.
+	- [ ] PostgreSQL migration применяется без ошибки.
+	- [ ] Cancel delivery записывает `SKIPPED`.
+	- [ ] Telegram/network error записывает `FAILED`.
+	- [ ] `DELIVERY_TOTAL` использует значения enum без расхождений.
+	- [ ] Есть тест skip delivery.
+	- [ ] Есть тест failed delivery.
+	- [ ] `ARCHITECTURE.md` и `cancellation_flow.md` соответствуют коду.
+- [ ] AUD-036 — Реализовать delivery lease и восстановление зависших задач
+	  - Описание: delivery claim переводит `NOT_DELIVERED` в `IN_PROGRESS`, но полноценный lease expiry и recovery не подтверждены.
+	  - Затрагивает:
+	- `Generation` model;
+	- delivery migration;
+	- `claim_delivery_atomic`;
+	- delivery worker;
+	- retry tests.
+	  - Агенту:
+	1. Выбрать модель lease:
+	   - `delivery_claimed_at`;
+	   - `delivery_lease_until`;
+	   - либо отдельная delivery table.
+	2. Зафиксировать TTL lease в конфигурации.
+	3. Изменить claim так, чтобы он принимал:
+	   - `NOT_DELIVERED`;
+	   - `IN_PROGRESS` с истёкшим lease.
+	4. При новом claim генерировать новый `delivery_attempt_id`.
+	5. Убедиться, что активный lease не перехватывается другим worker.
+	6. Добавить recovery path для зависшего `IN_PROGRESS`.
+	7. Документировать окно неопределённости между успешным ответом Telegram и записью `DELIVERED`.
+	  - DoD:
+	- [ ] Lease хранится персистентно.
+	- [ ] Активный lease защищён от второго worker.
+	- [ ] Истёкший lease можно перехватить.
+	- [ ] Старый `delivery_attempt_id` не может изменить состояние.
+	- [ ] Есть тест падения worker после claim.
+	- [ ] Есть тест повторного claim после expiry.
+	- [ ] Есть метрика stale/expired delivery attempt.
+	- [ ] Возможный duplicate send после внешнего side effect описан явно.
+- [ ] AUD-037 — Устранить TOCTOU в `cmd_cancel`
+	  - Описание: `/cancel` отдельно читает generation status и затем устанавливает только один Redis cancel-token. Между операциями worker может перейти в другую фазу.
+	  - Затрагивает:
+	- `domains/base/handlers.py`
+	- Redis cancellation helpers
+	- generation worker
+	- delivery worker
+	  - Агенту:
+	1. Не полагаться на устаревший результат отдельного `SELECT`.
+	2. Выбрать стратегию:
+	   - устанавливать оба токена отмены;
+	   - либо выполнять атомарную DB/Lua-операцию.
+	3. Если устанавливаются оба токена:
+	   - generation worker проверяет generation-token;
+	   - delivery worker проверяет delivery-token;
+	   - каждый обработанный токен очищается;
+	   - TTL остаётся ограниченным.
+	4. Проверить поведение при состояниях:
+	   - `PENDING`;
+	   - `PROCESSING`;
+	   - `SUCCESS`;
+	   - `FAILED`;
+	   - `CANCELLED`.
+	5. Не разрешать `/cancel` переводить `SUCCESS` обратно в generation failure/cancel.
+	  - Тесты:
+	- status `PENDING`, затем worker переводит запись в `PROCESSING`;
+	- status `PROCESSING`, затем worker переводит запись в `SUCCESS`;
+	- cancel непосредственно перед API call;
+	- cancel после сохранения MP3;
+	- cancel перед Telegram send.
+	  - DoD:
+	- [ ] Race `PENDING → PROCESSING` покрыта тестом.
+	- [ ] Race `PROCESSING → SUCCESS` покрыта тестом.
+	- [ ] Race `SUCCESS → delivery` покрыта тестом.
+	- [ ] После подтверждённой отмены аудио не отправляется неожиданно.
+	- [ ] `Generation.status=SUCCESS` не меняется из-за delivery skip.
+	- [ ] Cancel tokens имеют TTL и очищаются после обработки.
+- [ ] AUD-038 — Подключить или удалить dead orchestration flow
+	  - Описание: `pipeline_handlers.py` содержит `_acquire_slot`, `_cleanup_cancelled`, `_handle_failure`, `_deliver_result`, `_release_slot`, `_is_actual_gen` и `_make_progress_reporter`, но production `generate_and_send()` работает по другому пути.
+	  - Агенту:
+	1. Проверить все вызовы перечисленных функций.
+	2. Проверить, вызывается ли `register_active_task()` в реальном production flow.
+	3. Выбрать один вариант:
+	   - подключить `_acquire_slot()` и связанные функции;
+	   - удалить dead orchestration code и локальную asyncio cancellation;
+	   - оставить только минимальные registry-функции, если они нужны UI-состоянию.
+	4. Не подключать старый flow частично.
+	5. Синхронизировать `/cancel`, registry и документацию.
+	  - Рекомендация:
+	- Если генерация уже передаётся TaskIQ, предпочтительнее удалить неиспользуемую локальную orchestration-ветку и оставить DB/Redis cancellation.
+	  - DoD:
+	- [ ] У каждой оставленной функции есть production caller.
+	- [ ] `register_active_task()` либо вызывается в реальном flow, либо удалён.
+	- [ ] `get_active_task()` не используется как источник ложной гарантии отмены.
+	- [ ] `/cancel` тестирует реально работающий механизм.
+	- [ ] В документации нет обещания неработающей локальной asyncio cancellation.
+	- [ ] Нет dead-функций, обнаруживаемых статическим поиском.
+- [ ] AUD-039 — Определить и реализовать retry policy для failed delivery
+	  - Описание: после `FAILED` текущий claim не позволяет повторно забрать доставку, если нет отдельного retry flow.
+	  - Агенту:
+	1. Зафиксировать, является ли `FAILED`:
+	   - terminal state;
+	   - автоматически retryable;
+	   - retryable только через ручную команду.
+	2. Если retry разрешён:
+	   - добавить счётчик попыток;
+	   - добавить backoff;
+	   - ограничить число повторов;
+	   - повторять только delivery, не generation.
+	3. Согласовать retry с lease recovery из AUD-036.
+	4. Отделить `SKIPPED` от retryable `FAILED`.
+	  - DoD:
+	- [ ] Retry policy описана в документации.
+	- [ ] Есть тест `Telegram failure → retry`.
+	- [ ] Retry не вызывает OpenRouter повторно.
+	- [ ] Количество retry ограничено.
+	- [ ] Backoff измерим и тестируем.
+	- [ ] Метрики различают initial delivery и retry delivery.
+	- [ ] Повторная доставка не возможна для `SKIPPED`, если это запрещено политикой.
+- [ ] AUD-020 — Довести persistent idempotency Telegram delivery
+	  - Описание: atomic claim появился, но delivery contract не завершён без `SKIPPED`, lease recovery и retry policy.
+	  - Агенту:
+	- Синхронизировать работу AUD-035, AUD-036 и AUD-039.
+	- Пересмотреть state machine:
+	  ```text
+	  NOT_DELIVERED → IN_PROGRESS → DELIVERED
+	                            ↘ FAILED
+	                            ↘ SKIPPED
+	  ```
+	- Проверить stale attempt protection.
+	- Обновить integration tests и документацию.
+	  - DoD:
+	- [ ] Конкурентные worker не отправляют один результат одновременно.
+	- [ ] `DELIVERED` не перезаписывается повторной обработкой.
+	- [ ] `SKIPPED` и `FAILED` различаются.
+	- [ ] Зависший `IN_PROGRESS` восстанавливается.
+	- [ ] Retry policy реализована или явно запрещена.
+	- [ ] Все переходы state machine покрыты тестами.
+	- [ ] Документация не обещает exactly-once delivery через внешний Telegram API.
 
 
 ## 🟡 P2 — MEDIUM
@@ -26,6 +257,10 @@ kanban-plugin: board
 
 ## In Progress
 
+- [ ] AUD-033 — Feedback upsert compatibility
+- [ ] AUD-034 — Migration deployment gate
+- [ ] AUD-035 — DeliveryStatus.SKIPPED
+- [ ] AUD-037 — Cancellation TOCTOU
 
 
 ## Done
