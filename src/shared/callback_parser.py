@@ -26,19 +26,26 @@ class CallbackData:
 
 
 def parse_feedback_callback(callback_data: str | None) -> CallbackData | None:
-    """Парсит callback_data формата fb:action[:gen_id].
+    """Парсит callback_data формата fb:action:gen_id.
 
     Args:
         callback_data: Строка данных callback-запроса.
 
     Returns:
         CallbackData с action и gen_id или None, если формат некорректен.
+
+    Raises:
+        None, возвращает None при любых ошибках валидации.
+
+    Notes:
+        Строгий формат: fb:{action}:{positive_int_gen_id}
+        Отклоняются: отсутствующий gen_id, нечисловой gen_id, gen_id <= 0, лишние сегменты.
     """
     if not callback_data or not callback_data.startswith("fb:"):
         return None
 
     parts = callback_data.split(":")
-    if len(parts) < 2:
+    if len(parts) != 3:
         return None
 
     action_str = parts[1]
@@ -47,8 +54,12 @@ def parse_feedback_callback(callback_data: str | None) -> CallbackData | None:
     except ValueError:
         return None
 
-    gen_id = None
-    if len(parts) > 2 and parts[2].isdigit():
-        gen_id = int(parts[2])
+    gen_id_str = parts[2]
+    if not gen_id_str.isdigit():
+        return None
+
+    gen_id = int(gen_id_str)
+    if gen_id <= 0:
+        return None
 
     return CallbackData(action=action, gen_id=gen_id)

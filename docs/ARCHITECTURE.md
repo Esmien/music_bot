@@ -97,7 +97,6 @@
 │   │   │   ├── feedback_messages.py   # Текстовые сообщения домена отзывов
 │   │   │   ├── state_models.py        # Pydantic-модели для FSM-данных отзывов
 │   │   │   └── tests/
-│   │   │       ├── integration/
 │   │   │       └── unit/
 │   │   │           ├── test_feedback_handlers.py  # Юнит-тесты хендлеров
 │   │   │           └── test_services_feedback.py  # Юнит-тесты сервиса
@@ -125,12 +124,15 @@
 │   │               ├── test_services_generation.py # Юнит-тесты сервиса генерации
 │   │               └── test_task_registry.py      # Юнит-тесты реестра задач
 │   ├── shared/
+│   │   ├── callback_parser.py         # Typed parser для callback_data формата fb:action:gen_id
 │   │   ├── contracts/
 │   │   │   ├── commands.py            # Команды для TaskIQ (EnrichPromptCommand, StartGenerationCommand и т.д.)
 │   │   │   └── events.py              # События для TaskIQ (EnrichmentCompleted, GenerationSucceeded и т.д.)
-│   │   └── ports/
-│   │       ├── telegram.py            # Абстрактный порт TelegramPort и реализация AiogramTelegramPort
-│   │       └── fake_telegram.py       # Фейковая реализация порта для тестов
+│   │   ├── ports/
+│   │   │   ├── telegram.py            # Абстрактный порт TelegramPort и реализация AiogramTelegramPort
+│   │   │   └── fake_telegram.py       # Фейковая реализация порта для тестов
+│   │   └── tests/
+│   │       └── test_callback_parser.py # Unit-тесты callback parser
 │   ├── conftest.py                    # Общие фикстуры для тестов (make_message, fake_state)
 │   └── mock_generation.json           # Mock-данные для локальной генерации
 ├── src/

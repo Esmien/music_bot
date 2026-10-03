@@ -10,22 +10,6 @@ kanban-plugin: board
 
 ## 🔴 P0 — BLOCKER
 
-- [ ] AUD-018 — Сделать callback parser строгим
-	  - Описание: parser принимает malformed callback-data, например `fb:like:abc`, и возвращает callback с `gen_id=None`.
-	  - ТЗ:
-	- Определить точный формат callback: `fb:{action}:{positive_gen_id}`.
-	- Отклонять отсутствующий `gen_id`, нечисловой `gen_id`, `gen_id <= 0` и лишние сегменты.
-	- Убрать неявный fallback на FSM для malformed callback.
-	- Заменить `callback_gen_id or flow_state.gen_id` на явную проверку `is not None`.
-	- Обновить evaluation и feedback handlers.
-	  - DoD:
-	- [ ] `fb:like:123` успешно парсится.
-	- [ ] `fb:dislike:123` успешно парсится.
-	- [ ] `fb:like`, `fb:like:abc`, `fb:like:0`, `fb:like:-1` отклоняются.
-	- [ ] `fb:like:1:extra` отклоняется.
-	- [ ] Malformed callback не вызывает `save_feedback`.
-	- [ ] Есть unit-тесты parser и handler-тесты.
-	- [ ] `pytest` и Ruff проходят.
 - [ ] AUD-019 — Сделать feedback upsert безопасным при гонке
 	  - Описание: текущая схема `SELECT → INSERT/UPDATE` может завершиться `IntegrityError` при двух одновременных callback-запросах.
 	  - ТЗ:
@@ -223,9 +207,24 @@ kanban-plugin: board
 ## In Progress
 
 
-
 ## Done
 
+- [x] AUD-018 — Сделать callback parser строгим
+	  - Описание: parser принимает malformed callback-data, например `fb:like:abc`, и возвращает callback с `gen_id=None`.
+	  - ТЗ:
+	- Определить точный формат callback: `fb:{action}:{positive_gen_id}`.
+	- Отклонять отсутствующий `gen_id`, нечисловой `gen_id`, `gen_id <= 0` и лишние сегменты.
+	- Убрать неявный fallback на FSM для malformed callback.
+	- Заменить `callback_gen_id or flow_state.gen_id` на явную проверку `is not None`.
+	- Обновить evaluation и feedback handlers.
+	  - DoD:
+	- [x] `fb:like:123` успешно парсится.
+	- [x] `fb:dislike:123` успешно парсится.
+	- [x] `fb:like`, `fb:like:abc`, `fb:like:0`, `fb:like:-1` отклоняются.
+	- [x] `fb:like:1:extra` отклоняется.
+	- [x] Malformed callback не вызывает `save_feedback`.
+	- [x] Есть unit-тесты parser и handler-тесты.
+	- [x] `pytest` и Ruff проходят.
 - [x] AUD-025 — Синхронизировать feedback contract в документации
 	  - Описание: `ARCHITECTURE.md` использует устаревшие поля `is_positive` и `comment`, тогда как ORM-модель использует `is_liked` и `feedback`.
 	  - ТЗ:
