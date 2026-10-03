@@ -6,166 +6,280 @@ kanban-plugin: board
 
 ## Quick wins
 
+- [ ] AUD-030 — Проверить права восстановленного audio volume
+	  - Описание: `entrypoint.sh` меняет владельца `/data` без рекурсивной проверки существующих файлов.
+	  - ТЗ:
+	- Проверить сценарий запуска с непустым volume.
+	- Проверить владельца и права существующих MP3.
+	- Решить, нужен ли рекурсивный `chown` или отдельная init-процедура.
+	- Добавить deployment-тест или документировать требуемые права volume.
+	  - DoD:
+	- [ ] Botuser может читать существующие MP3 после рестарта.
+	- [ ] Botuser может создавать новые MP3.
+	- [ ] Сценарий непустого volume проверяется автоматически или документирован.
+	- [ ] В контейнер не добавлены лишние права.
 
 
 ## 🔴 P0 — BLOCKER
 
+- [ ] AUD-018 — Сделать callback parser строгим
+	  - Описание: parser принимает malformed callback-data, например `fb:like:abc`, и возвращает callback с `gen_id=None`.
+	  - ТЗ:
+	- Определить точный формат callback: `fb:{action}:{positive_gen_id}`.
+	- Отклонять отсутствующий `gen_id`, нечисловой `gen_id`, `gen_id <= 0` и лишние сегменты.
+	- Убрать неявный fallback на FSM для malformed callback.
+	- Заменить `callback_gen_id or flow_state.gen_id` на явную проверку `is not None`.
+	- Обновить evaluation и feedback handlers.
+	  - DoD:
+	- [ ] `fb:like:123` успешно парсится.
+	- [ ] `fb:dislike:123` успешно парсится.
+	- [ ] `fb:like`, `fb:like:abc`, `fb:like:0`, `fb:like:-1` отклоняются.
+	- [ ] `fb:like:1:extra` отклоняется.
+	- [ ] Malformed callback не вызывает `save_feedback`.
+	- [ ] Есть unit-тесты parser и handler-тесты.
+	- [ ] `pytest` и Ruff проходят.
+- [ ] AUD-019 — Сделать feedback upsert безопасным при гонке
+	  - Описание: текущая схема `SELECT → INSERT/UPDATE` может завершиться `IntegrityError` при двух одновременных callback-запросах.
+	  - ТЗ:
+	- Сохранить ownership-проверку `gen_id/user_id`.
+	- Выбрать стратегию для PostgreSQL и SQLite.
+	- Для PostgreSQL использовать `ON CONFLICT` либо эквивалентный атомарный upsert.
+	- Для SQLite использовать совместимую реализацию.
+	- Обработать конкурентный `IntegrityError`, если он возможен в выбранной стратегии.
+	- Добавить тест двух параллельных вызовов `save_feedback`.
+	  - DoD:
+	- [ ] Параллельные оценки не приводят к `FeedbackSaveError`.
+	- [ ] Для одной генерации существует не более одной feedback-записи.
+	- [ ] Последнее значение оценки соответствует документированной политике.
+	- [ ] `None` не затирает существующий `feedback`.
+	- [ ] Тесты проходят на SQLite.
+	- [ ] PostgreSQL integration-тест подтверждает concurrency behavior.
+	- [ ] Ошибки БД логируются с `gen_id` и `user_id`.
 
 
 ## 🟠 P1 — HIGH
 
+- [ ] AUD-020 — Ввести persistent idempotency для Telegram delivery
+	  - Описание: повторная обработка `SUCCESS`-генерации может повторно отправить MP3 и повторно опубликовать `GenerationSucceeded`.
+	  - ТЗ:
+	- Определить delivery state: `NOT_DELIVERED`, `IN_PROGRESS`, `DELIVERED`, `FAILED`.
+	- Добавить состояние в модель или отдельную таблицу delivery.
+	- Реализовать атомарный claim доставки.
+	- Добавить lease/TTL для зависших `IN_PROGRESS`.
+	- Не отправлять повторно уже подтверждённую доставку.
+	- Отделить ошибку delivery от ошибки generation.
+	  - DoD:
+	- [ ] Два конкурентных worker-а не отправляют один MP3 дважды.
+	- [ ] Сбой Telegram API не меняет `Generation.status=SUCCESS`.
+	- [ ] Повторная попытка delivery работает только по документированной политике.
+	- [ ] Delivery state сохраняется в PostgreSQL.
+	- [ ] Есть concurrent integration-тест.
+	- [ ] Есть логирование `gen_id`, delivery state и attempt/lease id.
+- [ ] AUD-021 — Сделать сохранение MP3 атомарным и проверять целостность
+	  - Описание: `write_bytes()` пишет напрямую в финальный путь `gen_{gen_id}.mp3`.
+	  - ТЗ:
+	- Создавать временный файл в том же каталоге.
+	- Записывать данные во временный файл.
+	- Рассчитывать размер и SHA-256 checksum.
+	- После успешной записи выполнять atomic rename через `os.replace`.
+	- Удалять временный файл при исключении.
+	- Перед delivery проверять существование, размер и checksum.
+	  - DoD:
+	- [ ] Финальный путь не появляется до завершения записи.
+	- [ ] Повреждённый или неполный файл не доставляется.
+	- [ ] Временные файлы удаляются после успеха и ошибки.
+	- [ ] Checksum в БД совпадает с фактическим файлом.
+	- [ ] Есть тест ошибки записи.
+	- [ ] Есть тест повторного сохранения одного `gen_id`.
+- [ ] AUD-022 — Разделить отмену генерации и отмену delivery
+	  - Описание: один Redis cancel-token используется для разных бизнес-сценариев.
+	  - ТЗ:
+	- Зафиксировать допустимые переходы generation state.
+	- Отделить отмену `PROCESSING` от пропуска delivery после `SUCCESS`.
+	- Определить владельца и TTL cancel-token.
+	- Гарантировать очистку токена после обработки.
+	- Добавить отдельную политику redelivery.
+	  - DoD:
+	- [ ] Отмена до API не вызывает API и переводит generation в `CANCELLED`.
+	- [ ] Отмена после `SUCCESS` не меняет generation status.
+	- [ ] Пропуск delivery фиксируется отдельно от cancellation generation.
+	- [ ] Cancel-token очищается после обработки или его TTL документирован.
+	- [ ] Есть тесты отмены до claim, во время API, после сохранения MP3 и во время delivery.
+	- [ ] Stale `attempt_id` не меняет статус и не отправляет результат.
+- [ ] AUD-023 — Сделать startup cleanup Redis ownership-safe
+	  - Описание: `clear_active_tasks()` может удалить общий Redis-set активных задач.
+	  - ТЗ:
+	- Проверить все вызовы `clear_active_tasks`.
+	- Убрать опасное поведение по умолчанию.
+	- Привязать активные задачи к `instance_id` или lease.
+	- Удалять только ключи текущего экземпляра.
+	- Добавить сценарий двух экземпляров при rolling restart.
+	- Обработать `RedisError` и частичный cleanup.
+	  - DoD:
+	- [ ] Один экземпляр не удаляет задачи другого.
+	- [ ] Cleanup без ownership-параметров невозможен или запрещён.
+	- [ ] Есть тест overlapping startup.
+	- [ ] Есть тест stale instance cleanup.
+	- [ ] Логи содержат `instance_id`, количество найденных и удалённых ключей.
+	- [ ] Документирован deployment protocol.
+- [ ] AUD-026 — Синхронизировать RabbitMQ smoke tests с конфигурацией
+	  - Описание: тест использует захардкоженный URL `amqp://songai:songai@localhost:5672/`, не совпадающий с Compose-конфигурацией.
+	  - ТЗ:
+	- Использовать единый `RABBITMQ_URL` из settings.
+	- Разделить connection smoke и worker end-to-end smoke.
+	- Добавить отдельный Compose/CI profile с RabbitMQ.
+	- Подтвердить фактическое выполнение тестовой задачи worker-ом.
+	- Удалить захардкоженные production credentials.
+	  - DoD:
+	- [ ] В smoke-тестах нет захардкоженных RabbitMQ credentials.
+	- [ ] URL берётся из тестовой конфигурации.
+	- [ ] Реальный RabbitMQ проходит connection smoke.
+	- [ ] Реальный worker обрабатывает тестовую задачу.
+	- [ ] Недоступный RabbitMQ приводит к явному skip только в локальном профиле.
+	- [ ] CI infrastructure profile требует RabbitMQ.
+- [ ] AUD-027 — Добавить integration-профиль настоящего Redis
+	  - Описание: Redis Lua и lock behavior сейчас частично проверяются через fakeredis и monkeypatch.
+	  - ТЗ:
+	- Оставить fakeredis для быстрых unit-тестов.
+	- Добавить pytest marker `redis_real`.
+	- Подключить Redis service в CI/Compose profile.
+	- Выполнить настоящий `SET NX PX`.
+	- Выполнить настоящий compare-and-delete через `EVAL`.
+	- Проверить expiration и повторный захват lock.
+	  - DoD:
+	- [ ] Реальный Redis подтверждает mutual exclusion.
+	- [ ] Чужой token не удаляет lock.
+	- [ ] Expired lock захватывается повторно.
+	- [ ] Lua script выполняется без monkeypatch.
+	- [ ] CI явно поднимает Redis для профиля.
+	- [ ] Fakeredis-тесты помечены как unit/in-process.
 
 
 ## 🟡 P2 — MEDIUM
 
+- [ ] AUD-024 — Зафиксировать границы aiogram-зависимости
+	  - Описание: `domain_contracts.py` принимает `aiogram.Message` и `FSMContext`, хотя shared-слой заявлен как абстракция.
+	  - ТЗ:
+	- Решить, считать ли текущие Protocol application-layer контрактом.
+	- Переименовать контракты, если они являются Telegram flow contracts.
+	- Документировать разрешённые импорты aiogram.
+	- При необходимости ввести DTO для междоменных вызовов.
+	- Добавить architecture test на запрещённые импорты.
+	  - DoD:
+	- [ ] Документировано, где разрешён импорт aiogram.
+	- [ ] Domain services не принимают `Message` и `FSMContext`.
+	- [ ] Названия Protocol отражают реальную ответственность.
+	- [ ] Architecture test проверяет dependency rule.
+	- [ ] Не добавлены необязательные слои только ради формального DDD.
+- [ ] AUD-028 — Добавить конкурентный тест повторной обработки generation
+	  - Описание: текущие тесты проверяют redelivery последовательно, но не доказывают безопасность двух параллельных worker-вызовов.
+	  - ТЗ:
+	- Запустить два `run_generation_task()` для одного `gen_id`.
+	- Использовать barrier/event для синхронизации перед claim.
+	- Проверить, что API вызывается один раз.
+	- Проверить, что MP3 доставляется согласно delivery policy.
+	- Проверить итоговый `attempt_id` и status.
+	  - DoD:
+	- [ ] Два worker-а не выполняют генерацию одновременно.
+	- [ ] Только один worker получает успешный claim.
+	- [ ] Stale worker не меняет финальный статус.
+	- [ ] Количество delivery соответствует policy.
+	- [ ] Тест проходит на PostgreSQL/Redis integration profile.
+- [ ] AUD-029 — Вынести миграции из startup bot-контейнера
+	  - Описание: Alembic запускается только при default startup bot-контейнера, а масштабирование bot replicas может привести к конкурирующим миграциям.
+	  - ТЗ:
+	- Выбрать отдельный migration job или distributed migration lock.
+	- Добавить Compose profile для migration job.
+	- Убрать зависимость worker startup от запуска Alembic.
+	- Проверить failure behavior при неуспешной миграции.
+	- Обновить deployment documentation.
+	  - DoD:
+	- [ ] Миграции выполняются отдельным контролируемым шагом.
+	- [ ] Два bot-контейнера не запускают миграции одновременно без lock.
+	- [ ] При ошибке миграции deployment не считается успешным.
+	- [ ] Worker не выполняет Alembic при старте.
+	- [ ] Deployment runbook содержит команду миграции.
 
 
 ## 🟢 P3 — LOW
 
+- [ ] AUD-031 — Добавить метрики generation и delivery lifecycle
+	  - Описание: текущие логи содержат контекст, но нет агрегируемых метрик для дорогих и долгих операций.
+	  - ТЗ:
+	- Определить counters для generation success/failed/cancelled.
+	- Добавить counters для delivery success/failed/skipped.
+	- Добавить latency для OpenRouter, storage и Telegram delivery.
+	- Добавить счётчик stale attempt и Redis errors.
+	- Документировать минимальный production dashboard.
+	  - DoD:
+	- [ ] Есть метрика количества генераций по финальному статусу.
+	- [ ] Есть метрика delivery failures.
+	- [ ] Есть latency generation и delivery.
+	- [ ] В метриках отсутствуют токены, пользовательские тексты и секреты.
+	- [ ] Доступен alert на рост generation/delivery failures.
+- [ ] AUD-032 — Удалить устаревшие architectural claims
+	  - Описание: часть документации описывает более строгую изоляцию и более сильную идемпотентность, чем реально реализовано.
+	  - ТЗ:
+	- Сверить `ARCHITECTURE.md` с worker, ports, delivery и cancellation code.
+	- Удалить утверждения о полной изоляции от aiogram, если она не соблюдается.
+	- Уточнить, что именно является source of truth для generation и delivery.
+	- Обновить диаграммы после AUD-020–AUD-024.
+	  - DoD:
+	- [ ] Каждый компонент из диаграммы существует или явно помечен концептуальным.
+	- [ ] Delivery idempotency описана только в пределах реально реализованного контракта.
+	- [ ] Cancellation flow соответствует коду.
+	- [ ] Feedback contract соответствует ORM-модели.
+	- [ ] Все ссылки в документации проверены.
 
 
-## In progress
+## In Progress
 
 
 
 ## Done
 
-- [x] FIX — Пользователь видит бесконечный лоадер при ошибке обогащения
-	  - Описание: при 401 Unauthorized в enricher API пользователь не получает уведомление об ошибке; ошибка прав доступа к /var/lib/lyria/audio
-	  - ТЗ: восстановить флоу с retry/fallback клавиатурой и счетчиком попыток; создать директорию audio с правильными правами
+- [x] AUD-025 — Синхронизировать feedback contract в документации
+	  - Описание: `ARCHITECTURE.md` использует устаревшие поля `is_positive` и `comment`, тогда как ORM-модель использует `is_liked` и `feedback`.
+	  - ТЗ:
+	- Найти все упоминания `is_positive`, `comment` и старых имён feedback-полей.
+	- Сверить документацию с `domains.feedback.models.GenerationFeedback`.
+	- Обновить таблицы хранения данных, диаграммы и описания API.
+	- Добавить поиск устаревших имён в CI или отдельную documentation-проверку.
 	  - DoD:
-	- [x] При ошибке обогащения пользователь получает клавиатуру retry/fallback
-	- [x] Счетчик попыток работает (3 попытки с retry, потом только fallback/cancel)
-	- [x] Директория /var/lib/lyria/audio создаётся в Dockerfile с правами botuser
-	- [x] Тесты покрывают сценарий ошибки с событием handle_enrichment_failed
-- [x] AUD-017 — Финальная зачистка legacy-импортов и комментариев
-	  - Описание: после основных исправлений нужно удалить подтверждённые compatibility-следы, устаревшие `noqa` и комментарии.
-	  - ТЗ: запустить Ruff и поиск legacy/TODO; удалить только подтверждённый мёртвый код; обновить документацию.
-	  - DoD:
-	- [x] Нет подтверждённых неиспользуемых импортов.
-	- [x] Нет устаревших compatibility-комментариев.
+	- [x] В документации используются только актуальные имена `is_liked` и `feedback`.
+	- [x] Поиск по проекту не находит подтверждённых старых имён.
+	- [x] Ссылки на feedback service и handlers работают.
 	- [x] CI проходит.
-- [ ] AUD-016 — Зафиксировать границы framework-зависимости портов
-	  - Описание: порты принимают конкретные `aiogram.Message` и `FSMContext`.
-	  - ТЗ: решить, является ли это осознанной pragmatic-архитектурой; документировать границу либо ввести DTO; добавить архитектурную проверку.
-	  - DoD:
-	- [ ] Документировано, где допустим импорт aiogram.
-	- [ ] Междоменные зависимости идут через единый контракт.
-- [x] AUD-015 — Добавить настоящий Redis integration-профиль
-	  - Описание: Lua `EVAL` частично эмулируется monkeypatch.
-	  - ТЗ: оставить unit-тесты; добавить Redis integration profile и CI-команду; проверить `SET NX PX` и compare-and-delete.
-	  - DoD:
-	- [x] Реальный Redis подтверждает mutual exclusion.
-	- [x] Чужой token не удаляет lock.
-	- [x] Expired lock захватывается повторно.
-	- [x] CI явно требует Redis.
-- [x] AUD-014 — Устранить дублирование `task_id` и `attempt_id`
-	  - Описание: конкурентная защита реализована через `attempt_id`, а `task_id` остаётся незавершённой концепцией.
-	  - ТЗ: описать назначение, владельца и TTL каждого ID; удалить неиспользуемый либо связать со state machine; обновить тесты.
-	  - DoD:
-	- [x] Для каждого ID есть проверяемый use case.
-	- [x] Нет двух недокументированных механизмов одного инварианта.
-	- [x] Concurrent worker test проходит.
-- [x] AUD-009 — Синхронизировать `ARCHITECTURE.md` с кодом
-	  - Описание: документация содержит устаревшие имена FSM и handlers.
-	  - ТЗ: сверить диаграммы с исходниками; обновить имена, пути и cancellation flow; проверить ссылки.
-	  - DoD:
-	- [x] Имена и пути из диаграмм существуют или помечены концептуальными.
-	- [x] Feedback и cancellation flow актуальны.
-- [x] AUD-003 — Удалить или подключить `task_id` к реальному flow
-	  - Описание: Redis хранит `task_id`, но worker не использует его для проверки актуальности результата.
-	  - ТЗ: проверить вызовы `get_task_id`; удалить API либо встроить проверку перед результатом; обновить тесты и документацию.
-	  - DoD:
-	- [x] `task_id` участвует в инварианте либо полностью удалён.
-	- [x] Нет тестов несуществующей функциональности.
-- [ ] AUD-011 — Определить политику ошибки сохранения истории промпта
-	  - Описание: best-effort сохранение может потерять запись и продолжить flow.
-	  - ТЗ: решить blocking или best-effort; для best-effort добавить метрику/алерт; для blocking не запускать генерацию после ошибки; добавить тесты.
-	  - DoD:
-	- [ ] Политика описана в документации.
-	- [ ] Flow соответствует выбранной политике.
-	- [ ] Ошибка логируется с user/generation context.
-	- [ ] `SQLAlchemyError` покрыт тестом.
-- [x] AUD-011 — Определить политику ошибки сохранения истории промпта
-	  - Описание: best-effort сохранение может потерять запись и продолжить flow.
-	  - ТЗ: решить blocking или best-effort; для best-effort добавить метрику/алерт; для blocking не запускать генерацию после ошибки; добавить тесты.
-	  - DoD:
-	- [x] Политика описана в документации.
-	- [x] Flow соответствует выбранной политике.
-	- [x] Ошибка логируется с user/generation context.
-	- [x] `SQLAlchemyError` покрыт тестом.
-- [x] AUD-010 — Формализовать единый cancellation flow
-	  - Описание: отмена распределена между `asyncio.Task`, Redis, FSM и БД.
-	  - ТЗ: описать state machine и source of truth; проверить отмену до claim, во время API, после сохранения MP3 и во время Telegram delivery; добавить конкурентные тесты.
-	  - DoD:
-	- [x] Допустимые переходы статусов задокументированы.
-	- [x] Stale `attempt_id` не меняет статус и не отправляет результат.
-	- [x] Cancel-token очищается или истекает по задокументированному TTL.
-	- [x] Есть тесты четырёх этапов отмены.
-- [x] AUD-007 — Синхронизировать тесты отмены с registry-контрактом
-	  - Описание: часть тестов обращается к Redis registry как к словарю.
-	  - ТЗ: найти старые фикстуры; разделить local `asyncio` cancellation и Redis cancel-token; проверить очистку registry и FSM.
-	  - DoD:
-	- [x] В тестах нет несуществующего dictionary API.
-	- [x] Локальная отмена и Redis cancel-token проверяются отдельно.
-	- [x] После отмены очищаются registry и FSM.
-- [x] AUD-004 — Сделать startup cleanup Redis безопасным
-	  - Описание: общая очистка active-task и FSM-ключей опасна при rolling restart.
-	  - ТЗ: выбрать ownership/lease либо явно закрепить single-instance; добавить тест перекрывающегося запуска; логировать обработанные и пропущенные ключи.
-	  - DoD:
-	- [x] Один экземпляр не удаляет состояние другого.
-	- [x] Deployment constraint документирован или есть ownership-тест.
-	- [x] `RedisError` покрыт тестом.
-- [x] AUD-002 — Определить единственный `task_registry.py`
-	  - Описание: обнаружены in-memory и Redis-версии реестра.
-	  - ТЗ: найти физические пути и импорты; зафиксировать canonical вариант; удалить или переименовать legacy; привести тесты к контракту.
-	  - DoD:
-	- [x] Один production registry API.
-	- [x] Все импорты используют canonical API.
-	- [x] Тесты регистрации, отмены и очистки проходят.
-- [x] AUD-013 — Ввести единый typed parser callback-data
-	  - Описание: feedback и evaluation handlers по-разному разбирают `fb:action:gen_id`.
-	  - ТЗ: создать enum action и typed parser; перевести оба обработчика; добавить valid, malformed и stale callback-тесты.
-	  - DoD:
-	- [x] В handlers нет ручного `split` для этого формата.
-	- [x] Malformed callback безопасно отклоняется.
-	- [x] Stale `gen_id` не записывается в БД.
-- [x] AUD-012 — Исправить docstring `_save_feedback_best_effort`
-	  - Описание: docstring содержит отсутствующий параметр `chat_id`.
-	  - ТЗ: синхронизировать `Args` с сигнатурой и проверить остальные описания.
-	  - DoD:
-	- [x] Все параметры сигнатуры описаны.
-	- [x] Лишних параметров нет.
-	- [x] Ruff проходит.
-- [x] AUD-008 — Устранить дублирующий `COPY workers` в Dockerfile
-	  - Описание: после `COPY src/ ./` каталог `workers` копируется повторно.
-	  - ТЗ: проверить структуру `src/workers`; оставить один способ копирования; собрать bot и worker-образы.
-	  - DoD:
-	- [x] Дублирующего `COPY` нет.
-	- [x] Bot-образ собирается.
-	- [x] Generation и enricher worker запускаются.
-- [x] AUD-006 — Убрать compatibility FSM-реэкспорт
-	  - Описание: legacy `fsm.py` создаёт альтернативную точку импорта `FeedbackStates`.
-	  - ТЗ: найти импорты; перевести их на `domains.feedback.fsm`; удалить реэкспорт или пометить deprecated; обновить тесты.
-	  - DoD:
-	- [x] Используется один canonical import.
-	- [x] `pytest` проходит.
-	- [x] Ruff проходит.
+- [x] AUD-025 — Синхронизировать feedback contract в документации
 - [x] AUD-001 — Сделать feedback upsert совместимым с SQLite и PostgreSQL
-	  - Описание: сервис использует PostgreSQL-specific `insert/on_conflict_do_update`, а тесты используют SQLite.
-	  - ТЗ: выбрать dialect-independent стратегию или реализации по dialect; сохранить ownership, статус `SUCCESS` и отсутствие дублей; добавить SQLite и PostgreSQL проверки.
-	  - DoD:
-	- [x] Feedback-тесты проходят на SQLite.
-	- [x] PostgreSQL проверяет создание и обновление записи.
-	- [x] На `generation_id` не более одной записи.
-	- [x] `None` не затирает существующие поля.
-	- [x] Ошибка БД преобразуется в `FeedbackSaveError`.
+	  - Примечание: базовая совместимость исправлена, но конкурентный сценарий вынесен в новый AUD-019.
+- [x] AUD-002 — Определить единственный `task_registry.py`
+- [x] AUD-003 — Удалить или подключить `task_id` к реальному flow
+- [x] AUD-004 — Сделать startup cleanup Redis безопасным
+	  - Примечание: базовая проверка других экземпляров добавлена, но ownership cleanup требует дополнительного аудита AUD-023.
+- [x] AUD-006 — Убрать compatibility FSM-реэкспорт
+- [x] AUD-007 — Синхронизировать тесты отмены с registry-контрактом
+- [x] AUD-008 — Устранить дублирующий `COPY workers` в Dockerfile
+- [x] AUD-009 — Синхронизировать `ARCHITECTURE.md` с кодом
+	  - Примечание: основные имена синхронизированы, но обнаружен новый drift feedback contract — AUD-025.
+- [x] AUD-010 — Формализовать единый cancellation flow
+	  - Примечание: базовая state machine и четыре этапа отмены описаны, но delivery cancellation требует отдельного delivery state — AUD-022.
+- [x] AUD-011 — Определить политику ошибки сохранения истории промпта
+- [x] AUD-012 — Исправить docstring `_save_feedback_best_effort`
+- [x] AUD-013 — Ввести единый typed parser callback-data
+	  - Примечание: typed parser появился, но validation недостаточно строгая — AUD-018.
+- [x] AUD-014 — Устранить дублирование `task_id` и `attempt_id`
+- [x] AUD-015 — Добавить настоящий Redis integration-профиль
+	  - Примечание: добавлен fakeredis integration-профиль; тест настоящего Redis вынесен в AUD-027.
+- [ ] AUD-016 — Зафиксировать границы framework-зависимости портов
+- [x] AUD-017 — Финальная зачистка legacy-импортов и комментариев
+	  - Примечание: основной cleanup выполнен, новые stale claims и documentation drift вынесены в AUD-025 и AUD-032.
 
 
 
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[true,true,true,true,false,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[false,true,true,true,false,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%
