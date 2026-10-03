@@ -1,6 +1,7 @@
 """Интеграционные тесты worker-а генерации через контракты и TelegramPort."""
 
 import asyncio
+import hashlib
 import io
 from pathlib import Path
 from types import SimpleNamespace
@@ -124,7 +125,8 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, t
     def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
         audio_path = tmp_path / f"gen_{gen_id}.mp3"
         audio_path.write_bytes(audio_bytes)
-        return str(audio_path), len(audio_bytes), "fake_checksum"
+        checksum = hashlib.sha256(audio_bytes).hexdigest()
+        return str(audio_path), len(audio_bytes), checksum
 
     async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
         published_events.append((task_name, event))
@@ -147,7 +149,7 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, t
     assert generation.status is GenerationStatus.SUCCESS
     assert generation.audio_path == str(tmp_path / "gen_1.mp3")
     assert generation.audio_size == len(b"audio_content")
-    assert generation.audio_checksum == "fake_checksum"
+    assert generation.audio_checksum == hashlib.sha256(b"audio_content").hexdigest()
     assert session.committed
     assert len(published_events) == 1
     task_name, event = published_events[0]
@@ -253,7 +255,9 @@ async def test_worker_marks_cancelled_generation_and_publishes_failure(
 async def test_worker_redelivery_uses_existing_artifact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """При повторной попытке доставки воркер берет существующий аудиофайл без вызова генерации."""
     audio_file = tmp_path / "gen_3.mp3"
-    audio_file.write_bytes(b"existing_audio")
+    audio_bytes = b"existing_audio"
+    audio_file.write_bytes(audio_bytes)
+    checksum = hashlib.sha256(audio_bytes).hexdigest()
 
     generation = Generation(
         id=3,
@@ -263,8 +267,8 @@ async def test_worker_redelivery_uses_existing_artifact(monkeypatch: pytest.Monk
         title="Тест",
         status=GenerationStatus.SUCCESS,
         audio_path=str(audio_file),
-        audio_size=len(b"existing_audio"),
-        audio_checksum="test_checksum",
+        audio_size=len(audio_bytes),
+        audio_checksum=checksum,
     )
     session = FakeSession(generation)
     telegram = FakeTelegramPort()
@@ -317,7 +321,8 @@ async def test_worker_telegram_delivery_failure_keeps_generation_success(
         return b"audio_content"
 
     def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
-        return str(audio_path), len(audio_bytes), "checksum"
+        checksum = hashlib.sha256(audio_bytes).hexdigest()
+        return str(audio_path), len(audio_bytes), checksum
 
     async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
         published_events.append((task_name, event))

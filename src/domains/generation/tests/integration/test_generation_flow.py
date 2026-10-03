@@ -560,21 +560,25 @@ async def test_cancel_during_delivery_skips_telegram_send(fake_redis, monkeypatc
         audio_size=1024,
         audio_checksum="abc123",
     )
-    
+
     class FakeSession:
         async def __aenter__(self):
             return self
-        
+
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
-        
+
         async def execute(self, stmt):
             from types import SimpleNamespace
+
             # Имитируем обновление delivery_status
             return SimpleNamespace(scalar_one_or_none=lambda: None)
-        
+
         async def commit(self):
             pass
+
+        async def get(self, model, gen_id):
+            return generation
 
     monkeypatch.setattr("domains.generation.worker.get_session", lambda: FakeSession())
 

@@ -654,7 +654,10 @@ async def persist_generated_title(user_id: int, title: str) -> None:
 
 
 def save_audio_to_storage(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
-    """Сохраняет аудио на диск и возвращает метаданные файла.
+    """Атомарно сохраняет аудио на диск и возвращает метаданные файла.
+
+    Использует временный файл и atomic rename для предотвращения
+    появления частично записанных файлов в случае сбоя.
 
     Args:
         audio_bytes: Байты аудио-файла.
@@ -664,15 +667,62 @@ def save_audio_to_storage(audio_bytes: bytes, gen_id: int) -> tuple[str, int, st
         Кортеж (путь к файлу, размер в байтах, SHA256 checksum).
 
     Raises:
-        OSError: При ошибке записи файла.
+        OSError: При ошибке записи или переименования файла.
     """
     storage_path = Path(settings.generation.AUDIO_STORAGE_PATH)
     storage_path.mkdir(parents=True, exist_ok=True)
 
-    file_path = storage_path / f"gen_{gen_id}.mp3"
-    file_path.write_bytes(audio_bytes)
+    final_path = storage_path / f"gen_{gen_id}.mp3"
+    temp_path = storage_path / f"gen_{gen_id}.mp3.tmp"
 
     file_size = len(audio_bytes)
     checksum = hashlib.sha256(audio_bytes).hexdigest()
 
-    return str(file_path), file_size, checksum
+    try:
+        temp_path.write_bytes(audio_bytes)
+        temp_path.replace(final_path)
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        raise
+
+    return str(final_path), file_size, checksum
+
+
+def verify_audio_integrity(
+    audio_path: str,
+    expected_size: int | None,
+    expected_checksum: str | None,
+) -> tuple[bool, str | None]:
+    """Проверяет целостность сохранённого аудио-файла.
+
+    Args:
+        audio_path: Путь к файлу на диске.
+        expected_size: Ожидаемый размер в байтах или None.
+        expected_checksum: Ожидаемая SHA256 контрольная сумма или None.
+
+    Returns:
+        Кортеж (is_valid, error_message).
+        is_valid=True, если файл валиден или проверка не требуется.
+        error_message содержит описание ошибки при is_valid=False.
+    """
+    file_path = Path(audio_path)
+
+    if not file_path.exists():
+        return False, f"File not found: {audio_path}"
+
+    actual_size = file_path.stat().st_size
+
+    if expected_size is not None and actual_size != expected_size:
+        return False, f"Size mismatch: expected {expected_size}, got {actual_size}"
+
+    if expected_checksum is not None:
+        try:
+            file_bytes = file_path.read_bytes()
+            actual_checksum = hashlib.sha256(file_bytes).hexdigest()
+            if actual_checksum != expected_checksum:
+                return False, f"Checksum mismatch: expected {expected_checksum}, got {actual_checksum}"
+        except OSError as err:
+            return False, f"Failed to read file for checksum: {err}"
+
+    return True, None

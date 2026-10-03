@@ -45,19 +45,58 @@ async def deliver_generation_audio(
         telegram: Порт Telegram для отправки сообщений и аудио.
         command: Исходная команда генерации.
         audio_path: Путь к сохранённому файлу на диске.
+        delivery_attempt_id: Идентификатор текущей попытки доставки.
     """
-    audio_file_path = Path(audio_path)
-    if not audio_file_path.exists():
-        log.error("Audio file not found for delivery (gen_id=%s, path=%s)", command.gen_id, audio_path)
-        delivery_err = FileNotFoundError(f"Audio file not found: {audio_path}")
+    # Проверка отмены перед доставкой (артефакт уже сохранён, но доставка может быть ненужной)
+    if await is_generation_cancelled(gen_id=command.gen_id):
+        log.info("Delivery cancelled by user (gen_id=%s)", command.gen_id)
+        async with get_session() as session:
+            from domains.generation.models import DeliveryStatus
+
+            await session.execute(
+                update(Generation)
+                .where(
+                    Generation.id == command.gen_id,
+                    Generation.delivery_attempt_id == delivery_attempt_id,
+                )
+                .values(delivery_status=DeliveryStatus.FAILED)
+            )
+            await session.commit()
+        return
+
+    async with get_session() as session:
+        generation = await session.get(Generation, command.gen_id)
+        if generation is None:
+            log.error("Generation record not found for delivery (gen_id=%s)", command.gen_id)
+            return
+
+        expected_size = generation.audio_size
+        expected_checksum = generation.audio_checksum
+
+    from domains.generation.service import verify_audio_integrity
+
+    is_valid, error_message = verify_audio_integrity(
+        audio_path=audio_path,
+        expected_size=expected_size,
+        expected_checksum=expected_checksum,
+    )
+
+    if not is_valid:
+        log.error(
+            "Audio integrity check failed for delivery (gen_id=%s, path=%s): %s",
+            command.gen_id,
+            audio_path,
+            error_message,
+        )
+        delivery_err = ValueError(f"Audio integrity check failed: {error_message}")
         try:
             await notify_owner(
                 telegram_port=telegram,
-                context=f"Файл аудио не найден для отправки gen_id={command.gen_id}",
+                context=f"Проверка целостности аудио не прошла для gen_id={command.gen_id}",
                 err=delivery_err,
             )
         except Exception:
-            log.exception("Failed to notify owner about missing audio file (gen_id=%s)", command.gen_id)
+            log.exception("Failed to notify owner about audio integrity failure (gen_id=%s)", command.gen_id)
         failure_event = GenerationFailed(
             user_id=command.user_id,
             chat_id=command.chat_id,
@@ -74,24 +113,7 @@ async def deliver_generation_audio(
         return
 
     try:
-        # Проверка отмены перед доставкой (артефакт уже сохранён, но доставка может быть ненужной)
-        if await is_generation_cancelled(gen_id=command.gen_id):
-            log.info("Delivery cancelled by user (gen_id=%s)", command.gen_id)
-            async with get_session() as session:
-                from domains.generation.models import DeliveryStatus
-
-                await session.execute(
-                    update(Generation)
-                    .where(
-                        Generation.id == command.gen_id,
-                        Generation.delivery_attempt_id == delivery_attempt_id,
-                    )
-                    .values(delivery_status=DeliveryStatus.FAILED)
-                )
-                await session.commit()
-            return
-
-        audio_bytes = await asyncio.to_thread(audio_file_path.read_bytes)
+        audio_bytes = await asyncio.to_thread(Path(audio_path).read_bytes)
         await telegram.send_audio(
             chat_id=command.chat_id,
             audio=io.BytesIO(audio_bytes),
