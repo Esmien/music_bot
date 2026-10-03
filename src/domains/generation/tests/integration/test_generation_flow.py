@@ -244,6 +244,7 @@ async def test_cancel_generation_kills_running_task(
 ):
     """Кнопка «❌ Отмена» гасит живую фоновую задачу генерации и очищает registry."""
     monkeypatch.setattr(task_registry, "redis_client", fake_redis)
+    monkeypatch.setattr("domains.base.handlers.get_session", patched_auth_db)
 
     msg = make_message(uid=57)
     state = fake_state()
@@ -398,13 +399,30 @@ async def test_retry_generation_publishes_command(
     assert command.prompt == "промпт"
 
 
-async def test_cancel_sets_redis_cancel_token(
+async def test_cancel_sets_generation_cancel_token_for_processing(
     patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state, fake_redis, monkeypatch
 ):
-    """Отмена генерации устанавливает Redis cancel-token для воркера."""
+    """Отмена генерации в статусе PROCESSING устанавливает generation cancel-token."""
     import core.redis as redis_module
+    from domains.generation.models import Generation, GenerationStatus
 
     monkeypatch.setattr(redis_module, "redis_client", fake_redis)
+    monkeypatch.setattr("domains.base.handlers.get_session", patched_auth_db)
+
+    await _make_authorized_user(patched_auth_db, 58)
+
+    # Создаём PROCESSING-генерацию в БД
+    async with patched_auth_db() as session:
+        generation = Generation(
+            id=200,
+            user_id=58,
+            prompt="test prompt",
+            enriched_prompt={"genre": "rock"},
+            title="Test Song",
+            status=GenerationStatus.PROCESSING,
+        )
+        session.add(generation)
+        await session.commit()
 
     msg = make_message(uid=58)
     state = fake_state()
@@ -412,10 +430,53 @@ async def test_cancel_sets_redis_cancel_token(
 
     await base_handlers.cmd_cancel(msg, state)
 
-    # Проверяем, что cancel-token установлен в Redis
+    # Проверяем, что generation cancel-token установлен
     assert await redis_module.is_generation_cancelled(gen_id=200) is True
+    # Delivery cancel-token НЕ установлен
+    assert await redis_module.is_delivery_cancelled(gen_id=200) is False
     assert state.cleared
     assert task_registry.get_active_task(uid=58) is None
+
+
+async def test_cancel_sets_delivery_cancel_token_for_success(
+    patched_auth_db, clean_auth_state, clean_generation_registry, make_message, fake_state, fake_redis, monkeypatch
+):
+    """Отмена генерации в статусе SUCCESS устанавливает delivery cancel-token."""
+    import core.redis as redis_module
+    from domains.generation.models import Generation, GenerationStatus
+
+    monkeypatch.setattr(redis_module, "redis_client", fake_redis)
+    monkeypatch.setattr("domains.base.handlers.get_session", patched_auth_db)
+
+    await _make_authorized_user(patched_auth_db, 59)
+
+    # Создаём SUCCESS-генерацию в БД (MP3 уже сохранён)
+    async with patched_auth_db() as session:
+        generation = Generation(
+            id=300,
+            user_id=59,
+            prompt="test prompt",
+            enriched_prompt={"genre": "rock"},
+            title="Test Song",
+            status=GenerationStatus.SUCCESS,
+            audio_path="/tmp/test.mp3",
+            audio_size=1024,
+            audio_checksum="abc123",
+        )
+        session.add(generation)
+        await session.commit()
+
+    msg = make_message(uid=59)
+    state = fake_state()
+    await state.update_data(gen_id=300, generating=True)
+
+    await base_handlers.cmd_cancel(msg, state)
+
+    # Проверяем, что delivery cancel-token установлен
+    assert await redis_module.is_delivery_cancelled(gen_id=300) is True
+    # Generation cancel-token НЕ установлен
+    assert await redis_module.is_generation_cancelled(gen_id=300) is False
+    assert state.cleared
 
 
 async def test_cancel_without_active_generation_clears_state(
@@ -440,6 +501,7 @@ async def test_cancel_before_claim_prevents_api_call(
 
     monkeypatch.setattr(redis_module, "redis_client", fake_redis)
     monkeypatch.setattr(pipeline, "get_session", patched_auth_db)
+    monkeypatch.setattr("domains.base.handlers.get_session", patched_auth_db)
 
     await _make_authorized_user(patched_auth_db, 80)
     state = fake_state()
@@ -582,8 +644,8 @@ async def test_cancel_during_delivery_skips_telegram_send(fake_redis, monkeypatc
 
     monkeypatch.setattr("domains.generation.worker.get_session", lambda: FakeSession())
 
-    # Устанавливаем cancel-токен перед доставкой
-    await redis_module.request_generation_cancel(gen_id=600)
+    # Устанавливаем delivery cancel-token перед доставкой
+    await redis_module.request_delivery_cancel(gen_id=600)
 
     # Мокируем TelegramPort для отслеживания вызовов send_audio
     send_audio_called = False
@@ -620,3 +682,5 @@ async def test_cancel_during_delivery_skips_telegram_send(fake_redis, monkeypatc
 
     # Проверяем, что send_audio НЕ был вызван из-за отмены
     assert send_audio_called is False
+    # Проверяем, что delivery cancel-token очищен
+    assert await redis_module.is_delivery_cancelled(gen_id=600) is False

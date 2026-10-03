@@ -549,6 +549,9 @@ async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCall
 async def run_generation(prompt: str, gen_id: int, on_progress: ProgressCallback) -> bytes:
     """Запускает генерацию: демо-ветка в MOCK_MODE или реальный сервис.
 
+    Проверяет только generation cancel-токен (отмена PROCESSING → CANCELLED).
+    Delivery cancel-токен проверяется отдельно перед доставкой в воркере.
+
     Args:
         prompt: Промпт для модели (описание песни).
         gen_id: ID генерации для проверки отмены.
@@ -560,7 +563,7 @@ async def run_generation(prompt: str, gen_id: int, on_progress: ProgressCallback
     Raises:
         asyncio.CancelledError: Если генерация отменена пользователем.
     """
-    # Проверяем отмену перед стартом генерации (работает и для мок-режима)
+    # Проверяем generation cancel-токен перед стартом генерации
     if await is_generation_cancelled(gen_id=gen_id):
         raise asyncio.CancelledError
 

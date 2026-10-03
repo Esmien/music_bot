@@ -14,21 +14,6 @@ kanban-plugin: board
 
 ## 🟠 P1 — HIGH
 
-- [ ] AUD-022 — Разделить отмену генерации и отмену delivery
-	  - Описание: один Redis cancel-token используется для разных бизнес-сценариев.
-	  - ТЗ:
-	- Зафиксировать допустимые переходы generation state.
-	- Отделить отмену `PROCESSING` от пропуска delivery после `SUCCESS`.
-	- Определить владельца и TTL cancel-token.
-	- Гарантировать очистку токена после обработки.
-	- Добавить отдельную политику redelivery.
-	  - DoD:
-	- [ ] Отмена до API не вызывает API и переводит generation в `CANCELLED`.
-	- [ ] Отмена после `SUCCESS` не меняет generation status.
-	- [ ] Пропуск delivery фиксируется отдельно от cancellation generation.
-	- [ ] Cancel-token очищается после обработки или его TTL документирован.
-	- [ ] Есть тесты отмены до claim, во время API, после сохранения MP3 и во время delivery.
-	- [ ] Stale `attempt_id` не меняет статус и не отправляет результат.
 - [ ] AUD-023 — Сделать startup cleanup Redis ownership-safe
 	  - Описание: `clear_active_tasks()` может удалить общий Redis-set активных задач.
 	  - ТЗ:
@@ -157,9 +142,26 @@ kanban-plugin: board
 
 ## In Progress
 
+- [x] AUD-022 — Разделить отмену генерации и отмену delivery
+	  - Описание: один Redis cancel-token используется для разных бизнес-сценариев.
+	  - ТЗ:
+	- Зафиксировать допустимые переходы generation state.
+	- Отделить отмену `PROCESSING` от пропуска delivery после `SUCCESS`.
+	- Определить владельца и TTL cancel-token.
+	- Гарантировать очистку токена после обработки.
+	- Добавить отдельную политику redelivery.
+	  - DoD:
+	- [x] Отмена до API не вызывает API и переводит generation в `CANCELLED`.
+	- [x] Отмена после `SUCCESS` не меняет generation status.
+	- [x] Пропуск delivery фиксируется отдельно от cancellation generation.
+	- [x] Cancel-token очищается после обработки или его TTL документирован.
+	- [x] Есть тесты отмены до claim, во время API, после сохранения MP3 и во время delivery.
+	- [x] Stale `attempt_id` не меняет статус и не отправляет результат.
+
 
 ## Done
 
+- [x] AUD-022 — Разделить отмену генерации и отмену delivery
 - [x] AUD-021 — Сделать сохранение MP3 атомарным и проверять целостность
 	  - Описание: `write_bytes()` пишет напрямую в финальный путь `gen_{gen_id}.mp3`.
 	  - ТЗ:

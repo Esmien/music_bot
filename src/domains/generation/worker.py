@@ -12,7 +12,12 @@ from taskiq import Context, TaskiqDepends
 from core.broker import generation_broker  # type: ignore[attr-defined]
 from core.config import settings  # type: ignore[attr-defined]
 from core.database.engine import get_session  # type: ignore[attr-defined]
-from core.redis import clear_generation_cancel, is_generation_cancelled  # type: ignore[attr-defined]
+from core.redis import (  # type: ignore[attr-defined]
+    clear_delivery_cancel,
+    clear_generation_cancel,
+    is_delivery_cancelled,
+    is_generation_cancelled,
+)
 from core.utils.error_notify import notify_owner  # type: ignore[attr-defined]
 from domains.generation.models import Generation, GenerationStatus  # type: ignore[attr-defined]
 from domains.generation.service import (  # type: ignore[attr-defined]
@@ -47,9 +52,9 @@ async def deliver_generation_audio(
         audio_path: Путь к сохранённому файлу на диске.
         delivery_attempt_id: Идентификатор текущей попытки доставки.
     """
-    # Проверка отмены перед доставкой (артефакт уже сохранён, но доставка может быть ненужной)
-    if await is_generation_cancelled(gen_id=command.gen_id):
-        log.info("Delivery cancelled by user (gen_id=%s)", command.gen_id)
+    # Проверка delivery cancel-токена (статус генерации уже SUCCESS, доставка пропускается)
+    if await is_delivery_cancelled(gen_id=command.gen_id):
+        log.info("Delivery cancelled by user (gen_id=%s, status=SUCCESS preserved)", command.gen_id)
         async with get_session() as session:
             from domains.generation.models import DeliveryStatus
 
@@ -62,6 +67,7 @@ async def deliver_generation_audio(
                 .values(delivery_status=DeliveryStatus.FAILED)
             )
             await session.commit()
+        await clear_delivery_cancel(gen_id=command.gen_id)
         return
 
     async with get_session() as session:
@@ -348,6 +354,7 @@ async def _handle_generation_cancel(
         )
         await session.execute(cancel_stmt)
         await session.commit()
+    # Очищаем generation cancel-token после обработки отмены
     await clear_generation_cancel(gen_id=command.gen_id)
 
     if command.status_message_id is not None:
