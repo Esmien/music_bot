@@ -1,6 +1,9 @@
 """Тесты распределённого Redis-лока для генерации.
 
 Проверяем взаимное исключение между двумя «процессами» (два соединения к fakeredis).
+
+Эти тесты используют fakeredis и предназначены для быстрой проверки логики локов.
+Для тестов с настоящим Redis см. test_redis_lock_real.py с маркером @pytest.mark.redis_real.
 """
 
 import asyncio
@@ -55,6 +58,7 @@ def redis_connections(monkeypatch):
     yield client1, client2
 
 
+@pytest.mark.unit
 async def test_redis_lock_mutual_exclusion(redis_connections):
     """Два «процесса» не могут одновременно захватить лок одного пользователя."""
     client1, client2 = redis_connections
@@ -98,6 +102,7 @@ async def test_redis_lock_mutual_exclusion(redis_connections):
     ]
 
 
+@pytest.mark.unit
 async def test_redis_lock_different_users_no_blocking(redis_connections):
     """Локи разных пользователей не блокируют друг друга."""
     client1, client2 = redis_connections
@@ -136,6 +141,7 @@ async def test_redis_lock_different_users_no_blocking(redis_connections):
     assert len(events) == 4
 
 
+@pytest.mark.unit
 async def test_redis_lock_timeout_raises_exception(redis_connections, monkeypatch):
     """Превышение таймаута ожидания лока вызывает GenerationLockTimeoutError."""
     _, client2 = redis_connections
@@ -165,6 +171,7 @@ async def test_redis_lock_timeout_raises_exception(redis_connections, monkeypatc
     await asyncio.gather(holding_process(), waiting_process())
 
 
+@pytest.mark.unit
 async def test_redis_lock_cannot_release_foreign_lock(redis_connections):
     """Чужой лок не удаляется при выходе из контекста первого процесса."""
     client1, _ = redis_connections
@@ -184,6 +191,7 @@ async def test_redis_lock_cannot_release_foreign_lock(redis_connections):
     await client1.delete(lock_key)
 
 
+@pytest.mark.unit
 async def test_redis_lock_cannot_release_expired_lock(redis_connections):
     """Протухший (удалённый) лок не вызывает ошибок при попытке освобождения."""
     client1, _ = redis_connections
@@ -198,6 +206,7 @@ async def test_redis_lock_cannot_release_expired_lock(redis_connections):
     assert await client1.get(name=lock_key) is None
 
 
+@pytest.mark.unit
 async def test_lua_release_lock_script_direct(redis_connections):
     """Атомарный Lua-скрипт удаляет ключ только при совпадении токена владельца."""
     client1, _ = redis_connections

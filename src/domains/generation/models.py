@@ -25,6 +25,15 @@ class GenerationStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class DeliveryStatus(StrEnum):
+    """Статус доставки сгенерированного аудио пользователю."""
+
+    NOT_DELIVERED = "not_delivered"
+    IN_PROGRESS = "in_progress"
+    DELIVERED = "delivered"
+    FAILED = "failed"
+
+
 class Generation(Base):
     """Генерация песни и связанные с ней исходные данные.
 
@@ -58,6 +67,18 @@ class Generation(Base):
     )
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    delivery_status: Mapped[DeliveryStatus] = mapped_column(
+        Enum(
+            DeliveryStatus,
+            name="delivery_status",
+            native_enum=False,
+            length=16,
+            values_callable=lambda statuses: [status.value for status in statuses],
+        ),
+        default=DeliveryStatus.NOT_DELIVERED,
+        nullable=False,
+    )
+    delivery_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     audio_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     audio_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     audio_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)

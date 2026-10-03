@@ -1,10 +1,9 @@
 """Сохранение пользовательских оценок и отзывов о генерациях."""
 
 import logging
-from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.database.engine import get_session
@@ -25,9 +24,10 @@ async def save_feedback(
     """Сохраняет оценку и/или текстовый отзыв для конкретной генерации пользователя.
 
     Проверяет, что генерация с gen_id принадлежит указанному user_id и завершена успешно.
-    Использует PostgreSQL upsert (INSERT ... ON CONFLICT DO UPDATE) для безопасного
-    обновления записи при конкурентных вызовах. Если запись существует, обновляет
-    только переданные поля (is_liked и/или feedback).
+    Использует атомарный upsert через INSERT ON CONFLICT (PostgreSQL) или
+    INSERT OR REPLACE (SQLite) для защиты от race condition при параллельных callback.
+    Если запись существует, обновляет только переданные поля (is_liked и/или feedback),
+    не затирая существующие значения.
 
     Args:
         gen_id: ID генерации в БД.
@@ -63,23 +63,27 @@ async def save_feedback(
                 )
                 return
 
-            values_to_insert: dict[str, Any] = {"generation_id": generation.id}
-            values_to_update: dict[str, Any] = {}
-
-            if evalue is not None:
-                values_to_insert["is_liked"] = evalue
-                values_to_update["is_liked"] = evalue
-            if feedback is not None:
-                values_to_insert["feedback"] = feedback
-                values_to_update["feedback"] = feedback
-
-            stmt = insert(GenerationFeedback).values(**values_to_insert)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["generation_id"],
-                set_=values_to_update,
+            stmt = pg_insert(GenerationFeedback).values(
+                generation_id=generation.id,
+                is_liked=evalue,
+                feedback=feedback,
             )
+            update_dict = {}
+            if evalue is not None:
+                update_dict["is_liked"] = evalue
+            if feedback is not None:
+                update_dict["feedback"] = feedback
+
+            if update_dict:
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["generation_id"],
+                    set_=update_dict,
+                )
+            else:
+                stmt = stmt.on_conflict_do_nothing(index_elements=["generation_id"])
 
             await session.execute(stmt)
+
             await session.commit()
     except SQLAlchemyError as exc:
         log.exception("Failed to save feedback (gen_id=%s, user=%s)", gen_id, user_id)

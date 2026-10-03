@@ -4,11 +4,12 @@
 """
 
 import asyncio
-import uuid
 
 import pytest
 from taskiq import InMemoryBroker, TaskiqResult
 from taskiq_aio_pika import AioPikaBroker
+
+from core.config import settings
 
 
 @pytest.fixture
@@ -54,23 +55,30 @@ async def test_inmemory_broker_smoke(inmemory_broker: InMemoryBroker) -> None:
 async def test_rabbitmq_connection_smoke() -> None:
     """Проверяет подключение к RabbitMQ и возможность создать очередь.
 
+    Использует RABBITMQ_URL из настроек или формирует URL из credentials.
+    Пропускает тест если RabbitMQ недоступен (локальная разработка без инфраструктуры).
+
     Полноценный smoke-тест с выполнением задач требует запущенного воркера,
-    что выходит за рамки unit-теста. Этот тест проверяет только доступность брокера.
+    что выходит за рамки connection smoke-теста.
     """
-    test_queue_name = f"smoke_test_q_{uuid.uuid4().hex}"
-    broker = AioPikaBroker(url="amqp://songai:songai@localhost:5672/", queue_name=test_queue_name)
+    rabbitmq_url = settings.rabbitmq.RABBITMQ_URL
+    if not rabbitmq_url:
+        rabbitmq_url = f"amqp://{settings.rabbitmq.RABBITMQ_USER}:{settings.rabbitmq.RABBITMQ_PASSWORD}@localhost:5672/"
+
+    test_queue_name = settings.rabbitmq.queue_name(domain="smoke_test")
+    broker = AioPikaBroker(url=rabbitmq_url, queue_name=test_queue_name)
 
     last_error = None
-    for attempt in range(5):
+    for attempt in range(3):
         try:
             await asyncio.wait_for(broker.startup(), timeout=5)
             break
         except (TimeoutError, ConnectionError, OSError) as exc:
             last_error = exc
-            if attempt < 4:
-                await asyncio.sleep(2)
+            if attempt < 2:
+                await asyncio.sleep(1)
     else:
-        pytest.skip(f"RabbitMQ unavailable after 5 attempts: {last_error}")
+        pytest.skip(f"RabbitMQ unavailable: {last_error}")
 
     try:
         # Проверяем, что можем зарегистрировать задачу и опубликовать сообщение

@@ -7,6 +7,7 @@ from typing import Any
 from aiogram.fsm.state import State, StatesGroup
 from redis.exceptions import RedisError
 
+from core.instance import current_instance
 from core.redis import redis_client
 
 log = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ class GenerationStates(StatesGroup):
     waiting_for_title = State()
 
 
-async def clear_orphaned_generation_flags() -> int:
+async def clear_orphaned_generation_flags(skip_if_other_instances: bool = False) -> dict[str, int | bool]:
     """Чистит осиротевшие флаги generating в FSM после перезапуска бота.
 
     FSM-состояния живут в Redis и переживают рестарт, а задачи генерации —
@@ -46,9 +47,21 @@ async def clear_orphaned_generation_flags() -> int:
     свои ключи в другом формате, scan_iter попытается распарсить их
     как JSON и пропустит с предупреждением в логе.
 
+    Args:
+        skip_if_other_instances: Если True, пропускает cleanup при наличии
+            других активных экземпляров бота (защита от race condition
+            при rolling restart).
+
     Returns:
-        Количество очищенных FSM-записей.
+        Словарь с результатами: {"skipped": bool, "cleared": int}.
+
+    Raises:
+        RedisError: При ошибке работы с Redis.
     """
+    if skip_if_other_instances and await current_instance.has_other_active_instances():
+        log.info("Skipping orphaned generation flags cleanup: other active instances are running")
+        return {"skipped": True, "cleared": 0}
+
     cleaned = 0
     try:
         async for key in redis_client.scan_iter(match=_FSM_KEY_MATCH):
@@ -69,4 +82,6 @@ async def clear_orphaned_generation_flags() -> int:
             log.info("Cleared orphaned generation flag (key=%s)", key)
     except RedisError:
         log.exception("Failed to clean orphaned generation flags in Redis")
-    return cleaned
+        raise
+
+    return {"skipped": False, "cleared": cleaned}

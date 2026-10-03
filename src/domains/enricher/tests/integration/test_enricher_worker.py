@@ -107,6 +107,7 @@ async def test_enrich_prompt_task_failure(monkeypatch):
     from domains.enricher.worker import enrich_prompt_task
 
     monkeypatch.setattr(domains.enricher.worker, "broker", FakeBroker())
+    monkeypatch.setattr(domains.enricher.worker, "generation_broker", FakeBroker())
 
     # Создаём команду
     command = StartEnrichment(
@@ -136,7 +137,7 @@ async def test_enrich_prompt_task_failure(monkeypatch):
     assert event.user_id == 123
     assert event.chat_id == 456
     assert event.stage == "enrichment"
-    assert task_name == "handle_generation_failed"
+    assert task_name == "handle_enrichment_failed"
 
 
 @pytest.mark.asyncio
@@ -183,6 +184,7 @@ async def test_enrich_prompt_task_invalid_response(monkeypatch):
     from domains.enricher.worker import enrich_prompt_task
 
     monkeypatch.setattr(domains.enricher.worker, "broker", FakeBroker())
+    monkeypatch.setattr(domains.enricher.worker, "generation_broker", FakeBroker())
 
     # Создаём команду
     command = StartEnrichment(
@@ -207,3 +209,4 @@ async def test_enrich_prompt_task_invalid_response(monkeypatch):
     event, task_name = published_events[0]
     assert isinstance(event, GenerationFailed)
     assert event.stage == "enrichment"
+    assert task_name == "handle_enrichment_failed"

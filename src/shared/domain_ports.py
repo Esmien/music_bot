@@ -1,4 +1,10 @@
-"""Конкретные реализации междоменных портов."""
+"""Конкретные реализации Telegram flow contracts для междоменного взаимодействия.
+
+Этот модуль содержит реализации Protocol из shared/domain_contracts.py
+и экспортирует готовые синглтоны для использования в handlers.
+
+Эти реализации являются частью application layer и работают с aiogram-типами.
+"""
 
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
@@ -11,8 +17,12 @@ from domains.generation.fsm import GenerationStates
 from domains.generation.generation_messages import TITLE_PROMPT_TEXT
 
 
-class EnrichmentFlowStarterImpl:
-    """Конкретная реализация для запуска сценария обогащения."""
+class TelegramEnrichmentFlowStarterImpl:
+    """Конкретная реализация TelegramEnrichmentFlowStarter для запуска сценария обогащения.
+
+    Реализует Protocol из shared/domain_contracts.py для interdomain flow.
+    Работает с aiogram-типами (Message, FSMContext) как часть application layer.
+    """
 
     async def start_enrichment(self, message: Message, state: FSMContext) -> None:
         """Запускает сценарий обогащения промпта.
@@ -26,8 +36,12 @@ class EnrichmentFlowStarterImpl:
         await state.set_state(PromptEnricherStates.waiting_for_idea)
 
 
-class GenerationFlowStarterImpl:
-    """Конкретная реализация для запуска сценария генерации."""
+class TelegramGenerationFlowStarterImpl:
+    """Конкретная реализация TelegramGenerationFlowStarter для запуска сценария генерации.
+
+    Реализует Protocol из shared/domain_contracts.py для interdomain flow.
+    Работает с aiogram-типами (Message, FSMContext) как часть application layer.
+    """
 
     async def start_title_input(
         self,
@@ -51,5 +65,5 @@ class GenerationFlowStarterImpl:
 
 
 # Экземпляры-синглтоны для использования в хендлерах
-enrichment_flow_starter = EnrichmentFlowStarterImpl()
-generation_flow_starter = GenerationFlowStarterImpl()
+enrichment_flow_starter = TelegramEnrichmentFlowStarterImpl()
+generation_flow_starter = TelegramGenerationFlowStarterImpl()

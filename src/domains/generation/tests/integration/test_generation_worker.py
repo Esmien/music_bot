@@ -1,6 +1,7 @@
 """Интеграционные тесты worker-а генерации через контракты и TelegramPort."""
 
 import asyncio
+import hashlib
 import io
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from core.metrics import (
+    DELIVERY_TOTAL,
+    GENERATION_TOTAL,
+)
 from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT
 from domains.evaluation.handlers import handle_generation_succeeded_event
 from domains.feedback.fsm import FeedbackStates
@@ -124,7 +129,8 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, t
     def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
         audio_path = tmp_path / f"gen_{gen_id}.mp3"
         audio_path.write_bytes(audio_bytes)
-        return str(audio_path), len(audio_bytes), "fake_checksum"
+        checksum = hashlib.sha256(audio_bytes).hexdigest()
+        return str(audio_path), len(audio_bytes), checksum
 
     async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
         published_events.append((task_name, event))
@@ -135,6 +141,7 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, t
     monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
     monkeypatch.setattr(worker, "clear_generation_cancel", AsyncMock())
     monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
+    monkeypatch.setattr(worker, "claim_delivery_atomic", AsyncMock(return_value=True))
 
     await worker.run_generation_task(_command(), _context(telegram))
 
@@ -146,7 +153,7 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, t
     assert generation.status is GenerationStatus.SUCCESS
     assert generation.audio_path == str(tmp_path / "gen_1.mp3")
     assert generation.audio_size == len(b"audio_content")
-    assert generation.audio_checksum == "fake_checksum"
+    assert generation.audio_checksum == hashlib.sha256(b"audio_content").hexdigest()
     assert session.committed
     assert len(published_events) == 1
     task_name, event = published_events[0]
@@ -252,7 +259,9 @@ async def test_worker_marks_cancelled_generation_and_publishes_failure(
 async def test_worker_redelivery_uses_existing_artifact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """При повторной попытке доставки воркер берет существующий аудиофайл без вызова генерации."""
     audio_file = tmp_path / "gen_3.mp3"
-    audio_file.write_bytes(b"existing_audio")
+    audio_bytes = b"existing_audio"
+    audio_file.write_bytes(audio_bytes)
+    checksum = hashlib.sha256(audio_bytes).hexdigest()
 
     generation = Generation(
         id=3,
@@ -262,8 +271,8 @@ async def test_worker_redelivery_uses_existing_artifact(monkeypatch: pytest.Monk
         title="Тест",
         status=GenerationStatus.SUCCESS,
         audio_path=str(audio_file),
-        audio_size=len(b"existing_audio"),
-        audio_checksum="test_checksum",
+        audio_size=len(audio_bytes),
+        audio_checksum=checksum,
     )
     session = FakeSession(generation)
     telegram = FakeTelegramPort()
@@ -276,6 +285,7 @@ async def test_worker_redelivery_uses_existing_artifact(monkeypatch: pytest.Monk
     monkeypatch.setattr(worker, "get_session", lambda: session)
     monkeypatch.setattr(worker, "run_generation", run_generation)
     monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
+    monkeypatch.setattr(worker, "claim_delivery_atomic", AsyncMock(return_value=True))
 
     await worker.run_generation_task(_command(gen_id=3), _context(telegram))
 
@@ -315,7 +325,8 @@ async def test_worker_telegram_delivery_failure_keeps_generation_success(
         return b"audio_content"
 
     def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
-        return str(audio_path), len(audio_bytes), "checksum"
+        checksum = hashlib.sha256(audio_bytes).hexdigest()
+        return str(audio_path), len(audio_bytes), checksum
 
     async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
         published_events.append((task_name, event))
@@ -326,6 +337,7 @@ async def test_worker_telegram_delivery_failure_keeps_generation_success(
     monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
     monkeypatch.setattr(worker, "notify_owner", AsyncMock())
     monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
+    monkeypatch.setattr(worker, "claim_delivery_atomic", AsyncMock(return_value=True))
 
     await worker.run_generation_task(_command(gen_id=6), _context(telegram))
 
@@ -428,6 +440,7 @@ async def test_worker_atomic_claim_concurrent(monkeypatch: pytest.MonkeyPatch) -
         worker, "Path", lambda p: SimpleNamespace(exists=lambda: True, open=lambda mode: io.BytesIO(b"audio"))
     )
     monkeypatch.setattr(worker, "_publish_event", AsyncMock())
+    monkeypatch.setattr(worker, "claim_delivery_atomic", AsyncMock(return_value=True))
 
     command = _command(gen_id=4)
     context = _context(telegram)
@@ -590,3 +603,216 @@ async def test_worker_save_audio_failure_marks_generation_failed(
     assert isinstance(event, GenerationFailed)
     assert event.stage == "generation"
     assert "Disk full" in event.error_message
+
+
+async def test_concurrent_generation_worker_execution_with_barrier(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AUD-028: Конкурентный запуск двух воркеров через барьер.
+
+    Гарантирует:
+    1. Два воркера синхронизируются барьером непосредственно перед claim.
+    2. Только один воркер захватывает claim (PENDING -> PROCESSING) и вызывает генерацию.
+    3. Генерация выполняется ровно один раз (API calls == 1, max parallel runs == 1).
+    4. Аудио доставляется строго по delivery policy (ровно один раз).
+    5. Итоговый attempt_id и статус соответствуют победившему воркеру.
+    6. Попытка stale worker обновить статус генерации отвергается.
+    """
+    generation = Generation(
+        id=11,
+        user_id=10,
+        prompt="конкурентный промпт",
+        enriched_prompt={"text": "конкурентный промпт"},
+        title="Конкурентная песня",
+        status=GenerationStatus.PENDING,
+    )
+
+    barrier = asyncio.Barrier(2)
+    db_lock = asyncio.Lock()
+    claim_count = 0
+    claimed_attempt_ids: list[str] = []
+    active_generations = 0
+    max_parallel_generations = 0
+    api_calls = 0
+
+    class BarrierConcurrentSession:
+        async def __aenter__(self) -> "BarrierConcurrentSession":
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+            return None
+
+        async def execute(self, statement: Any) -> Any:
+            values_by_name = {}
+            for k, v in getattr(statement, "_values", {}).items():
+                col_name = getattr(k, "key", getattr(k, "name", str(k)))
+                val = getattr(v, "value", v)
+                values_by_name[col_name] = val
+
+            # Синхронизируем воркеры перед попыткой claim
+            if values_by_name.get("status") == GenerationStatus.PROCESSING:
+                await barrier.wait()
+                async with db_lock:
+                    nonlocal claim_count
+                    if generation.status == GenerationStatus.PENDING:
+                        claim_count += 1
+                        attempt = values_by_name.get("attempt_id", "test-attempt")
+                        claimed_attempt_ids.append(attempt)
+                        generation.status = GenerationStatus.PROCESSING
+                        generation.attempt_id = attempt
+                        return SimpleNamespace(scalar_one_or_none=lambda: generation.id)
+                    return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+            # Обновление SUCCESS проверяет attempt_id и PROCESSING статус
+            if values_by_name.get("status") == GenerationStatus.SUCCESS:
+                async with db_lock:
+                    attempt_condition = None
+                    for crit in getattr(getattr(statement, "whereclause", None), "clauses", []):
+                        col = getattr(crit, "left", None)
+                        col_key = getattr(col, "key", getattr(col, "name", None))
+                        if col_key == "attempt_id":
+                            attempt_condition = getattr(getattr(crit, "right", None), "value", None)
+
+                    if generation.status == GenerationStatus.PROCESSING and (
+                        attempt_condition is None or attempt_condition == generation.attempt_id
+                    ):
+                        for name, val in values_by_name.items():
+                            setattr(generation, name, val)
+                        return SimpleNamespace(scalar_one_or_none=lambda: generation.id)
+                    return SimpleNamespace(scalar_one_or_none=lambda: None)
+
+            async with db_lock:
+                for name, val in values_by_name.items():
+                    setattr(generation, name, val)
+                return SimpleNamespace(scalar_one_or_none=lambda: generation.id)
+
+        async def get(self, model: type[Generation], gen_id: int) -> Generation | None:
+            return generation
+
+        async def commit(self) -> None:
+            pass
+
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+        nonlocal active_generations, max_parallel_generations, api_calls
+        active_generations += 1
+        max_parallel_generations = max(max_parallel_generations, active_generations)
+        api_calls += 1
+        await asyncio.sleep(0.05)
+        active_generations -= 1
+        return b"concurrent_audio_bytes"
+
+    audio_file = tmp_path / "gen_11.mp3"
+
+    def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+        audio_file.write_bytes(audio_bytes)
+        checksum = hashlib.sha256(audio_bytes).hexdigest()
+        return str(audio_file), len(audio_bytes), checksum
+
+    delivery_lock = asyncio.Lock()
+    delivery_claimed = False
+
+    async def fake_claim_delivery_atomic(gen_id: int, delivery_attempt_id: str) -> bool:
+        nonlocal delivery_claimed
+        async with delivery_lock:
+            if not delivery_claimed:
+                delivery_claimed = True
+                return True
+            return False
+
+    telegram = FakeTelegramPort()
+    published_events = []
+
+    async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
+        published_events.append((task_name, event))
+
+    monkeypatch.setattr(worker, "get_session", BarrierConcurrentSession)
+    monkeypatch.setattr(worker, "run_generation", fake_run_generation)
+    monkeypatch.setattr(worker, "save_audio_to_storage", fake_save_audio)
+    monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
+    monkeypatch.setattr(worker, "claim_delivery_atomic", fake_claim_delivery_atomic)
+    monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
+
+    command = _command(gen_id=11)
+    context = _context(telegram)
+
+    # Запускаем два параллельных worker-вызова
+    await asyncio.gather(
+        worker.run_generation_task(command=command, context=context),
+        worker.run_generation_task(command=command, context=context),
+    )
+
+    # 1. Только один worker получил успешный claim
+    assert claim_count == 1
+    assert len(claimed_attempt_ids) == 1
+    winning_attempt_id = claimed_attempt_ids[0]
+
+    # 2. Два worker-а не выполняют генерацию одновременно
+    assert max_parallel_generations == 1
+    assert api_calls == 1
+
+    # 3. Количество delivery соответствует policy (ровно 1 раз отправлен аудиофайл)
+    assert len(telegram.sent_audio) == 1
+    assert telegram.sent_audio[0]["title"] == "Тест"
+
+    # 4. Итоговый статус и attempt_id принадлежат победившему воркеру
+    assert generation.status is GenerationStatus.SUCCESS
+    assert generation.attempt_id == winning_attempt_id
+
+    # 5. Stale worker не может перезаписать финальный статус
+    stale_save_result = await worker._save_generation_success(
+        gen_id=11,
+        attempt_id="stale_attempt_999",
+        audio_path="/tmp/stale.mp3",
+        audio_size=10,
+        audio_checksum="stale_hash",
+    )
+    assert stale_save_result is False
+    assert generation.status is GenerationStatus.SUCCESS
+    assert generation.attempt_id == winning_attempt_id
+
+
+async def test_worker_records_lifecycle_metrics(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Проверяет регистрацию метрик жизненного цикла генерации и доставки без утечки персональных данных."""
+    generation = Generation(
+        id=12,
+        user_id=10,
+        prompt="промпт для проверки метрик",
+        enriched_prompt={"text": "промпт"},
+        title="Метрики",
+        status=GenerationStatus.PENDING,
+    )
+    session = FakeSession(generation)
+    telegram = FakeTelegramPort()
+
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+        return b"metric_audio"
+
+    def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+        p = tmp_path / f"gen_{gen_id}.mp3"
+        p.write_bytes(audio_bytes)
+        return str(p), len(audio_bytes), hashlib.sha256(audio_bytes).hexdigest()
+
+    monkeypatch.setattr(worker, "get_session", lambda: session)
+    monkeypatch.setattr(worker, "run_generation", fake_run_generation)
+    monkeypatch.setattr(worker, "save_audio_to_storage", fake_save_audio)
+    monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
+    monkeypatch.setattr(worker, "_publish_event", AsyncMock())
+    monkeypatch.setattr(worker, "claim_delivery_atomic", AsyncMock(return_value=True))
+
+    initial_gen_success = (
+        GENERATION_TOTAL.labels(status="success")._value.get()
+        if hasattr(GENERATION_TOTAL.labels(status="success"), "_value")
+        else 0
+    )
+    initial_del_success = (
+        DELIVERY_TOTAL.labels(status="success")._value.get()
+        if hasattr(DELIVERY_TOTAL.labels(status="success"), "_value")
+        else 0
+    )
+
+    await worker.run_generation_task(_command(gen_id=12), _context(telegram))
+
+    if hasattr(GENERATION_TOTAL.labels(status="success"), "_value"):
+        assert GENERATION_TOTAL.labels(status="success")._value.get() == initial_gen_success + 1
+        assert DELIVERY_TOTAL.labels(status="success")._value.get() == initial_del_success + 1

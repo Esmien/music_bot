@@ -1,8 +1,10 @@
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-CB_FEEDBACK_LIKE = "fb:like"
-CB_FEEDBACK_DISLIKE = "fb:dislike"
+from shared.callback_parser import FeedbackAction
+
+CB_FEEDBACK_LIKE = f"fb:{FeedbackAction.LIKE}"
+CB_FEEDBACK_DISLIKE = f"fb:{FeedbackAction.DISLIKE}"
 
 EVALUATION_LIKE_BUTTON = "👍"
 EVALUATION_DISLIKE_BUTTON = "👎"
