@@ -272,3 +272,33 @@ async def test_save_feedback_logs_and_raises_domain_error_on_sqlalchemy_error(
     assert "Failed to save feedback" in caplog.text
     assert "user=1" in caplog.text
     assert any(record.exc_info is not None for record in caplog.records)
+
+
+async def test_save_feedback_handles_concurrent_upsert(
+    patched_feedback_db: async_sessionmaker[AsyncSession],
+) -> None:
+    """Параллельные вызовы save_feedback для одной генерации не приводят к дублированию записей."""
+    import asyncio
+
+    generation, _ = await _create_generation(sessionmaker=patched_feedback_db, user_id=1)
+
+    async def concurrent_save(evalue: bool, feedback_text: str) -> None:
+        await feedback_service.save_feedback(
+            gen_id=generation.id,
+            user_id=1,
+            feedback=feedback_text,
+            evalue=evalue,
+        )
+
+    await asyncio.gather(
+        concurrent_save(evalue=True, feedback_text="first"),
+        concurrent_save(evalue=False, feedback_text="second"),
+        return_exceptions=False,
+    )
+
+    records = await _get_feedback_records(sessionmaker=patched_feedback_db, user_id=1)
+
+    assert len(records) == 1
+    assert records[0].generation_id == generation.id
+    assert records[0].is_liked in (True, False)
+    assert records[0].feedback in ("first", "second")

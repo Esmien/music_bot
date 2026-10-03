@@ -10,23 +10,6 @@ kanban-plugin: board
 
 ## 🔴 P0 — BLOCKER
 
-- [ ] AUD-019 — Сделать feedback upsert безопасным при гонке
-	  - Описание: текущая схема `SELECT → INSERT/UPDATE` может завершиться `IntegrityError` при двух одновременных callback-запросах.
-	  - ТЗ:
-	- Сохранить ownership-проверку `gen_id/user_id`.
-	- Выбрать стратегию для PostgreSQL и SQLite.
-	- Для PostgreSQL использовать `ON CONFLICT` либо эквивалентный атомарный upsert.
-	- Для SQLite использовать совместимую реализацию.
-	- Обработать конкурентный `IntegrityError`, если он возможен в выбранной стратегии.
-	- Добавить тест двух параллельных вызовов `save_feedback`.
-	  - DoD:
-	- [ ] Параллельные оценки не приводят к `FeedbackSaveError`.
-	- [ ] Для одной генерации существует не более одной feedback-записи.
-	- [ ] Последнее значение оценки соответствует документированной политике.
-	- [ ] `None` не затирает существующий `feedback`.
-	- [ ] Тесты проходят на SQLite.
-	- [ ] PostgreSQL integration-тест подтверждает concurrency behavior.
-	- [ ] Ошибки БД логируются с `gen_id` и `user_id`.
 
 
 ## 🟠 P1 — HIGH
@@ -207,8 +190,26 @@ kanban-plugin: board
 ## In Progress
 
 
+
 ## Done
 
+- [ ] AUD-019 — Сделать feedback upsert безопасным при гонке
+	  - Описание: текущая схема `SELECT → INSERT/UPDATE` может завершиться `IntegrityError` при двух одновременных callback-запросах.
+	  - ТЗ:
+	- Сохранить ownership-проверку `gen_id/user_id`.
+	- Выбрать стратегию для PostgreSQL и SQLite.
+	- Для PostgreSQL использовать `ON CONFLICT` либо эквивалентный атомарный upsert.
+	- Для SQLite использовать совместимую реализацию.
+	- Обработать конкурентный `IntegrityError`, если он возможен в выбранной стратегии.
+	- Добавить тест двух параллельных вызовов `save_feedback`.
+	  - DoD:
+	- [x] Параллельные оценки не приводят к `FeedbackSaveError`.
+	- [x] Для одной генерации существует не более одной feedback-записи.
+	- [x] Последнее значение оценки соответствует документированной политике.
+	- [x] `None` не затирает существующий `feedback`.
+	- [x] Тесты проходят на SQLite.
+	- [x] PostgreSQL integration-тест подтверждает concurrency behavior.
+	- [x] Ошибки БД логируются с `gen_id` и `user_id`.
 - [x] AUD-018 — Сделать callback parser строгим
 	  - Описание: parser принимает malformed callback-data, например `fb:like:abc`, и возвращает callback с `gen_id=None`.
 	  - ТЗ:
@@ -279,6 +280,6 @@ kanban-plugin: board
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[true,false,true,true,false,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[true,true,false,true,true,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%

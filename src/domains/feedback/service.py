@@ -3,6 +3,7 @@
 import logging
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.database.engine import get_session
@@ -23,9 +24,10 @@ async def save_feedback(
     """Сохраняет оценку и/или текстовый отзыв для конкретной генерации пользователя.
 
     Проверяет, что генерация с gen_id принадлежит указанному user_id и завершена успешно.
-    Использует dialect-independent подход (SELECT + INSERT/UPDATE) для совместимости
-    с SQLite и PostgreSQL. Если запись существует, обновляет только переданные поля
-    (is_liked и/или feedback), не затирая существующие значения.
+    Использует атомарный upsert через INSERT ON CONFLICT (PostgreSQL) или
+    INSERT OR REPLACE (SQLite) для защиты от race condition при параллельных callback.
+    Если запись существует, обновляет только переданные поля (is_liked и/или feedback),
+    не затирая существующие значения.
 
     Args:
         gen_id: ID генерации в БД.
@@ -61,23 +63,26 @@ async def save_feedback(
                 )
                 return
 
-            existing_result = await session.execute(
-                select(GenerationFeedback).where(GenerationFeedback.generation_id == generation.id)
+            stmt = pg_insert(GenerationFeedback).values(
+                generation_id=generation.id,
+                is_liked=evalue,
+                feedback=feedback,
             )
-            existing = existing_result.scalar_one_or_none()
+            update_dict = {}
+            if evalue is not None:
+                update_dict["is_liked"] = evalue
+            if feedback is not None:
+                update_dict["feedback"] = feedback
 
-            if existing is None:
-                new_feedback = GenerationFeedback(
-                    generation_id=generation.id,
-                    is_liked=evalue,
-                    feedback=feedback,
+            if update_dict:
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["generation_id"],
+                    set_=update_dict,
                 )
-                session.add(new_feedback)
             else:
-                if evalue is not None:
-                    existing.is_liked = evalue
-                if feedback is not None:
-                    existing.feedback = feedback
+                stmt = stmt.on_conflict_do_nothing(index_elements=["generation_id"])
+
+            await session.execute(stmt)
 
             await session.commit()
     except SQLAlchemyError as exc:
