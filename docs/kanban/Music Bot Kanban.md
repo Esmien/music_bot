@@ -22,20 +22,6 @@ kanban-plugin: board
 
 ## 🟢 P3 — LOW
 
-- [ ] AUD-031 — Добавить метрики generation и delivery lifecycle
-	  - Описание: текущие логи содержат контекст, но нет агрегируемых метрик для дорогих и долгих операций.
-	  - ТЗ:
-	- Определить counters для generation success/failed/cancelled.
-	- Добавить counters для delivery success/failed/skipped.
-	- Добавить latency для OpenRouter, storage и Telegram delivery.
-	- Добавить счётчик stale attempt и Redis errors.
-	- Документировать минимальный production dashboard.
-	  - DoD:
-	- [ ] Есть метрика количества генераций по финальному статусу.
-	- [ ] Есть метрика delivery failures.
-	- [ ] Есть latency generation и delivery.
-	- [ ] В метриках отсутствуют токены, пользовательские тексты и секреты.
-	- [ ] Доступен alert на рост generation/delivery failures.
 - [ ] AUD-032 — Удалить устаревшие architectural claims
 	  - Описание: часть документации описывает более строгую изоляцию и более сильную идемпотентность, чем реально реализовано.
 	  - ТЗ:
@@ -57,6 +43,21 @@ kanban-plugin: board
 
 ## Done
 
+- [x] AUD-031 — Добавить метрики generation и delivery lifecycle
+	  - Описание: текущие логи содержат контекст, но нет агрегируемых метрик для дорогих и долгих операций.
+	  - ТЗ:
+	- Определить counters для generation success/failed/cancelled.
+	- Добавить counters для delivery success/failed/skipped.
+	- Добавить latency для OpenRouter, storage и Telegram delivery.
+	- Добавить счётчик stale attempt и Redis errors.
+	- Документировать минимальный production dashboard.
+	  - DoD:
+	- [x] Есть метрика количества генераций по финальному статусу.
+	- [x] Есть метрика delivery failures.
+	- [x] Есть latency generation и delivery.
+	- [x] В метриках отсутствуют токены, пользовательские тексты и секреты.
+	- [x] Доступен alert на рост generation/delivery failures.
+
 - [x] AUD-029 — Вынести миграции из startup bot-контейнера
 	  - Описание: Alembic запускается только при default startup bot-контейнера, а масштабирование bot replicas может привести к конкурирующим миграциям.
 	  - ТЗ:
@@ -71,7 +72,6 @@ kanban-plugin: board
 	- [x] При ошибке миграции deployment не считается успешным.
 	- [x] Worker не выполняет Alembic при старте.
 	- [x] Deployment runbook содержит команду миграции.
-
 - [x] AUD-028 — Добавить конкурентный тест повторной обработки generation
 	  - Описание: текущие тесты проверяют redelivery последовательно, но не доказывают безопасность двух параллельных worker-вызовов.
 	  - ТЗ:

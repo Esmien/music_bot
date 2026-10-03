@@ -26,6 +26,7 @@ from tenacity import retry
 
 from core.config import settings
 from core.database.engine import get_session
+from core.metrics import REDIS_ERRORS_TOTAL
 from core.redis import RELEASE_LOCK_SCRIPT, is_generation_cancelled, redis_client
 from core.types import JSONValue, ProgressCallback, ProgressReporter
 from core.utils.exceptions import (
@@ -118,6 +119,7 @@ async def user_generation_lock(
             while not await redis_client.set(name=lock_key, value=owner_token, nx=True, px=LOCK_TTL_MS):
                 await asyncio.sleep(retry_interval)
     except TimeoutError as err:
+        REDIS_ERRORS_TOTAL.labels(operation="acquire_lock_timeout").inc()
         raise GenerationLockTimeoutError(
             f"Failed to acquire generation lock for user {user_id} within {DEFAULT_LOCK_TIMEOUT}s"
         ) from err
@@ -137,6 +139,7 @@ async def user_generation_lock(
                 if current_val == owner_token:
                     await redis_client.delete(lock_key)
             else:
+                REDIS_ERRORS_TOTAL.labels(operation="release_lock").inc()
                 log.exception("Failed to release Redis lock for user %s: %s", user_id, e)
                 raise
 

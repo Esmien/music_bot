@@ -13,6 +13,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from core.metrics import (
+    DELIVERY_TOTAL,
+    GENERATION_TOTAL,
+)
 from domains.evaluation.evaluation_messages import EVALUATION_PROMPT_TEXT
 from domains.evaluation.handlers import handle_generation_succeeded_event
 from domains.feedback.fsm import FeedbackStates
@@ -766,3 +770,49 @@ async def test_concurrent_generation_worker_execution_with_barrier(
     assert stale_save_result is False
     assert generation.status is GenerationStatus.SUCCESS
     assert generation.attempt_id == winning_attempt_id
+
+
+async def test_worker_records_lifecycle_metrics(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Проверяет регистрацию метрик жизненного цикла генерации и доставки без утечки персональных данных."""
+    generation = Generation(
+        id=12,
+        user_id=10,
+        prompt="промпт для проверки метрик",
+        enriched_prompt={"text": "промпт"},
+        title="Метрики",
+        status=GenerationStatus.PENDING,
+    )
+    session = FakeSession(generation)
+    telegram = FakeTelegramPort()
+
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+        return b"metric_audio"
+
+    def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+        p = tmp_path / f"gen_{gen_id}.mp3"
+        p.write_bytes(audio_bytes)
+        return str(p), len(audio_bytes), hashlib.sha256(audio_bytes).hexdigest()
+
+    monkeypatch.setattr(worker, "get_session", lambda: session)
+    monkeypatch.setattr(worker, "run_generation", fake_run_generation)
+    monkeypatch.setattr(worker, "save_audio_to_storage", fake_save_audio)
+    monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
+    monkeypatch.setattr(worker, "_publish_event", AsyncMock())
+    monkeypatch.setattr(worker, "claim_delivery_atomic", AsyncMock(return_value=True))
+
+    initial_gen_success = (
+        GENERATION_TOTAL.labels(status="success")._value.get()
+        if hasattr(GENERATION_TOTAL.labels(status="success"), "_value")
+        else 0
+    )
+    initial_del_success = (
+        DELIVERY_TOTAL.labels(status="success")._value.get()
+        if hasattr(DELIVERY_TOTAL.labels(status="success"), "_value")
+        else 0
+    )
+
+    await worker.run_generation_task(_command(gen_id=12), _context(telegram))
+
+    if hasattr(GENERATION_TOTAL.labels(status="success"), "_value"):
+        assert GENERATION_TOTAL.labels(status="success")._value.get() == initial_gen_success + 1
+        assert DELIVERY_TOTAL.labels(status="success")._value.get() == initial_del_success + 1

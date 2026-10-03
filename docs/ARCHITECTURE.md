@@ -319,7 +319,43 @@
 
 Все воркеры и event listeners регистрируются в главном процессе воркера: `src/workers/taskiq_worker.py`
 
-### 5. Обработка ошибок
+### 5. Метрики и мониторинг
+
+Для мониторинга длительных и критических операций используется Prometheus-инструментация (`core.metrics`).
+
+**Счётчики жизненного цикла (Counters):**
+- `lyria_generation_total{status="success|failed|cancelled"}` — количество генераций по финальному статусу.
+- `lyria_delivery_total{status="success|failed|skipped"}` — результаты доставки аудио пользователю в Telegram.
+- `lyria_stale_attempts_total` — число отклонённых конкурирующих/устаревших попыток обработки генерации.
+- `lyria_redis_errors_total{operation="..."}` — сбои взаимодействия с Redis (таймауты захвата блокировок, ошибки Lua).
+
+**Гистограммы задержек (Latency Histograms):**
+- `lyria_generation_latency_seconds` — время стриминга и генерации OpenRouter API.
+- `lyria_storage_save_latency_seconds` — время сохранения аудио-артефакта на диск.
+- `lyria_delivery_latency_seconds` — задержка отправки аудиофайла пользователю через Telegram API.
+
+**Privacy & Security:**
+Все метрики строго обезличены: лейблы содержат только технические статусы и операции. Промпты пользователей, токены, user_id и секреты в метриках отсутствуют.
+
+**Минимальный Production Dashboard (Grafana):**
+1. **Generation Success Rate (%):**
+   `sum(rate(lyria_generation_total{status="success"}[5m])) / sum(rate(lyria_generation_total[5m])) * 100`
+2. **Delivery Failures (ops/s):**
+   `sum(rate(lyria_delivery_total{status="failed"}[5m]))`
+3. **OpenRouter p95 Latency:**
+   `histogram_quantile(0.95, sum(rate(lyria_generation_latency_seconds_bucket[5m])) by (le))`
+4. **Telegram Delivery p95 Latency:**
+   `histogram_quantile(0.95, sum(rate(lyria_delivery_latency_seconds_bucket[5m])) by (le))`
+5. **Stale Attempts / Race Conditions:**
+   `rate(lyria_stale_attempts_total[5m])`
+
+**Prometheus Alerts:**
+- **HighGenerationFailureRate:**
+  `sum(rate(lyria_generation_total{status="failed"}[5m])) / sum(rate(lyria_generation_total[5m])) > 0.1` (Warning при >10% сбоев генерации за 5 минут).
+- **TelegramDeliveryFailuresDetected:**
+  `increase(lyria_delivery_total{status="failed"}[5m]) > 3` (Critical при сбоях доставки пользователям).
+
+### 6. Обработка ошибок
 
 ```text
 Ошибка в Telegram-хендлере
