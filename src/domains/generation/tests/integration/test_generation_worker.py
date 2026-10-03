@@ -135,6 +135,7 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, t
     monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
     monkeypatch.setattr(worker, "clear_generation_cancel", AsyncMock())
     monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
+    monkeypatch.setattr(worker, "claim_delivery_atomic", AsyncMock(return_value=True))
 
     await worker.run_generation_task(_command(), _context(telegram))
 
@@ -276,6 +277,7 @@ async def test_worker_redelivery_uses_existing_artifact(monkeypatch: pytest.Monk
     monkeypatch.setattr(worker, "get_session", lambda: session)
     monkeypatch.setattr(worker, "run_generation", run_generation)
     monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
+    monkeypatch.setattr(worker, "claim_delivery_atomic", AsyncMock(return_value=True))
 
     await worker.run_generation_task(_command(gen_id=3), _context(telegram))
 
@@ -326,6 +328,7 @@ async def test_worker_telegram_delivery_failure_keeps_generation_success(
     monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
     monkeypatch.setattr(worker, "notify_owner", AsyncMock())
     monkeypatch.setattr(worker, "_publish_event", fake_publish_event)
+    monkeypatch.setattr(worker, "claim_delivery_atomic", AsyncMock(return_value=True))
 
     await worker.run_generation_task(_command(gen_id=6), _context(telegram))
 
@@ -428,6 +431,7 @@ async def test_worker_atomic_claim_concurrent(monkeypatch: pytest.MonkeyPatch) -
         worker, "Path", lambda p: SimpleNamespace(exists=lambda: True, open=lambda mode: io.BytesIO(b"audio"))
     )
     monkeypatch.setattr(worker, "_publish_event", AsyncMock())
+    monkeypatch.setattr(worker, "claim_delivery_atomic", AsyncMock(return_value=True))
 
     command = _command(gen_id=4)
     context = _context(telegram)

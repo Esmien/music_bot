@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
 from tenacity import retry
 
 from core.config import settings
@@ -580,6 +580,43 @@ async def run_generation(prompt: str, gen_id: int, on_progress: ProgressCallback
 
     # Отдаем реально сгенерированный файл, если генерация шла через API
     return await generate_song_real(prompt=prompt, gen_id=gen_id, on_progress=on_progress)
+
+
+async def claim_delivery_atomic(gen_id: int, delivery_attempt_id: str) -> bool:
+    """Атомарно резервирует доставку генерации для текущего воркера.
+
+    Переводит delivery_status из NOT_DELIVERED в IN_PROGRESS с записью lease.
+    Если delivery уже IN_PROGRESS, DELIVERED или FAILED, возвращает False.
+
+    Args:
+        gen_id: ID генерации для резервирования.
+        delivery_attempt_id: Уникальный идентификатор попытки доставки (lease).
+
+    Returns:
+        True, если доставка успешно зарезервирована, иначе False.
+
+    Raises:
+        SQLAlchemyError: При ошибке записи в БД.
+    """
+    from domains.generation.models import DeliveryStatus, Generation
+
+    async with get_session() as session:
+        claim_stmt = (
+            update(Generation)
+            .where(
+                Generation.id == gen_id,
+                Generation.delivery_status == DeliveryStatus.NOT_DELIVERED,
+            )
+            .values(
+                delivery_status=DeliveryStatus.IN_PROGRESS,
+                delivery_attempt_id=delivery_attempt_id,
+            )
+            .returning(Generation.id)
+        )
+        result = await session.execute(claim_stmt)
+        claimed_id = result.scalar_one_or_none()
+        await session.commit()
+        return claimed_id is not None
 
 
 async def persist_generated_title(user_id: int, title: str) -> None:

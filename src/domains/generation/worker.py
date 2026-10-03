@@ -15,7 +15,11 @@ from core.database.engine import get_session  # type: ignore[attr-defined]
 from core.redis import clear_generation_cancel, is_generation_cancelled  # type: ignore[attr-defined]
 from core.utils.error_notify import notify_owner  # type: ignore[attr-defined]
 from domains.generation.models import Generation, GenerationStatus  # type: ignore[attr-defined]
-from domains.generation.service import run_generation, save_audio_to_storage  # type: ignore[attr-defined]
+from domains.generation.service import (  # type: ignore[attr-defined]
+    claim_delivery_atomic,
+    run_generation,
+    save_audio_to_storage,
+)
 from shared.contracts.commands import RunGeneration  # type: ignore[attr-defined]
 from shared.contracts.events import GenerationFailed, GenerationSucceeded  # type: ignore[attr-defined]
 from shared.ports.telegram import TelegramPort  # type: ignore[attr-defined]
@@ -30,6 +34,7 @@ async def deliver_generation_audio(
     telegram: TelegramPort,
     command: RunGeneration,
     audio_path: str,
+    delivery_attempt_id: str,
 ) -> None:
     """Идемпотентно доставляет сохранённый аудио-файл пользователю в Telegram.
 
@@ -72,6 +77,18 @@ async def deliver_generation_audio(
         # Проверка отмены перед доставкой (артефакт уже сохранён, но доставка может быть ненужной)
         if await is_generation_cancelled(gen_id=command.gen_id):
             log.info("Delivery cancelled by user (gen_id=%s)", command.gen_id)
+            async with get_session() as session:
+                from domains.generation.models import DeliveryStatus
+
+                await session.execute(
+                    update(Generation)
+                    .where(
+                        Generation.id == command.gen_id,
+                        Generation.delivery_attempt_id == delivery_attempt_id,
+                    )
+                    .values(delivery_status=DeliveryStatus.FAILED)
+                )
+                await session.commit()
             return
 
         audio_bytes = await asyncio.to_thread(audio_file_path.read_bytes)
@@ -89,6 +106,19 @@ async def deliver_generation_audio(
                 text="🎵 Готово!",
             )
 
+        async with get_session() as session:
+            from domains.generation.models import DeliveryStatus
+
+            await session.execute(
+                update(Generation)
+                .where(
+                    Generation.id == command.gen_id,
+                    Generation.delivery_attempt_id == delivery_attempt_id,
+                )
+                .values(delivery_status=DeliveryStatus.DELIVERED)
+            )
+            await session.commit()
+
         succeeded_event = GenerationSucceeded(
             user_id=command.user_id,
             chat_id=command.chat_id,
@@ -102,6 +132,18 @@ async def deliver_generation_audio(
         )
     except Exception as delivery_error:
         log.exception("Delivery to Telegram failed (gen_id=%s)", command.gen_id)
+        async with get_session() as session:
+            from domains.generation.models import DeliveryStatus
+
+            await session.execute(
+                update(Generation)
+                .where(
+                    Generation.id == command.gen_id,
+                    Generation.delivery_attempt_id == delivery_attempt_id,
+                )
+                .values(delivery_status=DeliveryStatus.FAILED)
+            )
+            await session.commit()
         try:
             await notify_owner(
                 telegram_port=telegram,
@@ -188,16 +230,29 @@ async def _claim_generation(
             and generation.audio_path
             and Path(generation.audio_path).exists()
         ):
-            log.info(
-                "Generation %s already has audio artifact at %s, proceeding to delivery",
-                command.gen_id,
-                generation.audio_path,
+            delivery_attempt_id = str(uuid.uuid4())
+            delivery_claimed = await claim_delivery_atomic(
+                gen_id=command.gen_id,
+                delivery_attempt_id=delivery_attempt_id,
             )
-            await deliver_generation_audio(
-                telegram=telegram,
-                command=command,
-                audio_path=generation.audio_path,
-            )
+            if delivery_claimed:
+                log.info(
+                    "Generation %s already has audio artifact at %s, proceeding to delivery (delivery_attempt=%s)",
+                    command.gen_id,
+                    generation.audio_path,
+                    delivery_attempt_id,
+                )
+                await deliver_generation_audio(
+                    telegram=telegram,
+                    command=command,
+                    audio_path=generation.audio_path,
+                    delivery_attempt_id=delivery_attempt_id,
+                )
+            else:
+                log.info(
+                    "Delivery for generation %s already claimed or completed in _claim_generation, skipping",
+                    command.gen_id,
+                )
             return False
 
         log.info("Generation %s already claimed or processed, skipping", command.gen_id)
@@ -420,11 +475,24 @@ async def run_generation_task(
         )
         return
 
-    await deliver_generation_audio(
-        telegram=telegram,
-        command=command,
-        audio_path=audio_path,
+    delivery_attempt_id = str(uuid.uuid4())
+    delivery_claimed = await claim_delivery_atomic(
+        gen_id=command.gen_id,
+        delivery_attempt_id=delivery_attempt_id,
     )
+    if delivery_claimed:
+        await deliver_generation_audio(
+            telegram=telegram,
+            command=command,
+            audio_path=audio_path,
+            delivery_attempt_id=delivery_attempt_id,
+        )
+    else:
+        log.info(
+            "Delivery for generation %s already claimed or completed, skipping (attempt=%s)",
+            command.gen_id,
+            attempt_id,
+        )
 
 
 @generation_broker.task(task_name="handle_generation_succeeded")

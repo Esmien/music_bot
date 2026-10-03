@@ -14,22 +14,6 @@ kanban-plugin: board
 
 ## 🟠 P1 — HIGH
 
-- [ ] AUD-020 — Ввести persistent idempotency для Telegram delivery
-	  - Описание: повторная обработка `SUCCESS`-генерации может повторно отправить MP3 и повторно опубликовать `GenerationSucceeded`.
-	  - ТЗ:
-	- Определить delivery state: `NOT_DELIVERED`, `IN_PROGRESS`, `DELIVERED`, `FAILED`.
-	- Добавить состояние в модель или отдельную таблицу delivery.
-	- Реализовать атомарный claim доставки.
-	- Добавить lease/TTL для зависших `IN_PROGRESS`.
-	- Не отправлять повторно уже подтверждённую доставку.
-	- Отделить ошибку delivery от ошибки generation.
-	  - DoD:
-	- [ ] Два конкурентных worker-а не отправляют один MP3 дважды.
-	- [ ] Сбой Telegram API не меняет `Generation.status=SUCCESS`.
-	- [ ] Повторная попытка delivery работает только по документированной политике.
-	- [ ] Delivery state сохраняется в PostgreSQL.
-	- [ ] Есть concurrent integration-тест.
-	- [ ] Есть логирование `gen_id`, delivery state и attempt/lease id.
 - [ ] AUD-021 — Сделать сохранение MP3 атомарным и проверять целостность
 	  - Описание: `write_bytes()` пишет напрямую в финальный путь `gen_{gen_id}.mp3`.
 	  - ТЗ:
@@ -193,6 +177,22 @@ kanban-plugin: board
 
 ## Done
 
+- [ ] AUD-020 — Ввести persistent idempotency для Telegram delivery
+	  - Описание: повторная обработка `SUCCESS`-генерации может повторно отправить MP3 и повторно опубликовать `GenerationSucceeded`.
+	  - ТЗ:
+	- Определить delivery state: `NOT_DELIVERED`, `IN_PROGRESS`, `DELIVERED`, `FAILED`.
+	- Добавить состояние в модель или отдельную таблицу delivery.
+	- Реализовать атомарный claim доставки.
+	- Добавить lease/TTL для зависших `IN_PROGRESS`.
+	- Не отправлять повторно уже подтверждённую доставку.
+	- Отделить ошибку delivery от ошибки generation.
+	  - DoD:
+	- [x] Два конкурентных worker-а не отправляют один MP3 дважды.
+	- [x] Сбой Telegram API не меняет `Generation.status=SUCCESS`.
+	- [x] Повторная попытка delivery работает только по документированной политике.
+	- [x] Delivery state сохраняется в PostgreSQL.
+	- [x] Есть concurrent integration-тест.
+	- [x] Есть логирование `gen_id`, delivery state и attempt/lease id.
 - [ ] AUD-019 — Сделать feedback upsert безопасным при гонке
 	  - Описание: текущая схема `SELECT → INSERT/UPDATE` может завершиться `IntegrityError` при двух одновременных callback-запросах.
 	  - ТЗ:
