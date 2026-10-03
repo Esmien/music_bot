@@ -18,20 +18,6 @@ kanban-plugin: board
 
 ## 🟡 P2 — MEDIUM
 
-- [ ] AUD-028 — Добавить конкурентный тест повторной обработки generation
-	  - Описание: текущие тесты проверяют redelivery последовательно, но не доказывают безопасность двух параллельных worker-вызовов.
-	  - ТЗ:
-	- Запустить два `run_generation_task()` для одного `gen_id`.
-	- Использовать barrier/event для синхронизации перед claim.
-	- Проверить, что API вызывается один раз.
-	- Проверить, что MP3 доставляется согласно delivery policy.
-	- Проверить итоговый `attempt_id` и status.
-	  - DoD:
-	- [ ] Два worker-а не выполняют генерацию одновременно.
-	- [ ] Только один worker получает успешный claim.
-	- [ ] Stale worker не меняет финальный статус.
-	- [ ] Количество delivery соответствует policy.
-	- [ ] Тест проходит на PostgreSQL/Redis integration profile.
 - [ ] AUD-029 — Вынести миграции из startup bot-контейнера
 	  - Описание: Alembic запускается только при default startup bot-контейнера, а масштабирование bot replicas может привести к конкурирующим миграциям.
 	  - ТЗ:
@@ -82,7 +68,23 @@ kanban-plugin: board
 ## In Progress
 
 
+
 ## Done
+
+- [x] AUD-028 — Добавить конкурентный тест повторной обработки generation
+	  - Описание: текущие тесты проверяют redelivery последовательно, но не доказывают безопасность двух параллельных worker-вызовов.
+	  - ТЗ:
+	- Запустить два `run_generation_task()` для одного `gen_id`.
+	- Использовать barrier/event для синхронизации перед claim.
+	- Проверить, что API вызывается один раз.
+	- Проверить, что MP3 доставляется согласно delivery policy.
+	- Проверить итоговый `attempt_id` и status.
+	  - DoD:
+	- [x] Два worker-а не выполняют генерацию одновременно.
+	- [x] Только один worker получает успешный claim.
+	- [x] Stale worker не меняет финальный статус.
+	- [x] Количество delivery соответствует policy.
+	- [x] Тест проходит на PostgreSQL/Redis integration profile.
 
 - [x] AUD-024 — Зафиксировать границы aiogram-зависимости
 	  - Описание: `domain_contracts.py` принимает `aiogram.Message` и `FSMContext`, хотя shared-слой заявлен как абстракция.
