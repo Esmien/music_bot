@@ -11,8 +11,8 @@ RUN pip install --no-cache-dir poetry==2.4.1 --only-binary=:all: \
 
 
 RUN useradd -m botuser \
-    && mkdir /data \
-    && chown botuser:botuser /data
+    && mkdir -p /data /var/lib/lyria/audio \
+    && chown -R botuser:botuser /data /var/lib/lyria
 
 # Копируем исходники из корня проекта в /app
 COPY src/ ./

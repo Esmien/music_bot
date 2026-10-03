@@ -8,7 +8,7 @@ import logging
 
 from taskiq import Context, TaskiqDepends
 
-from core.broker import enricher_broker  # type: ignore[attr-defined]
+from core.broker import enricher_broker, generation_broker  # type: ignore[attr-defined]
 from core.utils.error_notify import notify_owner  # type: ignore[attr-defined]
 from core.utils.exceptions import EnricherResponseInvalidError  # type: ignore[attr-defined]
 from domains.enricher.service import enrich_prompt  # type: ignore[attr-defined]
@@ -23,7 +23,7 @@ broker = enricher_broker
 
 
 async def _publish_event(*, task_name: str, event: EnrichmentCompleted | GenerationFailed, task: object) -> None:
-    """Публикует событие через брокер или зарегистрированную задачу.
+    """Публикует событие через enricher брокер.
 
     Args:
         task_name: Имя задачи TaskIQ.
@@ -40,6 +40,19 @@ async def _publish_event(*, task_name: str, event: EnrichmentCompleted | Generat
         raise TypeError(f"Task {task_name!r} does not expose kiq")
 
     await task_kiq(event)
+
+
+async def _publish_generation_failed(event: GenerationFailed) -> None:
+    """Публикует событие GenerationFailed через generation брокер.
+
+    Args:
+        event: Событие сбоя генерации.
+    """
+    broker_kicker = getattr(generation_broker, "kicker", None)
+    if callable(broker_kicker):
+        await broker_kicker(task_name="handle_generation_failed").kiq(event)
+    else:
+        logger.warning("Cannot publish GenerationFailed event: generation_broker has no kicker")
 
 
 @enricher_broker.task(task_name="enrich_prompt")
@@ -105,7 +118,8 @@ async def enrich_prompt_task(
             context=f"Ошибка обогащения промпта для user_id={user_id}",
         )
 
-        # Публикуем событие сбоя
+        # Публикуем событие сбоя для обработки в enricher handlers
+        # Handlers покажут клавиатуру retry/fallback с учетом счетчика попыток
         failure_event = GenerationFailed(
             user_id=user_id,
             chat_id=chat_id,
@@ -115,9 +129,9 @@ async def enrich_prompt_task(
             status_message_id=command.status_message_id,
         )
         await _publish_event(
-            task_name="handle_generation_failed",
+            task_name="handle_enrichment_failed",
             event=failure_event,
-            task=handle_generation_failed_task,
+            task=handle_enrichment_failed_task,
         )
 
 
@@ -142,12 +156,12 @@ async def handle_enrichment_completed_task(
     await handle_enrichment_completed_event(event=event, context=context)
 
 
-@enricher_broker.task(task_name="handle_generation_failed")
-async def handle_generation_failed_task(
+@enricher_broker.task(task_name="handle_enrichment_failed")
+async def handle_enrichment_failed_task(
     event: GenerationFailed | dict | str,
     context: Context = TaskiqDepends(),
 ) -> None:
-    """Передаёт событие сбоя обработчику бота.
+    """Передаёт событие сбоя обогащения обработчику бота.
 
     Args:
         event: Событие с описанием ошибки.
@@ -158,6 +172,6 @@ async def handle_generation_failed_task(
     elif not isinstance(event, GenerationFailed):
         event = GenerationFailed.model_validate(event)
 
-    from domains.enricher.handlers import handle_generation_failed_event  # type: ignore[attr-defined]
+    from domains.enricher.handlers import handle_enrichment_failed_event  # type: ignore[attr-defined]
 
-    await handle_generation_failed_event(event=event, context=context)
+    await handle_enrichment_failed_event(event=event, context=context)
