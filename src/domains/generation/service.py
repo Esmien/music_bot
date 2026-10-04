@@ -15,17 +15,19 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
 from tenacity import retry
 
 from core.config import settings
 from core.database.engine import get_session
+from core.metrics import REDIS_ERRORS_TOTAL
 from core.redis import RELEASE_LOCK_SCRIPT, is_generation_cancelled, redis_client
 from core.types import JSONValue, ProgressCallback, ProgressReporter
 from core.utils.exceptions import (
@@ -46,6 +48,8 @@ from domains.generation.models import Generation, GenerationStatus
 
 log = logging.getLogger(__name__)
 
+RetryCallback = Callable[[int, int, BaseException | None], Any]
+
 # Минимальный интервал между правками сообщения прогресса (лимиты Telegram)
 PROGRESS_EDIT_INTERVAL = 3.0
 
@@ -56,6 +60,37 @@ LOCK_TTL_MS = 180_000
 DEFAULT_LOCK_TIMEOUT = 10.0
 
 _log_generation_retry = make_retry_logger("OpenRouter Generation API")
+
+
+async def _before_sleep_generation(retry_state: Any) -> None:
+    """Коллбэк before_sleep для логирования и отправки UX-уведомления о ретрае.
+
+    Проверяет флаг отмены генерации перед каждой попыткой retry.
+    Извлекает и вызывает пользовательский on_retry коллбэк для обновления UI.
+    """
+    _log_generation_retry(retry_state)
+
+    # Проверяем отмену генерации перед retry
+    gen_id = retry_state.kwargs.get("gen_id") if retry_state.kwargs else None
+    if gen_id is not None and await is_generation_cancelled(gen_id=gen_id):
+        raise asyncio.CancelledError
+
+    on_retry: RetryCallback | None = None
+    if retry_state.kwargs:
+        on_retry = retry_state.kwargs.get("on_retry")
+    if on_retry is None and retry_state.args and len(retry_state.args) >= 4:
+        on_retry = retry_state.args[3]
+
+    if on_retry:
+        attempt = retry_state.attempt_number
+        max_attempts = 3
+        exc = retry_state.outcome.exception() if retry_state.outcome else None
+        try:
+            res = on_retry(attempt, max_attempts, exc)
+            if asyncio.iscoroutine(res):
+                await res
+        except Exception:
+            log.exception("Error executing on_retry callback")
 
 
 # Максимальный размер аудио в base64-символах (~30 МБ после декодирования).
@@ -118,6 +153,7 @@ async def user_generation_lock(
             while not await redis_client.set(name=lock_key, value=owner_token, nx=True, px=LOCK_TTL_MS):
                 await asyncio.sleep(retry_interval)
     except TimeoutError as err:
+        REDIS_ERRORS_TOTAL.labels(operation="acquire_lock_timeout").inc()
         raise GenerationLockTimeoutError(
             f"Failed to acquire generation lock for user {user_id} within {DEFAULT_LOCK_TIMEOUT}s"
         ) from err
@@ -137,6 +173,7 @@ async def user_generation_lock(
                 if current_val == owner_token:
                     await redis_client.delete(lock_key)
             else:
+                REDIS_ERRORS_TOTAL.labels(operation="release_lock").inc()
                 log.exception("Failed to release Redis lock for user %s: %s", user_id, e)
                 raise
 
@@ -457,10 +494,15 @@ def load_mock_audio() -> bytes:
     stop=DEFAULT_RETRY_STOP,
     wait=default_retry_wait,
     retry=default_retry_predicate,
-    before_sleep=_log_generation_retry,
+    before_sleep=_before_sleep_generation,
     reraise=True,
 )
-async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCallback | None = None) -> bytes:
+async def generate_song_real(
+    prompt: str,
+    gen_id: int,
+    on_progress: ProgressCallback | None = None,
+    on_retry: RetryCallback | None = None,
+) -> bytes:
     """Генерирует песню через OpenRouter, читая ответ как SSE-поток.
 
     Аудио приходит кусками в base64 внутри delta-чанков. Чтобы не держать
@@ -518,8 +560,14 @@ async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCall
     if await is_generation_cancelled(gen_id=gen_id):
         raise asyncio.CancelledError
 
+    # Увеличенные таймауты для долгих запросов стриминга генерации аудио (AUD-040):
+    # connect=30s: установление соединения с OpenRouter
+    # read=300s (5 минут): чтение SSE-потока генерации аудио
+    # write=30s: отправка запроса
+    # pool=30s: получение соединения из пула
+    timeout = httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)
     async with (
-        httpx.AsyncClient(timeout=180.0) as client,
+        httpx.AsyncClient(timeout=timeout) as client,
         client.stream(
             method="POST",
             url="https://openrouter.ai/api/v1/chat/completions",
@@ -546,8 +594,16 @@ async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCall
     return audio_bytes
 
 
-async def run_generation(prompt: str, gen_id: int, on_progress: ProgressCallback) -> bytes:
+async def run_generation(
+    prompt: str,
+    gen_id: int,
+    on_progress: ProgressCallback,
+    on_retry: RetryCallback | None = None,
+) -> bytes:
     """Запускает генерацию: демо-ветка в MOCK_MODE или реальный сервис.
+
+    Проверяет только generation cancel-токен (отмена PROCESSING → CANCELLED).
+    Delivery cancel-токен проверяется отдельно перед доставкой в воркере.
 
     Args:
         prompt: Промпт для модели (описание песни).
@@ -560,7 +616,7 @@ async def run_generation(prompt: str, gen_id: int, on_progress: ProgressCallback
     Raises:
         asyncio.CancelledError: Если генерация отменена пользователем.
     """
-    # Проверяем отмену перед стартом генерации (работает и для мок-режима)
+    # Проверяем generation cancel-токен перед стартом генерации
     if await is_generation_cancelled(gen_id=gen_id):
         raise asyncio.CancelledError
 
@@ -579,7 +635,49 @@ async def run_generation(prompt: str, gen_id: int, on_progress: ProgressCallback
         return load_mock_audio()
 
     # Отдаем реально сгенерированный файл, если генерация шла через API
-    return await generate_song_real(prompt=prompt, gen_id=gen_id, on_progress=on_progress)
+    return await generate_song_real(
+        prompt=prompt,
+        gen_id=gen_id,
+        on_progress=on_progress,
+        on_retry=on_retry,
+    )
+
+
+async def claim_delivery_atomic(gen_id: int, delivery_attempt_id: str) -> bool:
+    """Атомарно резервирует доставку генерации для текущего воркера.
+
+    Переводит delivery_status из NOT_DELIVERED в IN_PROGRESS с записью lease.
+    Если delivery уже IN_PROGRESS, DELIVERED или FAILED, возвращает False.
+
+    Args:
+        gen_id: ID генерации для резервирования.
+        delivery_attempt_id: Уникальный идентификатор попытки доставки (lease).
+
+    Returns:
+        True, если доставка успешно зарезервирована, иначе False.
+
+    Raises:
+        SQLAlchemyError: При ошибке записи в БД.
+    """
+    from domains.generation.models import DeliveryStatus, Generation
+
+    async with get_session() as session:
+        claim_stmt = (
+            update(Generation)
+            .where(
+                Generation.id == gen_id,
+                Generation.delivery_status == DeliveryStatus.NOT_DELIVERED,
+            )
+            .values(
+                delivery_status=DeliveryStatus.IN_PROGRESS,
+                delivery_attempt_id=delivery_attempt_id,
+            )
+            .returning(Generation.id)
+        )
+        result = await session.execute(claim_stmt)
+        claimed_id = result.scalar_one_or_none()
+        await session.commit()
+        return claimed_id is not None
 
 
 async def persist_generated_title(user_id: int, title: str) -> None:
@@ -617,7 +715,10 @@ async def persist_generated_title(user_id: int, title: str) -> None:
 
 
 def save_audio_to_storage(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
-    """Сохраняет аудио на диск и возвращает метаданные файла.
+    """Атомарно сохраняет аудио на диск и возвращает метаданные файла.
+
+    Использует временный файл и atomic rename для предотвращения
+    появления частично записанных файлов в случае сбоя.
 
     Args:
         audio_bytes: Байты аудио-файла.
@@ -627,15 +728,62 @@ def save_audio_to_storage(audio_bytes: bytes, gen_id: int) -> tuple[str, int, st
         Кортеж (путь к файлу, размер в байтах, SHA256 checksum).
 
     Raises:
-        OSError: При ошибке записи файла.
+        OSError: При ошибке записи или переименования файла.
     """
     storage_path = Path(settings.generation.AUDIO_STORAGE_PATH)
     storage_path.mkdir(parents=True, exist_ok=True)
 
-    file_path = storage_path / f"gen_{gen_id}.mp3"
-    file_path.write_bytes(audio_bytes)
+    final_path = storage_path / f"gen_{gen_id}.mp3"
+    temp_path = storage_path / f"gen_{gen_id}.mp3.tmp"
 
     file_size = len(audio_bytes)
     checksum = hashlib.sha256(audio_bytes).hexdigest()
 
-    return str(file_path), file_size, checksum
+    try:
+        temp_path.write_bytes(audio_bytes)
+        temp_path.replace(final_path)
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        raise
+
+    return str(final_path), file_size, checksum
+
+
+def verify_audio_integrity(
+    audio_path: str,
+    expected_size: int | None,
+    expected_checksum: str | None,
+) -> tuple[bool, str | None]:
+    """Проверяет целостность сохранённого аудио-файла.
+
+    Args:
+        audio_path: Путь к файлу на диске.
+        expected_size: Ожидаемый размер в байтах или None.
+        expected_checksum: Ожидаемая SHA256 контрольная сумма или None.
+
+    Returns:
+        Кортеж (is_valid, error_message).
+        is_valid=True, если файл валиден или проверка не требуется.
+        error_message содержит описание ошибки при is_valid=False.
+    """
+    file_path = Path(audio_path)
+
+    if not file_path.exists():
+        return False, f"File not found: {audio_path}"
+
+    actual_size = file_path.stat().st_size
+
+    if expected_size is not None and actual_size != expected_size:
+        return False, f"Size mismatch: expected {expected_size}, got {actual_size}"
+
+    if expected_checksum is not None:
+        try:
+            file_bytes = file_path.read_bytes()
+            actual_checksum = hashlib.sha256(file_bytes).hexdigest()
+            if actual_checksum != expected_checksum:
+                return False, f"Checksum mismatch: expected {expected_checksum}, got {actual_checksum}"
+        except OSError as err:
+            return False, f"Failed to read file for checksum: {err}"
+
+    return True, None

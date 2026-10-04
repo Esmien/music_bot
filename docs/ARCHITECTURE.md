@@ -24,7 +24,9 @@
 │   ├── core/
 │   │   ├── __init__.py                # Сборка доменных Router в единый Router
 │   │   ├── broker.py                  # Инициализация TaskIQ брокера (RabbitMQ или InMemory)
+│   │   ├── instance.py                # Управление жизненным циклом экземпляра бота (instance_id, heartbeat)
 │   │   ├── lifecycle.py               # Управление жизненным циклом приложения и graceful shutdown
+│   │   ├── metrics.py                 # Prometheus-метрики для мониторинга генерации и доставки
 │   │   ├── config.py                  # Настройки окружения (BotConfig, DatabaseConfig, RabbitMQConfig и т.д.)
 │   │   ├── redis.py                   # Единый async-клиент Redis и функции для ключей реестров
 │   │   ├── database/
@@ -81,7 +83,6 @@
 │   │   │           └── test_services_enricher.py  # Юнит-тесты сервиса
 │   │   ├── evaluation/
 │   │   │   ├── handlers.py            # Приём оценки, публикация события EvaluationCompleted
-│   │   │   ├── fsm.py                 # Реэкспорт FeedbackStates для совместимости
 │   │   │   ├── keyboards.py           # Клавиатура оценки (лайк/дизлайк)
 │   │   │   ├── service.py             # Сохранение оценки в БД
 │   │   │   ├── evaluation_messages.py # Текстовые сообщения домена оценки
@@ -97,7 +98,6 @@
 │   │   │   ├── feedback_messages.py   # Текстовые сообщения домена отзывов
 │   │   │   ├── state_models.py        # Pydantic-модели для FSM-данных отзывов
 │   │   │   └── tests/
-│   │   │       ├── integration/
 │   │   │       └── unit/
 │   │   │           ├── test_feedback_handlers.py  # Юнит-тесты хендлеров
 │   │   │           └── test_services_feedback.py  # Юнит-тесты сервиса
@@ -112,29 +112,38 @@
 │   │       ├── generation_messages.py # Текстовые сообщения домена генерации
 │   │       ├── state_models.py        # Pydantic-модели для FSM-данных генерации
 │   │       ├── registries/
-│   │       │   └── task_registry.py   # Доменный реестр активных задач генерации (legacy)
+│   │       │   └── task_registry.py   # Доменный реестр активных задач генерации
 │   │       └── tests/
 │   │           ├── integration/
 │   │           │   ├── taskiq_test_runner.py      # Вспомогательные утилиты для тестов воркера
 │   │           │   ├── test_generation_flow.py    # Интеграционные тесты флоу генерации
 │   │           │   └── test_generation_worker.py  # Интеграционные тесты воркера
 │   │           └── unit/
+│   │               ├── test_instance_cleanup.py   # Юнит-тесты безопасного cleanup при rolling restart
 │   │               ├── test_progress_bar.py       # Юнит-тесты прогресс-бара
 │   │               ├── test_redis_lock.py         # Юнит-тесты Redis-локов
 │   │               ├── test_services_generation.py # Юнит-тесты сервиса генерации
 │   │               └── test_task_registry.py      # Юнит-тесты реестра задач
 │   ├── shared/
+│   │   ├── callback_parser.py         # Typed parser для callback_data формата fb:action:gen_id
+│   │   ├── domain_contracts.py        # Telegram flow contracts для междоменных вызовов (TelegramEnrichmentFlowStarter, TelegramGenerationFlowStarter)
+│   │   ├── domain_ports.py            # Конкретные реализации Telegram flow contracts (синглтоны для handlers)
 │   │   ├── contracts/
 │   │   │   ├── commands.py            # Команды для TaskIQ (EnrichPromptCommand, StartGenerationCommand и т.д.)
 │   │   │   └── events.py              # События для TaskIQ (EnrichmentCompleted, GenerationSucceeded и т.д.)
-│   │   └── ports/
-│   │       ├── telegram.py            # Абстрактный порт TelegramPort и реализация AiogramTelegramPort
-│   │       └── fake_telegram.py       # Фейковая реализация порта для тестов
+│   │   ├── ports/
+│   │   │   ├── telegram.py            # Абстрактный порт TelegramPort и реализация AiogramTelegramPort
+│   │   │   └── fake_telegram.py       # Фейковая реализация порта для тестов
+│   │   └── tests/
+│   │       └── test_callback_parser.py # Unit-тесты callback parser
 │   ├── conftest.py                    # Общие фикстуры для тестов (make_message, fake_state)
 │   └── mock_generation.json           # Mock-данные для локальной генерации
-├── workers/
-│   └── taskiq_worker.py               # Главный воркер TaskIQ с регистрацией всех доменных воркеров
-├── tests/                             # Smoke-тесты инфраструктуры (вне src)
+├── src/
+│   ├── workers/
+│   │   └── taskiq_worker.py           # Главный воркер TaskIQ с регистрацией всех доменных воркеров
+├── tests/                             # Тесты инфраструктуры и архитектуры (вне src)
+│   ├── architecture/
+│   │   └── test_dependency_rules.py   # Architecture tests для проверки dependency rules (запрет aiogram в services/core)
 │   └── smoke/
 │       ├── test_broker_connection.py  # Проверка подключения к RabbitMQ
 │       ├── test_db_connection.py      # Проверка подключения к PostgreSQL
@@ -227,8 +236,14 @@
         ├─> domains/generation/service.py: run_generation
         │     ├─> MOCK_MODE: локальный mock-файл (mock_generation.json)
         │     └─> OpenRouter: SSE-поток и сборка MP3 из base64-чанков
-        │           ├─> retry-политика с экспоненциальным backoff
-        │           ├─> проверка флага отмены через Redis
+        │           ├─> httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0) для долгих стримов
+        │           ├─> retry-политика с экспоненциальным backoff (Tenacity, max 3 попытки)
+        │           ├─> проверка флага отмены через Redis перед каждой попыткой retry
+        │           ├─> проброс статуса ретрая в Telegram через on_retry коллбэк:
+        │           │     └─> воркер передаёт on_retry в service.py
+        │           │     └─> service вызывает on_retry при before_sleep Tenacity
+        │           │     └─> воркер обновляет статусное сообщение пользователя с номером попытки
+        │           ├─> при сбое стрима (GenerationStreamError, TimeoutException) выполняется retry
         │           └─> отправка прогресса через TelegramPort
         ├─> отправка аудио через TelegramPort
         ├─> PostgreSQL: обновление статуса генерации на SUCCESS
@@ -236,9 +251,10 @@
 
 При успешной генерации
   └─> domains/generation/worker.py: run_generation_task
-        ├─> публикация события GenerationSucceeded
-        └─> domains/evaluation/handlers.py: handle_generation_succeeded_event
-              ├─> проверка соответствия gen_id в FSM
+        ├─> публикация события GenerationSucceeded в TaskIQ
+        └─> (event listener) domains/evaluation/handlers.py: handle_generation_succeeded_event
+              ├─> получение FSM-контекста через StorageKey (bot, chat_id)
+              ├─> проверка соответствия gen_id в FSM state
               ├─> FSM: FeedbackStates.waiting_evaluation
               └─> отправка клавиатуры оценки пользователю через TelegramPort
 
@@ -252,14 +268,29 @@
               └─> отправка сообщения об ошибке
 ```
 
-`/cancel` и `/logout` могут отменить задачу через Redis-флаг `generation:cancel:{gen_id}`, который проверяется воркером генерации во время выполнения.
+**Отмена генерации и доставки:**
+
+Отмена разделена на два независимых токена в Redis:
+- `bot:cancel:gen:{gen_id}` (`generation_cancel_key`) — запрос отмены генерации (PENDING/PROCESSING).
+- `bot:cancel:delivery:{gen_id}` (`delivery_cancel_key`) — запрос пропуска Telegram-доставки (после перехода в SUCCESS).
+
+Поведение по этапам:
+1. **До запуска API (PENDING):** воркер фиксирует отмену, генерация переводится в финальный статус `CANCELLED`.
+2. **Во время стриминга OpenRouter (PROCESSING):** воркер прерывает чтение чанков, удаляет временные файлы и переводит генерацию в `CANCELLED`.
+3. **После успешного сохранения MP3 (SUCCESS):** статус генерации зафиксирован как `SUCCESS`. При наличии токена отмены доставки отправка в Telegram пропускается, а `delivery_status` выставляется в `SKIPPED`. Статус `Generation.status` остаётся `SUCCESS`.
+4. **Во время Telegram-доставки:** проверка токена перед отправкой исключает пересылку файла (`delivery_status = SKIPPED`).
+
+Персистентным источником истины для состояний генерации и доставки является PostgreSQL (`generations.status`, `generations.delivery_status` и `generations.attempt_id`), а Redis-токены служат сигналами отмены от пользователя с ограниченным TTL (600 с).
+
+Подробное описание state machine, четырёх этапов отмены и защиты от race condition см. в [cancellation_flow.md](cancellation_flow.md).
 
 ### 4. Оценка и отзыв (Telegram-хендлеры)
 
 ```text
 Пользователь ставит оценку (лайк/дизлайк)
   └─> domains/evaluation/handlers.py: handle_evaluate
-        ├─> извлечение gen_id из callback_data и проверка соответствия FSM state
+        ├─> shared/callback_parser.py: CallbackData.parse() — извлечение gen_id и action
+        ├─> проверка соответствия gen_id в FSM state
         ├─> domains/feedback/service.py: save_feedback (с gen_id и user_id)
         │     └─> PostgreSQL: upsert в GenerationFeedback с проверкой принадлежности
         ├─> обновление FSM state с gen_id и оценкой
@@ -296,14 +327,61 @@
 - `GenerationSucceeded` — генерация завершена успешно
 - `GenerationFailed` — генерация завершена с ошибкой
 
-**Воркеры**:
-- `domains/enricher/worker.py` — обработка обогащения промптов
-- `domains/generation/worker.py` — обработка генерации музыки
-- `domains/base/worker.py` — проверка кредитов по команде
+**Воркеры и event listeners**:
+- `domains/enricher/worker.py` — обработка команды EnrichPromptCommand и событие-листенер EnrichmentCompleted
+- `domains/generation/worker.py` — обработка команды StartGenerationCommand
+- `domains/base/worker.py` — обработка команды CheckCreditsCommand
+- `domains/evaluation/handlers.py` — событие-листенер GenerationSucceeded (отправка клавиатуры оценки)
+- `domains/generation/handlers.py` — событие-листенер GenerationFailed (уведомление об ошибке)
 
-Все воркеры регистрируются в главном процессе воркера: `workers/taskiq_worker.py`
+Все воркеры и event listeners регистрируются в главном процессе воркера: `src/workers/taskiq_worker.py`
 
-### 5. Обработка ошибок
+### 5. Метрики и мониторинг
+
+Для мониторинга длительных и критических операций используется Prometheus-инструментация (`core.metrics`).
+
+**Счётчики жизненного цикла (Counters):**
+- `lyria_generation_total{status="success|failed|cancelled"}` — количество генераций по финальному статусу.
+- `lyria_delivery_total{status="success|failed|skipped"}` — результаты доставки аудио пользователю в Telegram.
+- `lyria_stale_attempts_total` — число отклонённых конкурирующих/устаревших попыток обработки генерации.
+- `lyria_redis_errors_total{operation="..."}` — сбои взаимодействия с Redis (таймауты захвата блокировок, ошибки Lua).
+
+**Гистограммы задержек (Latency Histograms):**
+- `lyria_generation_latency_seconds` — время стриминга и генерации OpenRouter API.
+- `lyria_storage_save_latency_seconds` — время сохранения аудио-артефакта на диск.
+- `lyria_delivery_latency_seconds` — задержка отправки аудиофайла пользователю через Telegram API.
+
+**Privacy & Security:**
+Все метрики строго обезличены: лейблы содержат только технические статусы и операции. Промпты пользователей, токены, user_id и секреты в метриках отсутствуют.
+
+**Минимальный Production Dashboard (Grafana):**
+1. **Generation Success Rate (%):**
+   `sum(rate(lyria_generation_total{status="success"}[5m])) / sum(rate(lyria_generation_total[5m])) * 100`
+2. **Delivery Failures (ops/s):**
+   `sum(rate(lyria_delivery_total{status="failed"}[5m]))`
+3. **OpenRouter p95 Latency:**
+   `histogram_quantile(0.95, sum(rate(lyria_generation_latency_seconds_bucket[5m])) by (le))`
+4. **Telegram Delivery p95 Latency:**
+   `histogram_quantile(0.95, sum(rate(lyria_delivery_latency_seconds_bucket[5m])) by (le))`
+5. **Stale Attempts / Race Conditions:**
+   `rate(lyria_stale_attempts_total[5m])`
+
+**Prometheus Alerts:**
+- **HighGenerationFailureRate:**
+  `sum(rate(lyria_generation_total{status="failed"}[5m])) / sum(rate(lyria_generation_total[5m])) > 0.1` (Warning при >10% сбоев генерации за 5 минут).
+- **TelegramDeliveryFailuresDetected:**
+  `increase(lyria_delivery_total{status="failed"}[5m]) > 3` (Critical при сбоях доставки пользователям).
+
+### 6. Идемпотентность Telegram-доставки
+
+Идемпотентность доставки реализована в пределах следующего контракта:
+- Состояние доставки сохраняется в PostgreSQL в поле `Generation.delivery_status` (`NOT_DELIVERED`, `IN_PROGRESS`, `DELIVERED`, `FAILED`, `SKIPPED`) вместе с `attempt_id`.
+- Захват задачи доставки выполняется атомарно: воркер переводит статус `NOT_DELIVERED -> IN_PROGRESS` с привязкой к своему `attempt_id`.
+- Конкурентные или устаревшие (stale) попытки доставки отклоняются и увеличивают метрику `lyria_stale_attempts_total`.
+- Сбой отправки в Telegram API переводит `delivery_status` в `FAILED`, но не меняет `Generation.status = SUCCESS`.
+- Границы гарантий: внутри системы исключены повторные отправки конкурирующими воркерами. На внешней границе при падении процесса между успешным ответом Telegram API и фиксацией в PostgreSQL статус останется `IN_PROGRESS` до истечения таймаута lease.
+
+### 7. Обработка ошибок
 
 ```text
 Ошибка в Telegram-хендлере
@@ -323,30 +401,49 @@
 
 `notify_owner` записывает ошибку в лог и отправляет владельцу traceback с контекстом через Telegram, если настроен `BOT_OWNER_ID`.
 
-### 6. Порты и адаптеры
+### 8. Порты и адаптеры
 
-Для изоляции воркеров от aiogram используется паттерн портов и адаптеров (src/shared/ports/):
+Для изоляции фоновых задач от aiogram используется паттерн портов и адаптеров (src/shared/ports/):
 
 - `TelegramPort` — абстрактный интерфейс для отправки сообщений, аудио и уведомлений
-- `AiogramTelegramPort` — реализация на основе aiogram Bot для продакшна
+- `AiogramTelegramPort` — адаптер на основе aiogram Bot для рабочего окружения
 - `FakeTelegramPort` — фейковая реализация для тестов, сохраняющая историю вызовов
 
-Это позволяет воркерам работать без прямой зависимости от aiogram и упрощает тестирование.
+### 9. Границы зависимостей Aiogram
+
+В проекте действуют правила изоляции aiogram, проверяемые архитектурными тестами (`tests/architecture/test_dependency_rules.py`):
+- **Запрещено импортировать `aiogram`:** в доменных сервисах (`domains/*/service.py`), фоновых воркерах (за исключением TelegramPort адаптеров) и ядре `core/*` (кроме корневой сборки `core/__init__.py`).
+- **Разрешено импортировать `aiogram`:** в Telegram-хендлерах (`domains/*/handlers.py`), интерфейсах Telegram flow contracts (`src/shared/domain_contracts.py`), клавиатурах и адаптере `AiogramTelegramPort`.
 
 ## Хранение состояния и данных
 
 | Данные | Где хранятся | Назначение |
 | --- | --- | --- |
 | FSM-состояния и данные диалогов | Redis через RedisStorage aiogram | Сохранение текущего этапа сценария между обновлениями и рестартами |
+| FSM-флаг generating | Redis FSM-storage в GenerationFlowState | Блокировка повторного запуска генерации пользователем |
 | Пользователи и авторизация | PostgreSQL, таблица `users` | Статус доступа пользователя (is_authorized, created_at) |
 | Ожидающие авторизацию и счётчики попыток | Redis, ключи `auth:pending:{user_id}` | Авторизация и защита от перебора ключа (лимит попыток) |
-| Глобальный реестр активных генераций | Redis, множество `generations:active` | Проверка одновременных генераций пользователя |
-| Флаги отмены генерации | Redis, ключи `generation:cancel:{gen_id}` | Сигнал воркеру о необходимости остановки задачи |
-| Промпты и названия генераций | PostgreSQL, таблица `generations` | История генераций (user_id, prompt, title, status, created_at) |
-| Аудио-артефакты генераций | Локальное файловое хранилище (AUDIO_STORAGE_PATH) | Сохраненные mp3-файлы с метаданными (путь, размер, checksum) в БД |
-| Оценки и отзывы | PostgreSQL, таблица `generation_feedbacks` | Обратная связь о генерациях (generation_id, is_positive, comment) |
+| Флаги отмены генерации и доставки | Redis, ключи `bot:cancel:gen:{gen_id}` и `bot:cancel:delivery:{gen_id}` | Сигналы отмены генерации и пропуска доставки от пользователя (TTL 600 с) |
+| Реестр активных задач | Redis, ключи `bot:active_tasks:{instance_id}` + память процесса | Ownership-safe регистрация задач генерации по экземплярам |
+| In-memory задачи генерации | Память процесса бота, dict[user_id, asyncio.Task] | Локальная отмена asyncio.Task через /cancel |
+| Статус генерации и доставки | PostgreSQL, таблица `generations` (`status`, `delivery_status`, `attempt_id`) | Персистентный source of truth жизненного цикла генераций и защиты от race condition |
+| Аудио-артефакты генераций | Локальное файловое хранилище (AUDIO_STORAGE_PATH, `/var/lib/lyria/audio`) | Сохраненные mp3-файлы с метаданными (путь, размер, checksum) в БД. При старте контейнера владелец рекурсивно меняется на `botuser` |
+| Оценки и отзывы | PostgreSQL, таблица `generation_feedbacks` | Обратная связь о генерациях (generation_id, is_liked, feedback) |
 | Очереди и сообщения TaskIQ | RabbitMQ (продакшн) или InMemoryBroker (тесты) | Асинхронная обработка команд и событий |
 | Тестовые данные | In-memory SQLite, fakeredis и InMemoryBroker | Изолированные тесты без боевых подключений |
+
+## Retry-логика для внешних API
+Все вызовы внешних API (генерация музыки OpenRouter, проверка кредитов, LLM-обогатитель) должны быть обёрнуты в регламентированную безопасную retry-политику с экспоненциальным backoff.
+Используется библиотека tenacity и модуль `core.utils.retry` с настройками:
+- Максимум 3 попытки (`stop_after_attempt(3)`)
+- Экспоненциальный backoff: 2, 4, 8, 10 секунд (`wait_exponential(multiplier=1, min=2, max=10)`)
+- Корректная обработка заголовка `Retry-After` при HTTP 429 (приоритет над дефолтным backoff с ограничением максимального ожидания)
+- Чёткое разделение pre-request (до успешного старта ответа/стрима) и post-request (в процессе чтения данных) сбоев
+- Автоматический повторный запрос запрещен после успешного установления соединения и начала стриминга (во избежание двойных платных списаний)
+- Retry применяется только на транзиентные сетевые ошибки подключения (TimeoutException, ConnectError до ответа) и HTTP 429, HTTP 503
+- Ошибки авторизации (401, 403), клиентские ошибки (4xx кроме 429) и серверные ошибки (5xx кроме 503) строго не повторяются
+- При попытках повтора и сбоях в логах с уровнем WARNING обязательно фиксируются название сервиса, `gen_id`, номер попытки и фаза сбоя (`pre-request` или `post-request`)
+- **UX-уведомление при retry (AUD-040):** воркер передаёт `on_retry` коллбэк в сервис генерации, который вызывается из `before_sleep` Tenacity и обновляет статусное сообщение пользователя с номером попытки (например: "⏳ Сервер нейросети моргнул, переподключаюсь… (Попытка 1 из 3)")
 
 ## Тестирование
 
@@ -379,11 +476,35 @@
 - **Polling** — для разработки и тестирования (флаг `WEBHOOK_ENABLED=false`)
 - **Webhook** — для продакшна (флаг `WEBHOOK_ENABLED=true`)
 
+**Rolling restart и instance management** (core/instance.py):
+- Каждый экземпляр бота получает уникальный `instance_id`
+- Heartbeat обновляется каждые 15 секунд (TTL 30 секунд)
+- Реестр активных задач генерации привязан к `instance_id`: каждый экземпляр хранит свой набор `bot:active_tasks:{instance_id}` в Redis
+- При startup и shutdown cleanup чистит только собственный набор задач — ownership-safe
+- FSM-флаги `generating` чистятся при наличии других активных экземпляров только если они осиротели
+- Это защищает от удаления состояния работающих экземпляров при rolling restart
+- **Deployment constraint**: поддерживается rolling restart, но не рекомендуется одновременная работа множества экземпляров с одним Redis (возможна race condition в FSM)
+
 **Graceful shutdown** (core/lifecycle.py):
+- Очистка реестра активных задач текущего экземпляра (ownership-safe)
+- Снятие регистрации экземпляра (unregister) перед закрытием ресурсов
 - Корректное завершение обработки текущих апдейтов
 - Закрытие соединений с БД, Redis и брокером
-- Очистка реестров и временных ресурсов
 - Обработка сигналов SIGINT и SIGTERM
+
+**Права на volume** (infra/entrypoint.sh):
+- При запуске от root (по умолчанию в Docker) владелец `/data` и `/var/lib/lyria/audio` меняется на `botuser`
+- Рекурсивный `chown -R` для `/var/lib/lyria/audio` гарантирует доступ к существующим MP3 после рестарта
+- Это обеспечивает чтение существующих файлов и создание новых от непривилегированного пользователя
+
+**Миграции базы данных (Alembic)**:
+- Вынесены в отдельный контролируемый job `migrate`, выступающий обязательным deployment gate
+- В `infra/docker-compose.yml` сервисы `bot`, `generation-worker` и `enricher-worker` зависят от `migrate` с `condition: service_completed_successfully`
+- При развертывании (`docker compose up -d`) контейнер `migrate` стартует сразу после готовности PostgreSQL (`service_healthy`) и применяет `alembic upgrade head`
+- `bot` и воркеры не стартуют до успешного выхода сервиса `migrate` с нулевым кодом
+- При ошибке Alembic (ненулевой код выхода) деплой блокируется: зависимые сервисы не запускаются
+- Ручной запуск (runbook / ad-hoc): `docker compose run --rm migrate`
+- Предотвращает race conditions и взаимные блокировки при одновременном запуске или масштабировании реплик
 
 **TaskIQ-воркеры**:
 - Могут работать отдельно от бота и масштабироваться независимо

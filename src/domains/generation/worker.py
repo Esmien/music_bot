@@ -3,6 +3,7 @@
 import asyncio
 import io
 import logging
+import time
 import uuid
 from pathlib import Path
 
@@ -12,10 +13,28 @@ from taskiq import Context, TaskiqDepends
 from core.broker import generation_broker  # type: ignore[attr-defined]
 from core.config import settings  # type: ignore[attr-defined]
 from core.database.engine import get_session  # type: ignore[attr-defined]
-from core.redis import clear_generation_cancel, is_generation_cancelled  # type: ignore[attr-defined]
+from core.metrics import (  # type: ignore[attr-defined]
+    DELIVERY_LATENCY_SECONDS,
+    DELIVERY_TOTAL,
+    GENERATION_LATENCY_SECONDS,
+    GENERATION_TOTAL,
+    STALE_ATTEMPTS_TOTAL,
+    STORAGE_SAVE_LATENCY_SECONDS,
+)
+from core.redis import (  # type: ignore[attr-defined]
+    clear_delivery_cancel,
+    clear_generation_cancel,
+    is_delivery_cancelled,
+    is_generation_cancelled,
+)
 from core.utils.error_notify import notify_owner  # type: ignore[attr-defined]
+from domains.generation.generation_messages import GENERATION_RETRY_TEXT
 from domains.generation.models import Generation, GenerationStatus  # type: ignore[attr-defined]
-from domains.generation.service import run_generation, save_audio_to_storage  # type: ignore[attr-defined]
+from domains.generation.service import (  # type: ignore[attr-defined]
+    claim_delivery_atomic,
+    run_generation,
+    save_audio_to_storage,
+)
 from shared.contracts.commands import RunGeneration  # type: ignore[attr-defined]
 from shared.contracts.events import GenerationFailed, GenerationSucceeded  # type: ignore[attr-defined]
 from shared.ports.telegram import TelegramPort  # type: ignore[attr-defined]
@@ -30,6 +49,7 @@ async def deliver_generation_audio(
     telegram: TelegramPort,
     command: RunGeneration,
     audio_path: str,
+    delivery_attempt_id: str,
 ) -> None:
     """Идемпотентно доставляет сохранённый аудио-файл пользователю в Telegram.
 
@@ -40,19 +60,61 @@ async def deliver_generation_audio(
         telegram: Порт Telegram для отправки сообщений и аудио.
         command: Исходная команда генерации.
         audio_path: Путь к сохранённому файлу на диске.
+        delivery_attempt_id: Идентификатор текущей попытки доставки.
     """
-    audio_file_path = Path(audio_path)
-    if not audio_file_path.exists():
-        log.error("Audio file not found for delivery (gen_id=%s, path=%s)", command.gen_id, audio_path)
-        delivery_err = FileNotFoundError(f"Audio file not found: {audio_path}")
+    # Проверка delivery cancel-токена (статус генерации уже SUCCESS, доставка пропускается)
+    if await is_delivery_cancelled(gen_id=command.gen_id):
+        log.info("Delivery cancelled by user (gen_id=%s, status=SUCCESS preserved)", command.gen_id)
+        DELIVERY_TOTAL.labels(status="skipped").inc()
+        async with get_session() as session:
+            from domains.generation.models import DeliveryStatus
+
+            await session.execute(
+                update(Generation)
+                .where(
+                    Generation.id == command.gen_id,
+                    Generation.delivery_attempt_id == delivery_attempt_id,
+                )
+                .values(delivery_status=DeliveryStatus.FAILED)
+            )
+            await session.commit()
+        await clear_delivery_cancel(gen_id=command.gen_id)
+        return
+
+    async with get_session() as session:
+        generation = await session.get(Generation, command.gen_id)
+        if generation is None:
+            log.error("Generation record not found for delivery (gen_id=%s)", command.gen_id)
+            return
+
+        expected_size = generation.audio_size
+        expected_checksum = generation.audio_checksum
+
+    from domains.generation.service import verify_audio_integrity
+
+    is_valid, error_message = verify_audio_integrity(
+        audio_path=audio_path,
+        expected_size=expected_size,
+        expected_checksum=expected_checksum,
+    )
+
+    if not is_valid:
+        log.error(
+            "Audio integrity check failed for delivery (gen_id=%s, path=%s): %s",
+            command.gen_id,
+            audio_path,
+            error_message,
+        )
+        DELIVERY_TOTAL.labels(status="failed").inc()
+        delivery_err = ValueError(f"Audio integrity check failed: {error_message}")
         try:
             await notify_owner(
                 telegram_port=telegram,
-                context=f"Файл аудио не найден для отправки gen_id={command.gen_id}",
+                context=f"Проверка целостности аудио не прошла для gen_id={command.gen_id}",
                 err=delivery_err,
             )
         except Exception:
-            log.exception("Failed to notify owner about missing audio file (gen_id=%s)", command.gen_id)
+            log.exception("Failed to notify owner about audio integrity failure (gen_id=%s)", command.gen_id)
         failure_event = GenerationFailed(
             user_id=command.user_id,
             chat_id=command.chat_id,
@@ -68,13 +130,9 @@ async def deliver_generation_audio(
         )
         return
 
+    delivery_start = time.monotonic()
     try:
-        # Проверка отмены перед доставкой (артефакт уже сохранён, но доставка может быть ненужной)
-        if await is_generation_cancelled(gen_id=command.gen_id):
-            log.info("Delivery cancelled by user (gen_id=%s)", command.gen_id)
-            return
-
-        audio_bytes = await asyncio.to_thread(audio_file_path.read_bytes)
+        audio_bytes = await asyncio.to_thread(Path(audio_path).read_bytes)
         await telegram.send_audio(
             chat_id=command.chat_id,
             audio=io.BytesIO(audio_bytes),
@@ -89,6 +147,22 @@ async def deliver_generation_audio(
                 text="🎵 Готово!",
             )
 
+        async with get_session() as session:
+            from domains.generation.models import DeliveryStatus
+
+            await session.execute(
+                update(Generation)
+                .where(
+                    Generation.id == command.gen_id,
+                    Generation.delivery_attempt_id == delivery_attempt_id,
+                )
+                .values(delivery_status=DeliveryStatus.DELIVERED)
+            )
+            await session.commit()
+
+        DELIVERY_LATENCY_SECONDS.observe(time.monotonic() - delivery_start)
+        DELIVERY_TOTAL.labels(status="success").inc()
+
         succeeded_event = GenerationSucceeded(
             user_id=command.user_id,
             chat_id=command.chat_id,
@@ -102,6 +176,20 @@ async def deliver_generation_audio(
         )
     except Exception as delivery_error:
         log.exception("Delivery to Telegram failed (gen_id=%s)", command.gen_id)
+        DELIVERY_LATENCY_SECONDS.observe(time.monotonic() - delivery_start)
+        DELIVERY_TOTAL.labels(status="failed").inc()
+        async with get_session() as session:
+            from domains.generation.models import DeliveryStatus
+
+            await session.execute(
+                update(Generation)
+                .where(
+                    Generation.id == command.gen_id,
+                    Generation.delivery_attempt_id == delivery_attempt_id,
+                )
+                .values(delivery_status=DeliveryStatus.FAILED)
+            )
+            await session.commit()
         try:
             await notify_owner(
                 telegram_port=telegram,
@@ -188,19 +276,34 @@ async def _claim_generation(
             and generation.audio_path
             and Path(generation.audio_path).exists()
         ):
-            log.info(
-                "Generation %s already has audio artifact at %s, proceeding to delivery",
-                command.gen_id,
-                generation.audio_path,
+            delivery_attempt_id = str(uuid.uuid4())
+            delivery_claimed = await claim_delivery_atomic(
+                gen_id=command.gen_id,
+                delivery_attempt_id=delivery_attempt_id,
             )
-            await deliver_generation_audio(
-                telegram=telegram,
-                command=command,
-                audio_path=generation.audio_path,
-            )
+            if delivery_claimed:
+                log.info(
+                    "Generation %s already has audio artifact at %s, proceeding to delivery (delivery_attempt=%s)",
+                    command.gen_id,
+                    generation.audio_path,
+                    delivery_attempt_id,
+                )
+                await deliver_generation_audio(
+                    telegram=telegram,
+                    command=command,
+                    audio_path=generation.audio_path,
+                    delivery_attempt_id=delivery_attempt_id,
+                )
+            else:
+                log.info(
+                    "Delivery for generation %s already claimed or completed in _claim_generation, skipping",
+                    command.gen_id,
+                )
+                DELIVERY_TOTAL.labels(status="skipped").inc()
             return False
 
         log.info("Generation %s already claimed or processed, skipping", command.gen_id)
+        STALE_ATTEMPTS_TOTAL.inc()
         return False
 
 
@@ -271,6 +374,8 @@ async def _handle_generation_cancel(
         )
         await session.execute(cancel_stmt)
         await session.commit()
+    GENERATION_TOTAL.labels(status="cancelled").inc()
+    # Очищаем generation cancel-token после обработки отмены
     await clear_generation_cancel(gen_id=command.gen_id)
 
     if command.status_message_id is not None:
@@ -304,7 +409,9 @@ async def _handle_generation_failure(
                 .values(status=GenerationStatus.FAILED)
                 .returning(Generation.id)
             )
-            await session.execute(fail_stmt)
+            result = await session.execute(fail_stmt)
+            if result.scalar_one_or_none() is None:
+                STALE_ATTEMPTS_TOTAL.inc()
             await session.commit()
     except Exception as db_error:
         log.exception(
@@ -338,6 +445,7 @@ async def _handle_generation_failure(
         event=failure_event,
         task=handle_generation_failed_task,
     )
+    GENERATION_TOTAL.labels(status="failed").inc()
 
 
 @generation_broker.task(
@@ -379,16 +487,42 @@ async def run_generation_task(
                 text=f"🎼 {stage}\n{filled}{empty} {percent}%",
             )
 
+    async def on_retry(attempt: int, max_attempts: int, exc: BaseException | None) -> None:
+        if await is_generation_cancelled(gen_id=command.gen_id):
+            raise asyncio.CancelledError
+        if command.status_message_id is not None:
+            text = GENERATION_RETRY_TEXT.format(attempt=attempt, max_attempts=max_attempts)
+            try:
+                await telegram.edit_message(
+                    chat_id=command.chat_id,
+                    message_id=command.status_message_id,
+                    text=text,
+                )
+            except Exception:
+                log.warning(
+                    "Failed to update status message with retry attempt (gen_id=%s)",
+                    command.gen_id,
+                )
+
     try:
-        audio_bytes = await run_generation(prompt=command.prompt, gen_id=command.gen_id, on_progress=on_progress)
+        gen_start = time.monotonic()
+        audio_bytes = await run_generation(
+            prompt=command.prompt,
+            gen_id=command.gen_id,
+            on_progress=on_progress,
+            on_retry=on_retry,
+        )
+        GENERATION_LATENCY_SECONDS.observe(time.monotonic() - gen_start)
 
         if await is_generation_cancelled(gen_id=command.gen_id):
             raise asyncio.CancelledError
 
+        save_start = time.monotonic()
         audio_path, audio_size, audio_checksum = save_audio_to_storage(
             audio_bytes=audio_bytes,
             gen_id=command.gen_id,
         )
+        STORAGE_SAVE_LATENCY_SECONDS.observe(time.monotonic() - save_start)
 
         is_saved = await _save_generation_success(
             gen_id=command.gen_id,
@@ -397,12 +531,15 @@ async def run_generation_task(
             audio_size=audio_size,
             audio_checksum=audio_checksum,
         )
-        if not is_saved:
+        if is_saved:
+            GENERATION_TOTAL.labels(status="success").inc()
+        else:
             log.warning(
                 "Generation %s was modified concurrently (attempt %s), skipping delivery",
                 command.gen_id,
                 attempt_id,
             )
+            STALE_ATTEMPTS_TOTAL.inc()
             return
     except asyncio.CancelledError:
         await _handle_generation_cancel(
@@ -420,11 +557,25 @@ async def run_generation_task(
         )
         return
 
-    await deliver_generation_audio(
-        telegram=telegram,
-        command=command,
-        audio_path=audio_path,
+    delivery_attempt_id = str(uuid.uuid4())
+    delivery_claimed = await claim_delivery_atomic(
+        gen_id=command.gen_id,
+        delivery_attempt_id=delivery_attempt_id,
     )
+    if delivery_claimed:
+        await deliver_generation_audio(
+            telegram=telegram,
+            command=command,
+            audio_path=audio_path,
+            delivery_attempt_id=delivery_attempt_id,
+        )
+    else:
+        log.info(
+            "Delivery for generation %s already claimed or completed, skipping (attempt=%s)",
+            command.gen_id,
+            attempt_id,
+        )
+        DELIVERY_TOTAL.labels(status="skipped").inc()
 
 
 @generation_broker.task(task_name="handle_generation_succeeded")

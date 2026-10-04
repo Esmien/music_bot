@@ -17,6 +17,7 @@ from aiohttp import web
 from core import router
 from core.broker import brokers
 from core.config import settings
+from core.instance import current_instance
 from core.lifecycle import shutdown_all
 from core.utils.error_notify import notify_owner
 from domains.generation.fsm import clear_orphaned_generation_flags
@@ -172,12 +173,15 @@ async def main() -> None:
     storage: RedisStorage | None = None
 
     try:
+        await current_instance.register()
+        await current_instance.cleanup_stale_instances()
         # Задачи генерации рестарт не переживают, а FSM в Redis — да:
         # чистим осиротевшие флаги generating, иначе пользователь
         # останется с «Дождитесь окончания текущей генерации» навсегда
-        await clear_orphaned_generation_flags()
-        # Реестр активных задач хранит uid в Redis: после рестарта записи
-        # неактуальны, сами задачи в памяти процесса не выжили
+        await clear_orphaned_generation_flags(skip_if_other_instances=True)
+        # Реестр активных задач хранит uid в Redis под ключом instance_id:
+        # после рестарта записи неактуальны, сами задачи в памяти не выжили.
+        # Каждый экземпляр чистит только свой набор — ownership-safe.
         await clear_active_tasks()
 
         bot = Bot(

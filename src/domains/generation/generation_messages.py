@@ -3,6 +3,7 @@ ACCESS_DENIED_TEXT = "Доступ закрыт. Авторизуйтесь за
 
 # Генерация
 GENERATION_ALREADY_RUNNING_TEXT = "Генерация уже идёт."
+GENERATION_RETRY_TEXT = "⏳ Сервер нейросети моргнул, переподключаюсь… (Попытка {attempt} из {max_attempts})"
 GENERATION_CANCEL_WAIT_TEXT = "⏳ Дождитесь окончания текущей генерации или нажмите «❌ Отмена»."
 GENERATION_FAILURE_TEXT = "😔 Не получилось сгенерировать. Попробуйте ещё раз чуть позже."
 GENERATION_IN_PROGRESS_TEXT = "🎼 Генерирую… Это может занять до 1–2 минут."

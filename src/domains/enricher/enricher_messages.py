@@ -81,6 +81,9 @@ RETURN_TO_START = "Возвращаю в главное меню."
 # Название песни
 WAITING_TITLE_MSG = f"🎤 Введите название песни или нажмите «Оставить как есть»:\n({DEFAULT_TITLE})"
 
+# Ошибки сохранения
+SAVE_PROMPT_FAILED_MSG = "😔 Не удалось сохранить описание песни. Попробуйте ещё раз — нажмите «🎵 Сгенерировать»."
+
 # Контексты уведомлений владельцу
 NOTIFY_ENRICHER_NOT_CONFIGURED_CTX = "Обогатитель не сконфигурирован (user={uid})"
-NOTIFY_SAVE_PROMPT_FAILED_CTX = "Не сохранился обогащённый промпт (user={uid})"
+NOTIFY_SAVE_PROMPT_FAILED_CTX = "Не сохранился обогащённый промпт (user={uid}, error={error})"

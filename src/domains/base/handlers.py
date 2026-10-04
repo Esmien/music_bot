@@ -5,14 +5,15 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from core.redis import request_generation_cancel
+from core.database.engine import get_session
+from core.redis import request_delivery_cancel, request_generation_cancel
 from core.utils.fsm_helpers import get_fsm_data
 from domains.auth.registries.auth_registry import add_pending_auth, discard_pending_auth
 from domains.auth.service import is_authorized
 from domains.base import base_messasges
 from domains.base.keyboards import CANCEL_BUTTON, get_main_keyboard
 from domains.base.service import get_last_generated_title
-from domains.generation.registries.task_registry import get_active_task
+from domains.generation.registries.task_registry import get_active_task, unregister_active_task
 from domains.generation.state_models import GenerationFlowState
 
 router = Router(name="base")
@@ -57,16 +58,40 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     """Отменяет текущий сценарий и возвращает пользователя в главное меню.
 
+    Отмена генерации выполняется через три механизма:
+    1. Redis generation cancel-токен — отменяет PENDING/PROCESSING → CANCELLED
+    2. Redis delivery cancel-токен — пропускает delivery после SUCCESS
+    3. asyncio.Task — отменяет локальную задачу в процессе бота (если генерация ещё не ушла в TaskIQ)
+
     Args:
         message: Сообщение с командой /cancel или кнопкой отмены.
         state: FSM-контекст текущего пользователя.
     """
-    flow_state = await get_fsm_data(state=state, model_class=GenerationFlowState)
-    if flow_state.gen_id is not None and flow_state.generating:
-        await request_generation_cancel(gen_id=flow_state.gen_id)
+    from sqlalchemy import select
 
+    from domains.generation.models import Generation, GenerationStatus
+
+    flow_state = await get_fsm_data(state=state, model_class=GenerationFlowState)
+
+    # Устанавливаем правильный Redis cancel-токен в зависимости от статуса генерации
+    if flow_state.gen_id is not None and flow_state.generating:
+        # Проверяем текущий статус генерации в БД
+        async with get_session() as session:
+            result = await session.execute(select(Generation.status).where(Generation.id == flow_state.gen_id))
+            current_status = result.scalar_one_or_none()
+
+        if current_status == GenerationStatus.SUCCESS:
+            # MP3 уже сохранён, отменяем только delivery
+            await request_delivery_cancel(gen_id=flow_state.gen_id)
+        elif current_status in (GenerationStatus.PENDING, GenerationStatus.PROCESSING):
+            # Генерация ещё в процессе, отменяем саму генерацию
+            await request_generation_cancel(gen_id=flow_state.gen_id)
+        # Для FAILED/CANCELLED токены не нужны
+
+    # Отменяем локальную задачу в процессе бота (если есть)
     task = get_active_task(uid=message.from_user.id)
     if task is not None and not task.done():
         task.cancel()
+        await unregister_active_task(uid=message.from_user.id, task=task)
     await state.clear()
     await message.answer(text=base_messasges.CANCEL_ACTION, reply_markup=get_main_keyboard())

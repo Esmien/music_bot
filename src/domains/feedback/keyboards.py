@@ -2,9 +2,10 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from domains.feedback.feedback_messages import FEEDBACK_FINISH_BUTTON, FEEDBACK_SEND_BUTTON
+from shared.callback_parser import FeedbackAction
 
-CB_FEEDBACK_SEND = "fb:send"
-CB_FEEDBACK_FINISH = "fb:finish"
+CB_FEEDBACK_SEND = f"fb:{FeedbackAction.SEND}"
+CB_FEEDBACK_FINISH = f"fb:{FeedbackAction.FINISH}"
 
 
 def get_feedback_keyboard(gen_id: int | None = None) -> InlineKeyboardMarkup:

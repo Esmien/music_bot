@@ -132,8 +132,12 @@ async def test_cmd_credits_401_no_retry(patched_auth_db, clean_auth_state, monke
 
 async def test_cmd_credits_429_retries_and_succeeds(patched_auth_db, clean_auth_state, monkeypatch):
     """HTTP 429 повторяется и при успешной следующей попытке возвращает данные."""
-    # Быстрый wait для тестов
-    monkeypatch.setattr(credits_service, "default_retry_wait", lambda retry_state: 0.0)
+
+    # Быстрый wait для тестов — важно, что это НЕ корутина, а обычная функция
+    def _instant_wait(retry_state):
+        return 0.0
+
+    monkeypatch.setattr(credits_service, "default_retry_wait", _instant_wait)
 
     responses = [
         FakeKeyInfoResponse(status_code=429, headers={"Retry-After": "0.01"}),

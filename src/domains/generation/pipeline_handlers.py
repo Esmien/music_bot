@@ -149,8 +149,9 @@ async def generate_and_send(message: Message, state: FSMContext, prompt: str, ti
 async def _acquire_slot(gen_context: GenerationContext) -> bool:
     """Атомарно занимает слот генерации пользователя.
 
-    Под пер-пользовательским локом проверяет флаг generating и выставляет
-    его вместе с маркером gen_id; регистрирует задачу в active_tasks.
+    Под пер-пользовательским локом проверяет FSM-флаг generating и выставляет
+    его вместе с маркером gen_id; регистрирует задачу в in-memory реестре
+    для локальной отмены.
 
     Args:
         gen_context: Контекст запуска генерации.

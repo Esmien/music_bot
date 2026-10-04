@@ -19,6 +19,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     logging:
       driver: json-file
       options:
@@ -44,6 +46,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   enricher-worker:
     build:
@@ -63,6 +67,21 @@ services:
       redis:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  migrate:
+    build:
+      context: ../
+      dockerfile: infra/Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME}-migrate
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - ../.env
+    depends_on:
+      postgres:
         condition: service_healthy
 
   postgres:
@@ -89,6 +108,19 @@ services:
     restart: always
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis-test:
+    image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME}-redis-test
+    profiles:
+      - test
+    ports:
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

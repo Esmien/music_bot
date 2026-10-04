@@ -1,4 +1,25 @@
-"""Контракты (порты) для междоменного взаимодействия без циклических зависимостей."""
+"""Telegram flow contracts для междоменного взаимодействия.
+
+Эти контракты являются Telegram-специфичные для application layer.
+
+Границы aiogram-зависимости:
+----------------------------
+Эти Protocol принимают aiogram-типы (Message, FSMContext) и используются в handlers
+для междоменных вызовов между доменами.
+
+Domain service НЕ должен импортировать aiogram и работает только
+с примитивами (int, str, bytes) и domain models.
+
+Разрешённые импорты aiogram:
+- src/domains/*/handlers.py — Telegram-хендлеры
+- src/shared/domain_ports.py — Реализации контрактов
+- src/shared/domain_contracts.py — Protocol с aiogram-типами (этот файл)
+- src/core/__init__.py — Сборка Router
+
+Запрещённые импорты aiogram:
+- src/domains/*/service.py — Domain services
+- src/core/**/*.py (кроме __init__.py) — Core utilities
+"""
 
 from typing import Protocol
 

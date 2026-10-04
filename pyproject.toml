@@ -25,6 +25,7 @@ taskiq = ">=0.11.7,<0.12.0"
 taskiq-aio-pika = ">=0.4.1,<0.5.0"
 tenacity = ">=8.0.0,<9.0.0"
 mypy = "^2.3.1"
+prometheus-client = ">=0.20.0,<1.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.4.2,<9.0.0"
@@ -41,6 +42,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.ruff]
 # Фиксируем версию Python для правильных подсказок
 target-version = "py312"
+force-exclude = true
 
 exclude = [
     ".git",
@@ -50,7 +52,8 @@ exclude = [
     "venv",
     "__pypackages__",
     "alembic",
-    "migrations"
+    "migrations",
+    "infra"
 ]
 
 line-length = 120
@@ -95,6 +98,8 @@ testpaths = ["src/domains", "tests"]
 markers = [
     "unit: быстрые изолированные тесты (сеть и БД замоканы)",
     "integration: тесты с реальной in-memory БД",
+    "redis: интеграционные тесты, требующие реального Redis-сервера",
+    "redis_real: интеграционные тесты с настоящим Redis (не fakeredis)",
 ]
 # Покрытие включено по умолчанию; источники заданы в [tool.coverage.run]
 addopts = "--cov --cov-report=term-missing:skip-covered"
