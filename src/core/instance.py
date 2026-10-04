@@ -9,12 +9,8 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from typing import TYPE_CHECKING
 
 from core.redis import redis_client
-
-if TYPE_CHECKING:
-    pass
 
 log = logging.getLogger(__name__)
 

@@ -22,7 +22,7 @@ from domains.generation.service import user_generation_lock
 def redis_connections(monkeypatch):
     """Создаёт два независимых соединения к одному fakeredis-серверу для эмуляции двух процессов.
 
-    Yields:
+    Returns:
         Кортеж (redis_client_1, redis_client_2).
     """
     server = fakeredis.FakeServer()
@@ -53,7 +53,7 @@ def redis_connections(monkeypatch):
 
     monkeypatch.setattr(fakeredis.aioredis.FakeRedis, "eval", fake_eval)
 
-    yield client1, client2
+    return client1, client2
 
 
 @pytest.fixture

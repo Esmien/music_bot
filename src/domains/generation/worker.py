@@ -5,6 +5,7 @@ import io
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from sqlalchemy import update
@@ -448,31 +449,20 @@ async def _handle_generation_failure(
     GENERATION_TOTAL.labels(status="failed").inc()
 
 
-@generation_broker.task(
-    task_name="run_generation",
-    queue_name=settings.rabbitmq.queue_name("generation"),
-)
-async def run_generation_task(
+def _make_progress_callback(
+    *,
     command: RunGeneration,
-    context: Context = TaskiqDepends(),
-) -> None:
-    """Запускает генерацию и публикует событие результата.
+    telegram: TelegramPort,
+) -> Callable[[str, float], Awaitable[None]]:
+    """Создаёт коллбэк для обновления прогресса генерации в Telegram.
 
     Args:
-        command: Команда генерации.
-        context: Контекст TaskIQ с TelegramPort.
-    """
-    state_dict = getattr(context, "state", getattr(context, "dependencies", {}))
-    telegram: TelegramPort = state_dict["telegram_port"]
+        command: Команда генерации с параметрами чата.
+        telegram: Порт Telegram для отправки сообщений.
 
-    attempt_id = str(uuid.uuid4())
-    claimed = await _claim_generation(
-        command=command,
-        attempt_id=attempt_id,
-        telegram=telegram,
-    )
-    if not claimed:
-        return
+    Returns:
+        Асинхронная функция обновления прогресса.
+    """
 
     async def on_progress(stage: str, fraction: float) -> None:
         if await is_generation_cancelled(gen_id=command.gen_id):
@@ -486,6 +476,24 @@ async def run_generation_task(
                 message_id=command.status_message_id,
                 text=f"🎼 {stage}\n{filled}{empty} {percent}%",
             )
+
+    return on_progress
+
+
+def _make_retry_callback(
+    *,
+    command: RunGeneration,
+    telegram: TelegramPort,
+) -> Callable[[int, int, BaseException | None], Awaitable[None]]:
+    """Создаёт коллбэк для уведомления о повторной попытке подключения в Telegram.
+
+    Args:
+        command: Команда генерации с параметрами чата.
+        telegram: Порт Telegram для отправки сообщений.
+
+    Returns:
+        Асинхронная функция уведомления о ретрае.
+    """
 
     async def on_retry(attempt: int, max_attempts: int, exc: BaseException | None) -> None:
         if await is_generation_cancelled(gen_id=command.gen_id):
@@ -503,6 +511,28 @@ async def run_generation_task(
                     "Failed to update status message with retry attempt (gen_id=%s)",
                     command.gen_id,
                 )
+
+    return on_retry
+
+
+async def _generate_and_persist_audio(
+    *,
+    command: RunGeneration,
+    attempt_id: str,
+    telegram: TelegramPort,
+) -> str | None:
+    """Выполняет генерацию трека и сохраняет артефакт в хранилище.
+
+    Args:
+        command: Команда генерации.
+        attempt_id: Идентификатор текущей попытки.
+        telegram: Порт Telegram для уведомлений.
+
+    Returns:
+        Путь к сохранённому файлу при успехе, иначе None.
+    """
+    on_progress = _make_progress_callback(command=command, telegram=telegram)
+    on_retry = _make_retry_callback(command=command, telegram=telegram)
 
     try:
         gen_start = time.monotonic()
@@ -533,21 +563,22 @@ async def run_generation_task(
         )
         if is_saved:
             GENERATION_TOTAL.labels(status="success").inc()
-        else:
-            log.warning(
-                "Generation %s was modified concurrently (attempt %s), skipping delivery",
-                command.gen_id,
-                attempt_id,
-            )
-            STALE_ATTEMPTS_TOTAL.inc()
-            return
+            return audio_path
+
+        log.warning(
+            "Generation %s was modified concurrently (attempt %s), skipping delivery",
+            command.gen_id,
+            attempt_id,
+        )
+        STALE_ATTEMPTS_TOTAL.inc()
+        return None
     except asyncio.CancelledError:
         await _handle_generation_cancel(
             command=command,
             attempt_id=attempt_id,
             telegram=telegram,
         )
-        return
+        return None
     except Exception as error:
         await _handle_generation_failure(
             command=command,
@@ -555,8 +586,24 @@ async def run_generation_task(
             telegram=telegram,
             error=error,
         )
-        return
+        return None
 
+
+async def _dispatch_delivery(
+    *,
+    command: RunGeneration,
+    telegram: TelegramPort,
+    audio_path: str,
+    attempt_id: str,
+) -> None:
+    """Организует попытку доставки готового аудио пользователю.
+
+    Args:
+        command: Команда генерации.
+        telegram: Порт Telegram.
+        audio_path: Путь к аудиофайлу.
+        attempt_id: Идентификатор попытки генерации.
+    """
     delivery_attempt_id = str(uuid.uuid4())
     delivery_claimed = await claim_delivery_atomic(
         gen_id=command.gen_id,
@@ -576,6 +623,48 @@ async def run_generation_task(
             attempt_id,
         )
         DELIVERY_TOTAL.labels(status="skipped").inc()
+
+
+@generation_broker.task(
+    task_name="run_generation",
+    queue_name=settings.rabbitmq.queue_name("generation"),
+)
+async def run_generation_task(
+    command: RunGeneration,
+    context: Context = TaskiqDepends(),
+) -> None:
+    """Запускает генерацию и публикует событие результата.
+
+    Args:
+        command: Команда генерации.
+        context: Контекст TaskIQ с TelegramPort.
+    """
+    state_dict = getattr(context, "state", getattr(context, "dependencies", {}))
+    telegram: TelegramPort = state_dict["telegram_port"]
+
+    attempt_id = str(uuid.uuid4())
+    claimed = await _claim_generation(
+        command=command,
+        attempt_id=attempt_id,
+        telegram=telegram,
+    )
+    if not claimed:
+        return
+
+    audio_path = await _generate_and_persist_audio(
+        command=command,
+        attempt_id=attempt_id,
+        telegram=telegram,
+    )
+    if audio_path is None:
+        return
+
+    await _dispatch_delivery(
+        command=command,
+        telegram=telegram,
+        audio_path=audio_path,
+        attempt_id=attempt_id,
+    )
 
 
 @generation_broker.task(task_name="handle_generation_succeeded")
