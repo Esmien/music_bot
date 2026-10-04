@@ -60,5 +60,5 @@ async def shutdown_db() -> None:
     try:
         await engine.dispose()
     except Exception as e:
-        log.error("Failed to dispose database engine: %s", e)
+        log.exception("Failed to dispose database engine: %s", e)
         raise

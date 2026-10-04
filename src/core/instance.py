@@ -9,12 +9,8 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from typing import TYPE_CHECKING
 
 from core.redis import redis_client
-
-if TYPE_CHECKING:
-    pass
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +53,7 @@ class BotInstance:
             log.info("Bot instance registered: %s", self.instance_id)
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         except Exception as e:
-            log.error("Failed to register bot instance %s: %s", self.instance_id, e)
+            log.exception("Failed to register bot instance %s: %s", self.instance_id, e)
             raise
 
     async def unregister(self) -> None:
@@ -77,7 +73,7 @@ class BotInstance:
             await redis_client.delete(self.heartbeat_key())
             log.info("Bot instance unregistered: %s", self.instance_id)
         except Exception as e:
-            log.error("Failed to unregister bot instance %s: %s", self.instance_id, e)
+            log.exception("Failed to unregister bot instance %s: %s", self.instance_id, e)
 
     async def _heartbeat_loop(self) -> None:
         """Периодически обновляет heartbeat в Redis."""
@@ -87,7 +83,7 @@ class BotInstance:
                 if not self._shutdown_requested:
                     await redis_client.set(self.heartbeat_key(), "1", ex=INSTANCE_HEARTBEAT_TTL)
             except asyncio.CancelledError:
-                break
+                raise
             except Exception as e:
                 log.warning("Heartbeat update failed for instance %s: %s", self.instance_id, e)
 

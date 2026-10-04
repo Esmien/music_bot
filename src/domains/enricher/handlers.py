@@ -129,7 +129,7 @@ async def _save_prompt_blocking(message: Message, uid: int, initial_prompt: str,
         await save_enriched_prompt(tg_id=uid, initial_prompt=initial_prompt, enriched_prompt=enriched_prompt)
         return True
     except (SQLAlchemyError, ValueError) as error:
-        log.error("Failed to save enriched prompt (user=%s, error=%s)", uid, error)
+        log.exception("Failed to save enriched prompt (user=%s, error=%s)", uid, error)
         with contextlib.suppress(Exception):
             await notify_owner(
                 bot=message.bot,
@@ -152,14 +152,13 @@ async def _publish_enrich_command(command: StartEnrichment) -> None:
     await enrich_prompt_task.kiq(command.model_dump())
 
 
-async def _enrich_and_present(status: Message, state: FSMContext, enrich_id: str, uid: int, chat_id: int) -> None:
+async def _enrich_and_present(state: FSMContext, uid: int, chat_id: int) -> None:
     """Публикует команду обогащения в очередь.
 
     Args:
-        status: Сообщение-лоадер (не используется, оставлено для совместимости).
         state: FSM-контекст пользователя.
-        enrich_id: Идентификатор текущего запуска (не используется в новой версии).
         uid: Telegram user_id пользователя.
+        chat_id: Telegram chat_id пользователя/чата.
     """
     flow_state = await get_fsm_data(state=state, model_class=EnrichmentFlowState)
     prompt = flow_state.prompt or ""
@@ -223,11 +222,9 @@ async def handle_idea(message: Message, state: FSMContext):
     flow_state.enrich_id = enrich_id
     await update_fsm_data(state=state, model=flow_state)
 
-    status = await message.answer(text=ENRICH_STARTS_MSG)
+    await message.answer(text=ENRICH_STARTS_MSG)
     await _enrich_and_present(
-        status=status,
         state=state,
-        enrich_id=enrich_id,
         uid=message.from_user.id,
         chat_id=message.chat.id,
     )
@@ -329,11 +326,9 @@ async def handle_prompt_edits(message: Message, state: FSMContext):
     flow_state.enrich_id = enrich_id
     await update_fsm_data(state=state, model=flow_state)
 
-    status = await message.answer(text=ENRICH_STARTS_WITH_EDITS)
+    await message.answer(text=ENRICH_STARTS_WITH_EDITS)
     await _enrich_and_present(
-        status=status,
         state=state,
-        enrich_id=enrich_id,
         uid=message.from_user.id,
         chat_id=message.chat.id,
     )
@@ -371,9 +366,7 @@ async def handle_prompt_retry(callback: CallbackQuery, state: FSMContext):
     with contextlib.suppress(Exception):
         await callback.message.edit_text(text=ENRICH_STARTS_MSG)
     await _enrich_and_present(
-        status=callback.message,
         state=state,
-        enrich_id=enrich_id,
         uid=callback.from_user.id,
         chat_id=callback.from_user.id,
     )

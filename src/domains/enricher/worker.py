@@ -109,7 +109,7 @@ async def enrich_prompt_task(
         )
 
     except Exception as exc:
-        logger.error(f"Enrichment failed for user_id={user_id}: {exc}", exc_info=True)
+        logger.exception(f"Enrichment failed for user_id={user_id}: {exc}", exc_info=True)
 
         # Уведомляем владельца
         await notify_owner(

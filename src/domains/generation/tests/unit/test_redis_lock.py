@@ -55,7 +55,7 @@ def redis_connections(monkeypatch):
 
     monkeypatch.setattr(service, "redis_client", client1)
 
-    yield client1, client2
+    return client1, client2
 
 
 @pytest.mark.unit

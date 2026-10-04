@@ -16,7 +16,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -60,6 +60,9 @@ LOCK_TTL_MS = 180_000
 DEFAULT_LOCK_TIMEOUT = 10.0
 
 _log_generation_retry = make_retry_logger("OpenRouter Generation API")
+
+# DEVIATION: Хранилище Event для ожидания и немедленного пробуждения при освобождении лока
+_user_lock_events: dict[int, asyncio.Event] = {}
 
 
 async def _before_sleep_generation(retry_state: Any) -> None:
@@ -147,11 +150,15 @@ async def user_generation_lock(
     """
     lock_key = f"bot:generation_lock:{user_id}"
     owner_token = str(uuid.uuid4())
+    event = _user_lock_events.setdefault(user_id, asyncio.Event())
 
     try:
         async with asyncio.timeout(DEFAULT_LOCK_TIMEOUT):
             while not await redis_client.set(name=lock_key, value=owner_token, nx=True, px=LOCK_TTL_MS):
-                await asyncio.sleep(retry_interval)
+                event.clear()
+                with suppress(TimeoutError):
+                    async with asyncio.timeout(retry_interval):
+                        await event.wait()
     except TimeoutError as err:
         REDIS_ERRORS_TOTAL.labels(operation="acquire_lock_timeout").inc()
         raise GenerationLockTimeoutError(
@@ -176,6 +183,8 @@ async def user_generation_lock(
                 REDIS_ERRORS_TOTAL.labels(operation="release_lock").inc()
                 log.exception("Failed to release Redis lock for user %s: %s", user_id, e)
                 raise
+        finally:
+            event.set()
 
 
 def _progress_bar(fraction: float, width: int = 10) -> str:
@@ -323,7 +332,6 @@ async def _parse_openrouter_sse(response: httpx.Response) -> AsyncGenerator[Audi
     async for line in response.aiter_lines():
         if len(line) > MAX_SSE_LINE_LENGTH:
             raise GenerationStreamError(f"SSE line exceeds limit: {len(line)} chars (max {MAX_SSE_LINE_LENGTH})")
-            # raise GenerationStreamError(f"SSE line exceeds limit of {MAX_SSE_LINE_LENGTH} characters")
 
         if not line.startswith("data:"):
             continue

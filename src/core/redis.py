@@ -158,5 +158,5 @@ async def shutdown_redis() -> None:
     try:
         await redis_client.aclose()
     except Exception as e:
-        log.error("Failed to close Redis connection: %s", e)
+        log.exception("Failed to close Redis connection: %s", e)
         raise
