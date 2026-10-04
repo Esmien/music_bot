@@ -171,24 +171,6 @@ kanban-plugin: board
 	- [ ] Retry policy реализована или явно запрещена.
 	- [ ] Все переходы state machine покрыты тестами.
 	- [ ] Документация не обещает exactly-once delivery через внешний Telegram API.
-- [ ] - [ ] AUD-043 — Устранить утечку `_user_lock_events` в `user_generation_lock`
-		  - Описание: `_user_lock_events: dict[int, asyncio.Event]` в `domains/generation/service.py` пополняется через `setdefault` на каждый новый `user_id` и никогда не очищается. Для долгоживущего процесса — медленная утечка памяти на уникальных пользователей. Дополнительно: `asyncio.Event`, созданный в одном event loop, может переиспользоваться из другого (актуально для тестов с pytest-asyncio).
-		  - Затрагивает:
-		- `domains/generation/service.py::user_generation_lock`
-		- `src/domains/generation/tests/unit/test_redis_lock.py`
-		  - Агенту:
-		1. Выбрать способ ограниченного хранения (один из):
-		   - `WeakValueDictionary[int, asyncio.Event]`;
-		   - `dict.pop(user_id, None)` в `finally` после `event.set()`, если лок действительно освобождён;
-		   - `contextvars`-based event.
-		2. Убедиться, что очистка не ломает сценарий «второй воркер ждёт пробуждения» — event нужен до момента, когда второй процесс увидел `.set()`.
-		3. Проверить, что после освобождения лока и `srem` ключа повторный захват того же `user_id` создаёт свежий event.
-		4. Добавить тест: два последовательных захвата одного `user_id` не оставляют мусора в `_user_lock_events`.
-		  - DoD:
-		- [ ] После освобождения лока запись в `_user_lock_events` удаляется или event переиспользуется безопасно.
-		- [ ] Есть тест на отсутствие роста словаря при N последовательных захватах.
-		- [ ] Существующие тесты Redis-лока проходят без изменений.
-		- [ ] Комментарий в коде объясняет, почему event нужен, и когда его можно удалять.
 - [ ] - [ ] AUD-044 — Верифицировать CI-профиль Redis для AUD-027 либо снять чекбокс
 		  - Описание: AUD-027 в разделе Done, чекбокс «[x] CI явно поднимает Redis для профиля» отмечен, но в репозитории нет CI-конфигов (`.github/workflows`, `.gitlab-ci.yml`, `Makefile`), а `test_redis_lock_real.py` делает `pytest.skip`, если Redis недоступен. «Skip при отсутствии» ≠ «CI требует Redis».
 		  - Затрагивает:
@@ -293,6 +275,25 @@ kanban-plugin: board
 
 ## Done
 
+- [x] AUD-043 — Устранить утечку `_user_lock_events` в `user_generation_lock`
+	  - Описание: `_user_lock_events: dict[int, asyncio.Event]` в `domains/generation/service.py` пополняется через `setdefault` на каждый новый `user_id` и никогда не очищается. Для долгоживущего процесса — медленная утечка памяти на уникальных пользователей. Дополнительно: `asyncio.Event`, созданный в одном event loop, может переиспользоваться из другого (актуально для тестов с pytest-asyncio).
+	  - Затрагивает:
+	- `domains/generation/service.py::user_generation_lock`
+	- `src/domains/generation/tests/unit/test_redis_lock.py`
+	  - Агенту:
+	1. Выбрать способ ограниченного хранения (один из):
+	   - `WeakValueDictionary[int, asyncio.Event]`;
+	   - `dict.pop(user_id, None)` в `finally` после `event.set()`, если лок действительно освобождён;
+	   - `contextvars`-based event.
+	2. Убедиться, что очистка не ломает сценарий «второй воркер ждёт пробуждения» — event нужен до момента, когда второй процесс увидел `.set()`.
+	3. Проверить, что после освобождения лока и `srem` ключа повторный захват того же `user_id` создаёт свежий event.
+	4. Добавить тест: два последовательных захвата одного `user_id` не оставляют мусора в `_user_lock_events`.
+	  - DoD:
+	- [x] После освобождения лока запись в `_user_lock_events` удаляется или event переиспользуется безопасно.
+	- [x] Есть тест на отсутствие роста словаря при N последовательных захватах.
+	- [x] Существующие тесты Redis-лока проходят без изменений.
+	- [x] Комментарий в коде объясняет, почему event нужен, и когда его можно удалять.
+
 - [x] AUD-042 — Исправить импорт `src.shared.ports.telegram` в `fake_telegram.py`
 	  - Описание: `src/shared/ports/fake_telegram.py` импортирует `from src.shared.ports.telegram import TelegramPort`. В Dockerfile `COPY src/ ./` и `WORKDIR /app`, поэтому модуль доступен как `shared.ports.telegram`. Импорт работает только при определённом `sys.path` (локально с `PYTHONPATH=src/..`), в контейнере упадёт. Скрытая мина CI/прод.
 	  - Затрагивает:
@@ -307,7 +308,6 @@ kanban-plugin: board
 	- [x] `FakeTelegramPort` импортируется в чистом окружении (`docker run ... python -c "from shared.ports.fake_telegram import FakeTelegramPort"`).
 	- [x] Все integration-тесты воркеров проходят без дополнительных `sys.path` манипуляций.
 	- [x] Ruff проходит.
-
 - [x] AUD-041 — Откатить retry для `GenerationStreamError` в `core/utils/retry.py`
 	  - Описание: AUD-040 расширил retry-политику так, что `GenerationStreamError` (обрыв SSE после успешного POST) теперь повторяется. Это нарушает контракт CONVENTIONS.md («повторный запрос запрещён после старта стриминга») и приводит к двойному списанию средств OpenRouter без гарантии результата. UX-задача AUD-040 решалась в другом слое и не требует этой правки.
 	  - Затрагивает:
