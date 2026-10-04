@@ -425,16 +425,17 @@ async def test_generate_song_real_no_retry_on_400(patch_openrouter):
         await gen.generate_song_real(prompt="промпт", gen_id=999)
 
 
-async def test_generate_song_real_stream_timeout_does_not_retry_post_request(monkeypatch):
-    """Сбой или таймаут во время чтения SSE-потока (post-request) не инициирует повторный POST-запрос."""
+async def test_generate_song_real_stream_timeout_retries_and_notifies_ux(monkeypatch):
+    """AUD-040: Сбой или таймаут во время чтения SSE-потока ретраится и вызывает on_retry."""
     stream_calls = 0
+    retry_notifications = []
 
     class FailingStreamResponse(FakeStreamResponse):
         async def aiter_lines(self):
             yield _audio_chunk(_b64(b"FIRST_PART"))
             raise gen.httpx.ReadTimeout("Stream read timed out")
 
-    class SingleCallClient:
+    class RetryingStreamClient:
         def __init__(self, **kwargs):
             pass
 
@@ -450,16 +451,72 @@ async def test_generate_song_real_stream_timeout_does_not_retry_post_request(mon
 
             class _StreamContext:
                 async def __aenter__(self):
-                    return FailingStreamResponse([])
+                    if stream_calls < 3:
+                        return FailingStreamResponse([])
+                    return FakeStreamResponse([_audio_chunk(_b64(b"RECOVERED")), "data: [DONE]"])
 
                 async def __aexit__(self, *exc_info):
                     return False
 
             return _StreamContext()
 
-    monkeypatch.setattr(gen.httpx, "AsyncClient", SingleCallClient)
+    async def fake_on_retry(attempt: int, max_attempts: int, exc: BaseException | None) -> None:
+        retry_notifications.append((attempt, max_attempts, type(exc)))
+
+    monkeypatch.setattr(gen.httpx, "AsyncClient", RetryingStreamClient)
+
+    result = await gen.generate_song_real(prompt="промпт", gen_id=999, on_retry=fake_on_retry)
+
+    assert result == b"RECOVERED"
+    assert stream_calls == 3
+    assert len(retry_notifications) == 2
+    assert retry_notifications[0][0] == 1
+    assert retry_notifications[0][1] == 3
+    assert issubclass(retry_notifications[0][2], gen.GenerationStreamError)
+    assert retry_notifications[1][0] == 2
+    assert retry_notifications[1][1] == 3
+
+
+async def test_generate_song_real_stream_failure_exhausts_retries_and_raises(monkeypatch):
+    """AUD-040: Окончательное падение всех ретраев при сбое стрима выбрасывает ошибку."""
+    stream_calls = 0
+    retry_notifications = []
+
+    class AlwaysFailingStreamResponse(FakeStreamResponse):
+        async def aiter_lines(self):
+            yield _audio_chunk(_b64(b"PARTIAL"))
+            raise gen.httpx.ReadTimeout("Stream read timed out")
+
+    class AlwaysFailingClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        def stream(self, *args, **kwargs):
+            nonlocal stream_calls
+            stream_calls += 1
+
+            class _StreamContext:
+                async def __aenter__(self):
+                    return AlwaysFailingStreamResponse([])
+
+                async def __aexit__(self, *exc_info):
+                    return False
+
+            return _StreamContext()
+
+    async def fake_on_retry(attempt: int, max_attempts: int, exc: BaseException | None) -> None:
+        retry_notifications.append(attempt)
+
+    monkeypatch.setattr(gen.httpx, "AsyncClient", AlwaysFailingClient)
 
     with pytest.raises(gen.GenerationStreamError, match="Stream interrupted during reading"):
-        await gen.generate_song_real(prompt="промпт", gen_id=999)
+        await gen.generate_song_real(prompt="промпт", gen_id=999, on_retry=fake_on_retry)
 
-    assert stream_calls == 1, "Must not retry POST request after stream has started"
+    assert stream_calls == 3
+    assert retry_notifications == [1, 2]
