@@ -10,42 +10,6 @@ kanban-plugin: board
 
 ## 🔴 P0 — BLOCKER
 
-- [ ] AUD-034 — Сделать migration job обязательным gate деплоя
-	  - Описание: `migrate` запускает Alembic, но `bot` и workers не зависят от успешного завершения миграции. Приложение может стартовать параллельно с обновлением схемы.
-	  - Затрагивает:
-	- `docker-compose.yml`
-	- `ARCHITECTURE.md`
-	- deployment runbook
-	- CI/deploy scripts
-	  - Агенту:
-	1. Выбрать и зафиксировать единый deployment protocol.
-	2. Предпочтительный вариант:
-	   - добавить migration profile;
-	   - запускать миграцию отдельным контролируемым шагом;
-	   - запускать bot/workers только после успешного exit code migration job.
-	3. Если используется Compose dependency gate:
-	   - добавить зависимость на `migrate`;
-	   - использовать `condition: service_completed_successfully`;
-	   - проверить поведение при активном и неактивном profile.
-	4. Проверить конфигурацию командой:
-	   ```bash
-	   docker compose config
-	   ```
-	5. Проверить, что добавленный profile действительно активируется в deploy-команде.
-	6. Обновить `ARCHITECTURE.md`, чтобы он описывал фактический протокол.
-	7. Добавить smoke-сценарий с намеренно падающей миграцией.
-	  - Важно:
-	- Нельзя добавить `profiles: ["migration"]`, но оставить `depends_on` на сервис, который не включён в активный profile.
-	- Нельзя считать healthcheck PostgreSQL эквивалентом успешного применения Alembic.
-	  - DoD:
-	- [ ] Migration protocol выбран и записан в runbook.
-	- [ ] Bot не стартует до успешного завершения миграции.
-	- [ ] Generation worker не стартует до успешного завершения миграции.
-	- [ ] Enricher worker не стартует до успешного завершения миграции.
-	- [ ] Ошибка Alembic возвращает ненулевой код.
-	- [ ] Ошибка миграции блокирует успешный deploy.
-	- [ ] `docker compose config` проходит.
-	- [ ] Документация соответствует фактическому Compose-поведению.
 
 
 ## 🟠 P1 — HIGH
@@ -216,7 +180,7 @@ kanban-plugin: board
 ## 🟢 P3 — LOW
 
 - [ ] AUD-033 — Feedback upsert compatibility
-- [ ] AUD-034 — Migration deployment gate
+- [x] AUD-034 — Migration deployment gate
 - [ ] AUD-035 — DeliveryStatus.SKIPPED
 - [ ] AUD-037 — Cancellation TOCTOU
 
@@ -226,6 +190,43 @@ kanban-plugin: board
 
 
 ## Done
+
+- [x] AUD-034 — Сделать migration job обязательным gate деплоя
+	  - Описание: `migrate` запускает Alembic, но `bot` и workers не зависят от успешного завершения миграции. Приложение может стартовать параллельно с обновлением схемы.
+	  - Затрагивает:
+	- `docker-compose.yml`
+	- `ARCHITECTURE.md`
+	- deployment runbook
+	- CI/deploy scripts
+	  - Агенту:
+	1. Выбрать и зафиксировать единый deployment protocol.
+	2. Предпочтительный вариант:
+	   - добавить migration profile;
+	   - запускать миграцию отдельным контролируемым шагом;
+	   - запускать bot/workers только после успешного exit code migration job.
+	3. Если используется Compose dependency gate:
+	   - добавить зависимость на `migrate`;
+	   - использовать `condition: service_completed_successfully`;
+	   - проверить поведение при активном и неактивном profile.
+	4. Проверить конфигурацию командой:
+	   ```bash
+	   docker compose config
+	   ```
+	5. Проверить, что добавленный profile действительно активируется в deploy-команде.
+	6. Обновить `ARCHITECTURE.md`, чтобы он описывал фактический протокол.
+	7. Добавить smoke-сценарий с намеренно падающей миграцией.
+	  - Важно:
+	- Нельзя добавить `profiles: ["migration"]`, но оставить `depends_on` на сервис, который не включён в активный profile.
+	- Нельзя считать healthcheck PostgreSQL эквивалентом успешного применения Alembic.
+	  - DoD:
+	- [x] Migration protocol выбран и записан в runbook.
+	- [x] Bot не стартует до успешного завершения миграции.
+	- [x] Generation worker не стартует до успешного завершения миграции.
+	- [x] Enricher worker не стартует до успешного завершения миграции.
+	- [x] Ошибка Alembic возвращает ненулевой код.
+	- [x] Ошибка миграции блокирует успешный deploy.
+	- [x] `docker compose config` проходит.
+	- [x] Документация соответствует фактическому Compose-поведению.
 
 - [x] AUD-033 — Исправить feedback upsert для SQLite и PostgreSQL
 	  - Описание: `feedback/service.py` безусловно использует PostgreSQL-specific `pg_insert`, хотя тестовая БД работает на SQLite. Это регрессия AUD-001 и блокер CI.
@@ -265,7 +266,6 @@ kanban-plugin: board
 	- [x] Параллельные callback-запросы не приводят к `FeedbackSaveError`.
 	- [x] `None` не затирает сохранённые значения.
 	- [x] AUD-019 не отмечен выполненным до прохождения SQLite и PostgreSQL тестов.
-
 - [x] AUD-040 — Настроить UX-ретрай для долгих стриминговых генераций (Tenacity/Taskiq)
 	  - Описание: При обрыве соединения с OpenRouter (ошибка `terminal [DONE] event not received` или read timeout) Tenacity выполняет тихий ретрай в фоне. Из-за этого пользователь не видит изменений и считает, что бот завис. Необходимо прокидывать статус ретрая в Telegram для обновления UI.
 	  - Затрагивает:
