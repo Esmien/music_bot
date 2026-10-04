@@ -323,7 +323,6 @@ async def _parse_openrouter_sse(response: httpx.Response) -> AsyncGenerator[Audi
     async for line in response.aiter_lines():
         if len(line) > MAX_SSE_LINE_LENGTH:
             raise GenerationStreamError(f"SSE line exceeds limit: {len(line)} chars (max {MAX_SSE_LINE_LENGTH})")
-            # raise GenerationStreamError(f"SSE line exceeds limit of {MAX_SSE_LINE_LENGTH} characters")
 
         if not line.startswith("data:"):
             continue

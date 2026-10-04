@@ -129,7 +129,7 @@ async def _save_prompt_blocking(message: Message, uid: int, initial_prompt: str,
         await save_enriched_prompt(tg_id=uid, initial_prompt=initial_prompt, enriched_prompt=enriched_prompt)
         return True
     except (SQLAlchemyError, ValueError) as error:
-        log.error("Failed to save enriched prompt (user=%s, error=%s)", uid, error)
+        log.exception("Failed to save enriched prompt (user=%s, error=%s)", uid, error)
         with contextlib.suppress(Exception):
             await notify_owner(
                 bot=message.bot,
