@@ -10,20 +10,6 @@ kanban-plugin: board
 
 ## 🔴 P0 — BLOCKER
 
-- [ ] - [ ] AUD-042 — Исправить импорт `src.shared.ports.telegram` в `fake_telegram.py`
-		  - Описание: `src/shared/ports/fake_telegram.py` импортирует `from src.shared.ports.telegram import TelegramPort`. В Dockerfile `COPY src/ ./` и `WORKDIR /app`, поэтому модуль доступен как `shared.ports.telegram`. Импорт работает только при определённом `sys.path` (локально с `PYTHONPATH=src/..`), в контейнере упадёт. Скрытая мина CI/прод.
-		  - Затрагивает:
-		- `src/shared/ports/fake_telegram.py`
-		- проверить все импорты `FakeTelegramPort` в тестах
-		  - Агенту:
-		1. Заменить `from src.shared.ports.telegram import TelegramPort` на `from shared.ports.telegram import TelegramPort`.
-		2. Поиском по репозиторию убедиться, что нигде больше нет `from src.` или `import src.`.
-		3. Проверить `src/conftest.py` и `tests/conftest.py` — там есть `from src.conftest import ...`, это осознанное решение для root-level conftest, не трогать.
-		  - DoD:
-		- [ ] `grep -rn "from src\." src/` не находит импортов внутри runtime-кода.
-		- [ ] `FakeTelegramPort` импортируется в чистом окружении (`docker run ... python -c "from shared.ports.fake_telegram import FakeTelegramPort"`).
-		- [ ] Все integration-тесты воркеров проходят без дополнительных `sys.path` манипуляций.
-		- [ ] Ruff проходит.
 
 
 ## 🟠 P1 — HIGH
@@ -307,6 +293,21 @@ kanban-plugin: board
 
 ## Done
 
+- [x] AUD-042 — Исправить импорт `src.shared.ports.telegram` в `fake_telegram.py`
+	  - Описание: `src/shared/ports/fake_telegram.py` импортирует `from src.shared.ports.telegram import TelegramPort`. В Dockerfile `COPY src/ ./` и `WORKDIR /app`, поэтому модуль доступен как `shared.ports.telegram`. Импорт работает только при определённом `sys.path` (локально с `PYTHONPATH=src/..`), в контейнере упадёт. Скрытая мина CI/прод.
+	  - Затрагивает:
+	- `src/shared/ports/fake_telegram.py`
+	- проверить все импорты `FakeTelegramPort` в тестах
+	  - Агенту:
+	1. Заменить `from src.shared.ports.telegram import TelegramPort` на `from shared.ports.telegram import TelegramPort`.
+	2. Поиском по репозиторию убедиться, что нигде больше нет `from src.` или `import src.`.
+	3. Проверить `src/conftest.py` и `tests/conftest.py` — там есть `from src.conftest import ...`, это осознанное решение для root-level conftest, не трогать.
+	  - DoD:
+	- [x] `grep -rn "from src\." src/` не находит импортов внутри runtime-кода.
+	- [x] `FakeTelegramPort` импортируется в чистом окружении (`docker run ... python -c "from shared.ports.fake_telegram import FakeTelegramPort"`).
+	- [x] Все integration-тесты воркеров проходят без дополнительных `sys.path` манипуляций.
+	- [x] Ruff проходит.
+
 - [x] AUD-041 — Откатить retry для `GenerationStreamError` в `core/utils/retry.py`
 	  - Описание: AUD-040 расширил retry-политику так, что `GenerationStreamError` (обрыв SSE после успешного POST) теперь повторяется. Это нарушает контракт CONVENTIONS.md («повторный запрос запрещён после старта стриминга») и приводит к двойному списанию средств OpenRouter без гарантии результата. UX-задача AUD-040 решалась в другом слое и не требует этой правки.
 	  - Затрагивает:
@@ -327,7 +328,6 @@ kanban-plugin: board
 	- [x] Есть unit-тест: `stream_calls == 1` после `ReadTimeout` в `aiter_lines`.
 	- [x] `CONVENTIONS.md` и `ARCHITECTURE.md` соответствуют коду.
 	- [x] DoD AUD-040 пересмотрен: чекбокс «проверка флага отмены в `_before_sleep_generation`» остаётся, чекбоксы про retry на post-request снимаются.
-
 - [x] AUD-034 — Сделать migration job обязательным gate деплоя
 	  - Описание: `migrate` запускает Alembic, но `bot` и workers не зависят от успешного завершения миграции. Приложение может стартовать параллельно с обновлением схемы.
 	  - Затрагивает:

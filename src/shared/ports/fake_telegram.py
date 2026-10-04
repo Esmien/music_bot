@@ -3,7 +3,7 @@
 import logging
 from typing import BinaryIO
 
-from src.shared.ports.telegram import TelegramPort
+from shared.ports.telegram import TelegramPort
 
 logger = logging.getLogger(__name__)
 
