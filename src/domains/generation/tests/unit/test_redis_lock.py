@@ -225,3 +225,38 @@ async def test_lua_release_lock_script_direct(redis_connections):
     result = await client1.eval(RELEASE_LOCK_SCRIPT, 1, lock_key, correct_token)
     assert result == 1
     assert await client1.exists(lock_key) == 0
+
+
+@pytest.mark.unit
+def test_user_lock_event_not_shared_across_loops(monkeypatch):
+    """AUD-043: Event для user_id, созданный в одном loop, не переиспользуется в другом.
+
+    Регрессия на RuntimeError 'Event is bound to a different event loop'.
+    """
+    import asyncio as aio
+
+    import fakeredis.aioredis
+
+    from domains.generation import service
+
+    server = fakeredis.FakeServer()
+    client = fakeredis.aioredis.FakeRedis(server=server, decode_responses=False)
+    monkeypatch.setattr(service, "redis_client", client)
+
+    async def acquire_and_release(user_id: int) -> None:
+        async with service.user_generation_lock(user_id=user_id):
+            await aio.sleep(0)
+
+    loop1 = aio.new_event_loop()
+    try:
+        loop1.run_until_complete(acquire_and_release(user_id=42))
+    finally:
+        loop1.close()
+
+    loop2 = aio.new_event_loop()
+    try:
+        loop2.run_until_complete(acquire_and_release(user_id=42))
+    finally:
+        loop2.close()
+
+    assert service._user_lock_events == {}

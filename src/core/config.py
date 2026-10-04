@@ -145,8 +145,8 @@ class RabbitMQConfig(BaseModelConfig):
 class RedisConfig(BaseModelConfig):
     """Настройки Redis для FSM и служебных реестров."""
 
-    REDIS_HOST: str
-    REDIS_PORT: int
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
     REDIS_VAULT: str = "0"
 
     @computed_field

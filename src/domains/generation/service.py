@@ -61,8 +61,10 @@ DEFAULT_LOCK_TIMEOUT = 10.0
 
 _log_generation_retry = make_retry_logger("OpenRouter Generation API")
 
-# DEVIATION: Хранилище Event для ожидания и немедленного пробуждения при освобождении лока
-_user_lock_events: dict[int, asyncio.Event] = {}
+# DEVIATION: Event привязан к конкретному loop; в pytest-asyncio каждый тест
+# получает новый loop. Ключ включает id(loop), чтобы не переиспользовать
+# Event между loop'ами. В проде loop один на процесс — ключ всегда один.
+_user_lock_events: dict[tuple[int, int], asyncio.Event] = {}
 
 
 async def _before_sleep_generation(retry_state: Any) -> None:
@@ -150,7 +152,11 @@ async def user_generation_lock(
     """
     lock_key = f"bot:generation_lock:{user_id}"
     owner_token = str(uuid.uuid4())
-    event = _user_lock_events.setdefault(user_id, asyncio.Event())
+    loop = asyncio.get_running_loop()
+    event_key = (id(loop), user_id)
+    event = _user_lock_events.get(event_key)
+    if event is None:
+        event = _user_lock_events[event_key] = asyncio.Event()
 
     try:
         async with asyncio.timeout(DEFAULT_LOCK_TIMEOUT):
@@ -161,6 +167,8 @@ async def user_generation_lock(
                         await event.wait()
     except TimeoutError as err:
         REDIS_ERRORS_TOTAL.labels(operation="acquire_lock_timeout").inc()
+        if _user_lock_events.get(event_key) is event:
+            _user_lock_events.pop(event_key, None)
         raise GenerationLockTimeoutError(
             f"Failed to acquire generation lock for user {user_id} within {DEFAULT_LOCK_TIMEOUT}s"
         ) from err
@@ -185,6 +193,8 @@ async def user_generation_lock(
                 raise
         finally:
             event.set()
+            if _user_lock_events.get(event_key) is event:
+                _user_lock_events.pop(event_key, None)
 
 
 def _progress_bar(fraction: float, width: int = 10) -> str:

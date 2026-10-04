@@ -110,10 +110,6 @@ def is_retryable_error(exception: BaseException) -> bool:
     Returns:
         True, если запрос можно повторить, иначе False.
     """
-    # DEVIATION: AUD-040 включает GenerationStreamError в повторяемые ошибки с UX-уведомлением
-    if isinstance(exception, GenerationStreamError):
-        return True
-
     # Транзиентные сетевые ошибки httpx
     if isinstance(exception, (httpx.TimeoutException, httpx.ConnectError)):
         return True
@@ -186,6 +182,8 @@ def make_retry_logger(service_name: str) -> Callable[[Any], None]:
         attempt = retry_state.attempt_number
         exception = retry_state.outcome.exception() if retry_state.outcome else None
         gen_id = retry_state.kwargs.get("gen_id", "none") if retry_state.kwargs else "none"
+        # GenerationStreamError сюда не попадает: predicate возвращает False,
+        # но если политика изменится — фаза уже готова
         phase = "post-request" if isinstance(exception, GenerationStreamError) else "pre-request"
         log.warning(
             "Retry attempt %d for %s (gen_id=%s, phase=%s) due to %s: %s",
