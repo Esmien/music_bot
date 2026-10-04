@@ -87,7 +87,7 @@ class BotInstance:
                 if not self._shutdown_requested:
                     await redis_client.set(self.heartbeat_key(), "1", ex=INSTANCE_HEARTBEAT_TTL)
             except asyncio.CancelledError:
-                break
+                raise
             except Exception as e:
                 log.warning("Heartbeat update failed for instance %s: %s", self.instance_id, e)
 
