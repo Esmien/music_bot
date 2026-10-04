@@ -59,31 +59,21 @@ LOCK_TTL_MS = 180_000
 # Таймаут ожидания захвата лока в секундах
 DEFAULT_LOCK_TIMEOUT = 10.0
 
-_log_generation_retry = None
-
-
-async def _get_logger() -> Callable[[Any], Any]:
-    """Получает logger для retry с поддержкой async."""
-    global _log_generation_retry
-    if _log_generation_retry is None:
-        _log_generation_retry = await make_retry_logger("OpenRouter Generation API")
-    return _log_generation_retry
+_log_generation_retry = make_retry_logger("OpenRouter Generation API")
 
 
 async def _before_sleep_generation(retry_state: Any) -> None:
     """Коллбэк before_sleep для логирования и отправки UX-уведомления о ретрае.
-    
+
     Проверяет флаг отмены генерации перед каждой попыткой retry.
     Извлекает и вызывает пользовательский on_retry коллбэк для обновления UI.
     """
-    logger = await _get_logger()
-    await logger(retry_state)
+    _log_generation_retry(retry_state)
 
     # Проверяем отмену генерации перед retry
     gen_id = retry_state.kwargs.get("gen_id") if retry_state.kwargs else None
-    if gen_id is not None:
-        if await is_generation_cancelled(gen_id=gen_id):
-            raise asyncio.CancelledError
+    if gen_id is not None and await is_generation_cancelled(gen_id=gen_id):
+        raise asyncio.CancelledError
 
     on_retry: RetryCallback | None = None
     if retry_state.kwargs:

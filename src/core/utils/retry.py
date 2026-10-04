@@ -172,7 +172,7 @@ class wait_retry_after_or_exponential(wait_base):
         return float(self.fallback(retry_state))
 
 
-async def make_retry_logger(service_name: str) -> Callable[[Any], Any]:
+def make_retry_logger(service_name: str) -> Callable[[Any], None]:
     """Создаёт колбэк before_sleep для логирования попыток повтора с gen_id и фазой.
 
     Args:
@@ -182,7 +182,7 @@ async def make_retry_logger(service_name: str) -> Callable[[Any], Any]:
         Функция-обработчик для tenacity before_sleep.
     """
 
-    async def _log_attempt(retry_state: Any) -> None:
+    def _log_attempt(retry_state: Any) -> None:
         attempt = retry_state.attempt_number
         exception = retry_state.outcome.exception() if retry_state.outcome else None
         gen_id = retry_state.kwargs.get("gen_id", "none") if retry_state.kwargs else "none"

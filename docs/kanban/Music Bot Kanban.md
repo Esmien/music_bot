@@ -223,7 +223,11 @@ kanban-plugin: board
 
 ## In Progress
 
-- [ ] AUD-033 — Исправить feedback upsert для SQLite и PostgreSQL
+
+
+## Done
+
+- [x] AUD-033 — Исправить feedback upsert для SQLite и PostgreSQL
 	  - Описание: `feedback/service.py` безусловно использует PostgreSQL-specific `pg_insert`, хотя тестовая БД работает на SQLite. Это регрессия AUD-001 и блокер CI.
 	  - Затрагивает:
 	- `feedback/service.py`
@@ -254,16 +258,13 @@ kanban-plugin: board
 	- два параллельных вызова `save_feedback` на SQLite;
 	- PostgreSQL integration test для atomic upsert.
 	  - DoD:
-	- [ ] `test_services_feedback.py` проходит на SQLite.
-	- [ ] SQLite не компилирует PostgreSQL-specific `Insert`.
-	- [ ] PostgreSQL upsert проходит integration test.
-	- [ ] Для одной генерации существует не более одной feedback-записи.
-	- [ ] Параллельные callback-запросы не приводят к `FeedbackSaveError`.
-	- [ ] `None` не затирает сохранённые значения.
-	- [ ] AUD-019 не отмечен выполненным до прохождения SQLite и PostgreSQL тестов.
-
-
-## Done
+	- [x] `test_services_feedback.py` проходит на SQLite.
+	- [x] SQLite не компилирует PostgreSQL-specific `Insert`.
+	- [x] PostgreSQL upsert проходит integration test.
+	- [x] Для одной генерации существует не более одной feedback-записи.
+	- [x] Параллельные callback-запросы не приводят к `FeedbackSaveError`.
+	- [x] `None` не затирает сохранённые значения.
+	- [x] AUD-019 не отмечен выполненным до прохождения SQLite и PostgreSQL тестов.
 
 - [x] AUD-040 — Настроить UX-ретрай для долгих стриминговых генераций (Tenacity/Taskiq)
 	  - Описание: При обрыве соединения с OpenRouter (ошибка `terminal [DONE] event not received` или read timeout) Tenacity выполняет тихий ретрай в фоне. Из-за этого пользователь не видит изменений и считает, что бот завис. Необходимо прокидывать статус ретрая в Telegram для обновления UI.
