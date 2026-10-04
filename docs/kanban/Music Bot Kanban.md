@@ -10,6 +10,27 @@ kanban-plugin: board
 
 ## 🔴 P0 — BLOCKER
 
+- [ ] - [ ] AUD-040 — Настроить UX-ретрай для долгих стриминговых генераций (Tenacity/Taskiq)
+		  - Описание: При обрыве соединения с OpenRouter (ошибка `terminal [DONE] event not received` или read timeout) Tenacity выполняет тихий ретрай в фоне. Из-за этого пользователь не видит изменений и считает, что бот завис. Необходимо прокидывать статус ретрая в Telegram для обновления UI.
+		  - Затрагивает:
+		- `domains/generation/worker.py`
+		- `domains/generation/service.py` (где настроен Tenacity)
+		- `domains/base/handlers.py` или модуль нотификаций Telegram
+		- `ARCHITECTURE.md`
+		  - Агенту:
+		1. Увеличить `read` и `connect` таймауты HTTP-клиента (например, `httpx.Timeout(read=300.0)`) для долгих запросов генерации аудио.
+		2. Добавить кастомный коллбэк (параметр `before_sleep` или `after` в декораторе `@retry` библиотеки Tenacity) в функции, выполняющей запрос.
+		3. Выбрать и зафиксировать подход к обновлению UI:
+		   - прямой вызов API Telegram из Taskiq-воркера (потребует инициализации бота);
+		   - публикация event'а о ретрае в Redis (Pub/Sub), который будет слушать отдельный сервис-апдейтер.
+		4. В коллбэке ретрая формировать сообщение для пользователя (например: "Сервер нейросети моргнул, переподключаюсь... (Попытка N из M)").
+		5. Убедиться, что при исчерпании всех попыток Tenacity выбрасывает ошибку в Taskiq, и корректно отрабатывает `handle_generation_failed`.
+		  - DoD:
+		- [ ] HTTP-клиент использует явно заданные увеличенные таймауты для OpenRouter.
+		- [ ] При `GenerationStreamError` или `Timeout` UI в Telegram обновляется, информируя пользователя о номере попытки.
+		- [ ] Подход к пробросу UI-уведомлений из воркера зафиксирован в `ARCHITECTURE.md`.
+		- [ ] Написан unit-тест, проверяющий срабатывание механизма обновления UI при симуляции падения стрима.
+		- [ ] Окончательное падение всех ретраев переводит статус в `FAILED` и отправляет финальное уведомление пользователю.
 - [ ] AUD-033 — Исправить feedback upsert для SQLite и PostgreSQL
 	  - Описание: `feedback/service.py` безусловно использует PostgreSQL-specific `pg_insert`, хотя тестовая БД работает на SQLite. Это регрессия AUD-001 и блокер CI.
 	  - Затрагивает:
@@ -278,7 +299,6 @@ kanban-plugin: board
 	- [x] Cancellation flow соответствует коду.
 	- [x] Feedback contract соответствует ORM-модели.
 	- [x] Все ссылки в документации проверены.
-
 - [x] AUD-031 — Добавить метрики generation и delivery lifecycle
 	  - Описание: текущие логи содержат контекст, но нет агрегируемых метрик для дорогих и долгих операций.
 	  - ТЗ:
@@ -517,6 +537,6 @@ kanban-plugin: board
 
 %% kanban:settings
 ```
-{"kanban-plugin":"board","list-collapse":[true,true,true,true,false,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
+{"kanban-plugin":"board","list-collapse":[true,false,true,true,false,false,false,false],"show-checkboxes":false,"move-tags":true,"tag-action":"obsidian"}
 ```
 %%
