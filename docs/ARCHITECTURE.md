@@ -237,13 +237,13 @@
         │     ├─> MOCK_MODE: локальный mock-файл (mock_generation.json)
         │     └─> OpenRouter: SSE-поток и сборка MP3 из base64-чанков
         │           ├─> httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0) для долгих стримов
-        │           ├─> retry-политика с экспоненциальным backoff (Tenacity, max 3 попытки)
+        │           ├─> retry-политика с экспоненциальным backoff (Tenacity, max 3 попытки, только pre-request)
         │           ├─> проверка флага отмены через Redis перед каждой попыткой retry
         │           ├─> проброс статуса ретрая в Telegram через on_retry коллбэк:
         │           │     └─> воркер передаёт on_retry в service.py
         │           │     └─> service вызывает on_retry при before_sleep Tenacity
         │           │     └─> воркер обновляет статусное сообщение пользователя с номером попытки
-        │           ├─> при сбое стрима (GenerationStreamError, TimeoutException) выполняется retry
+        │           ├─> при сбое стрима (post-request) retry строго запрещён во избежание списаний
         │           └─> отправка прогресса через TelegramPort
         ├─> отправка аудио через TelegramPort
         ├─> PostgreSQL: обновление статуса генерации на SUCCESS
