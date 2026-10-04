@@ -155,7 +155,12 @@ async def test_enrich_prompt_401_no_retry(monkeypatch):
 
 async def test_enrich_prompt_429_retries_with_retry_after(monkeypatch):
     """HTTP 429 вызывает повторные попытки с учётом Retry-After."""
-    monkeypatch.setattr(enricher, "default_retry_wait", lambda retry_state: 0.0)
+
+    # Быстрый wait для тестов — важно, что это НЕ корутина, а обычная функция
+    def _instant_wait(retry_state):
+        return 0.0
+
+    monkeypatch.setattr(enricher, "default_retry_wait", _instant_wait)
 
     request = httpx.Request("POST", "http://test")
     resp_429 = httpx.Response(429, headers={"Retry-After": "0.01"}, request=request)

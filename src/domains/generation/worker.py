@@ -28,6 +28,7 @@ from core.redis import (  # type: ignore[attr-defined]
     is_generation_cancelled,
 )
 from core.utils.error_notify import notify_owner  # type: ignore[attr-defined]
+from domains.generation.generation_messages import GENERATION_RETRY_TEXT
 from domains.generation.models import Generation, GenerationStatus  # type: ignore[attr-defined]
 from domains.generation.service import (  # type: ignore[attr-defined]
     claim_delivery_atomic,
@@ -486,9 +487,31 @@ async def run_generation_task(
                 text=f"🎼 {stage}\n{filled}{empty} {percent}%",
             )
 
+    async def on_retry(attempt: int, max_attempts: int, exc: BaseException | None) -> None:
+        if await is_generation_cancelled(gen_id=command.gen_id):
+            raise asyncio.CancelledError
+        if command.status_message_id is not None:
+            text = GENERATION_RETRY_TEXT.format(attempt=attempt, max_attempts=max_attempts)
+            try:
+                await telegram.edit_message(
+                    chat_id=command.chat_id,
+                    message_id=command.status_message_id,
+                    text=text,
+                )
+            except Exception:
+                log.warning(
+                    "Failed to update status message with retry attempt (gen_id=%s)",
+                    command.gen_id,
+                )
+
     try:
         gen_start = time.monotonic()
-        audio_bytes = await run_generation(prompt=command.prompt, gen_id=command.gen_id, on_progress=on_progress)
+        audio_bytes = await run_generation(
+            prompt=command.prompt,
+            gen_id=command.gen_id,
+            on_progress=on_progress,
+            on_retry=on_retry,
+        )
         GENERATION_LATENCY_SECONDS.observe(time.monotonic() - gen_start)
 
         if await is_generation_cancelled(gen_id=command.gen_id):

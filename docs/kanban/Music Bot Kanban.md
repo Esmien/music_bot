@@ -10,101 +10,6 @@ kanban-plugin: board
 
 ## 🔴 P0 — BLOCKER
 
-- [ ] - [ ] AUD-040 — Настроить UX-ретрай для долгих стриминговых генераций (Tenacity/Taskiq)
-		  - Описание: При обрыве соединения с OpenRouter (ошибка `terminal [DONE] event not received` или read timeout) Tenacity выполняет тихий ретрай в фоне. Из-за этого пользователь не видит изменений и считает, что бот завис. Необходимо прокидывать статус ретрая в Telegram для обновления UI.
-		  - Затрагивает:
-		- `domains/generation/worker.py`
-		- `domains/generation/service.py` (где настроен Tenacity)
-		- `domains/base/handlers.py` или модуль нотификаций Telegram
-		- `ARCHITECTURE.md`
-		  - Агенту:
-		1. Увеличить `read` и `connect` таймауты HTTP-клиента (например, `httpx.Timeout(read=300.0)`) для долгих запросов генерации аудио.
-		2. Добавить кастомный коллбэк (параметр `before_sleep` или `after` в декораторе `@retry` библиотеки Tenacity) в функции, выполняющей запрос.
-		3. Выбрать и зафиксировать подход к обновлению UI:
-		   - прямой вызов API Telegram из Taskiq-воркера (потребует инициализации бота);
-		   - публикация event'а о ретрае в Redis (Pub/Sub), который будет слушать отдельный сервис-апдейтер.
-		4. В коллбэке ретрая формировать сообщение для пользователя (например: "Сервер нейросети моргнул, переподключаюсь... (Попытка N из M)").
-		5. Убедиться, что при исчерпании всех попыток Tenacity выбрасывает ошибку в Taskiq, и корректно отрабатывает `handle_generation_failed`.
-		  - DoD:
-		- [ ] HTTP-клиент использует явно заданные увеличенные таймауты для OpenRouter.
-		- [ ] При `GenerationStreamError` или `Timeout` UI в Telegram обновляется, информируя пользователя о номере попытки.
-		- [ ] Подход к пробросу UI-уведомлений из воркера зафиксирован в `ARCHITECTURE.md`.
-		- [ ] Написан unit-тест, проверяющий срабатывание механизма обновления UI при симуляции падения стрима.
-		- [ ] Окончательное падение всех ретраев переводит статус в `FAILED` и отправляет финальное уведомление пользователю.
-- [ ] AUD-033 — Исправить feedback upsert для SQLite и PostgreSQL
-	  - Описание: `feedback/service.py` безусловно использует PostgreSQL-specific `pg_insert`, хотя тестовая БД работает на SQLite. Это регрессия AUD-001 и блокер CI.
-	  - Затрагивает:
-	- `feedback/service.py`
-	- feedback unit tests
-	- feedback concurrency tests
-	- AUD-019
-	  - Агенту:
-	1. Открыть `feedback/service.py`.
-	2. Проверить текущий dialect через `session.bind.dialect.name`.
-	3. Реализовать один из вариантов:
-	   - вернуть dialect-independent `SELECT → INSERT/UPDATE` с обработкой гонки;
-	   - использовать отдельную SQLite- и PostgreSQL-ветки;
-	   - использовать portable SQLAlchemy API, если он покрывает требуемый контракт.
-	4. Сохранить ownership-проверку:
-	   - `Generation.id == gen_id`;
-	   - `Generation.user_id == user_id`;
-	   - `Generation.status == SUCCESS`.
-	5. Сохранить правило частичного обновления:
-	   - `None` не затирает существующий `feedback`;
-	   - `None` не затирает существующий `is_liked`.
-	6. Обработать конкурентный `IntegrityError`, если выбранная стратегия его допускает.
-	7. Не использовать PostgreSQL insert при SQLite-сессии.
-	  - Тесты:
-	- тест обычного feedback save на SQLite;
-	- тест обновления только `is_liked`;
-	- тест обновления только `feedback`;
-	- тест запрета доступа к чужой генерации;
-	- два параллельных вызова `save_feedback` на SQLite;
-	- PostgreSQL integration test для atomic upsert.
-	  - DoD:
-	- [ ] `test_services_feedback.py` проходит на SQLite.
-	- [ ] SQLite не компилирует PostgreSQL-specific `Insert`.
-	- [ ] PostgreSQL upsert проходит integration test.
-	- [ ] Для одной генерации существует не более одной feedback-записи.
-	- [ ] Параллельные callback-запросы не приводят к `FeedbackSaveError`.
-	- [ ] `None` не затирает сохранённые значения.
-	- [ ] AUD-019 не отмечен выполненным до прохождения SQLite и PostgreSQL тестов.
-- [ ] AUD-034 — Сделать migration job обязательным gate деплоя
-	  - Описание: `migrate` запускает Alembic, но `bot` и workers не зависят от успешного завершения миграции. Приложение может стартовать параллельно с обновлением схемы.
-	  - Затрагивает:
-	- `docker-compose.yml`
-	- `ARCHITECTURE.md`
-	- deployment runbook
-	- CI/deploy scripts
-	  - Агенту:
-	1. Выбрать и зафиксировать единый deployment protocol.
-	2. Предпочтительный вариант:
-	   - добавить migration profile;
-	   - запускать миграцию отдельным контролируемым шагом;
-	   - запускать bot/workers только после успешного exit code migration job.
-	3. Если используется Compose dependency gate:
-	   - добавить зависимость на `migrate`;
-	   - использовать `condition: service_completed_successfully`;
-	   - проверить поведение при активном и неактивном profile.
-	4. Проверить конфигурацию командой:
-	   ```bash
-	   docker compose config
-	   ```
-	5. Проверить, что добавленный profile действительно активируется в deploy-команде.
-	6. Обновить `ARCHITECTURE.md`, чтобы он описывал фактический протокол.
-	7. Добавить smoke-сценарий с намеренно падающей миграцией.
-	  - Важно:
-	- Нельзя добавить `profiles: ["migration"]`, но оставить `depends_on` на сервис, который не включён в активный profile.
-	- Нельзя считать healthcheck PostgreSQL эквивалентом успешного применения Alembic.
-	  - DoD:
-	- [ ] Migration protocol выбран и записан в runbook.
-	- [ ] Bot не стартует до успешного завершения миграции.
-	- [ ] Generation worker не стартует до успешного завершения миграции.
-	- [ ] Enricher worker не стартует до успешного завершения миграции.
-	- [ ] Ошибка Alembic возвращает ненулевой код.
-	- [ ] Ошибка миграции блокирует успешный deploy.
-	- [ ] `docker compose config` проходит.
-	- [ ] Документация соответствует фактическому Compose-поведению.
 
 
 ## 🟠 P1 — HIGH
@@ -274,18 +179,116 @@ kanban-plugin: board
 
 ## 🟢 P3 — LOW
 
-
-
-## In Progress
-
 - [ ] AUD-033 — Feedback upsert compatibility
-- [ ] AUD-034 — Migration deployment gate
+- [x] AUD-034 — Migration deployment gate
 - [ ] AUD-035 — DeliveryStatus.SKIPPED
 - [ ] AUD-037 — Cancellation TOCTOU
 
 
+## In Progress
+
+
+
 ## Done
 
+- [x] AUD-034 — Сделать migration job обязательным gate деплоя
+	  - Описание: `migrate` запускает Alembic, но `bot` и workers не зависят от успешного завершения миграции. Приложение может стартовать параллельно с обновлением схемы.
+	  - Затрагивает:
+	- `docker-compose.yml`
+	- `ARCHITECTURE.md`
+	- deployment runbook
+	- CI/deploy scripts
+	  - Агенту:
+	1. Выбрать и зафиксировать единый deployment protocol.
+	2. Предпочтительный вариант:
+	   - добавить migration profile;
+	   - запускать миграцию отдельным контролируемым шагом;
+	   - запускать bot/workers только после успешного exit code migration job.
+	3. Если используется Compose dependency gate:
+	   - добавить зависимость на `migrate`;
+	   - использовать `condition: service_completed_successfully`;
+	   - проверить поведение при активном и неактивном profile.
+	4. Проверить конфигурацию командой:
+	   ```bash
+	   docker compose config
+	   ```
+	5. Проверить, что добавленный profile действительно активируется в deploy-команде.
+	6. Обновить `ARCHITECTURE.md`, чтобы он описывал фактический протокол.
+	7. Добавить smoke-сценарий с намеренно падающей миграцией.
+	  - Важно:
+	- Нельзя добавить `profiles: ["migration"]`, но оставить `depends_on` на сервис, который не включён в активный profile.
+	- Нельзя считать healthcheck PostgreSQL эквивалентом успешного применения Alembic.
+	  - DoD:
+	- [x] Migration protocol выбран и записан в runbook.
+	- [x] Bot не стартует до успешного завершения миграции.
+	- [x] Generation worker не стартует до успешного завершения миграции.
+	- [x] Enricher worker не стартует до успешного завершения миграции.
+	- [x] Ошибка Alembic возвращает ненулевой код.
+	- [x] Ошибка миграции блокирует успешный deploy.
+	- [x] `docker compose config` проходит.
+	- [x] Документация соответствует фактическому Compose-поведению.
+
+- [x] AUD-033 — Исправить feedback upsert для SQLite и PostgreSQL
+	  - Описание: `feedback/service.py` безусловно использует PostgreSQL-specific `pg_insert`, хотя тестовая БД работает на SQLite. Это регрессия AUD-001 и блокер CI.
+	  - Затрагивает:
+	- `feedback/service.py`
+	- feedback unit tests
+	- feedback concurrency tests
+	- AUD-019
+	  - Агенту:
+	1. Открыть `feedback/service.py`.
+	2. Проверить текущий dialect через `session.bind.dialect.name`.
+	3. Реализовать один из вариантов:
+	   - вернуть dialect-independent `SELECT → INSERT/UPDATE` с обработкой гонки;
+	   - использовать отдельную SQLite- и PostgreSQL-ветки;
+	   - использовать portable SQLAlchemy API, если он покрывает требуемый контракт.
+	4. Сохранить ownership-проверку:
+	   - `Generation.id == gen_id`;
+	   - `Generation.user_id == user_id`;
+	   - `Generation.status == SUCCESS`.
+	5. Сохранить правило частичного обновления:
+	   - `None` не затирает существующий `feedback`;
+	   - `None` не затирает существующий `is_liked`.
+	6. Обработать конкурентный `IntegrityError`, если выбранная стратегия его допускает.
+	7. Не использовать PostgreSQL insert при SQLite-сессии.
+	  - Тесты:
+	- тест обычного feedback save на SQLite;
+	- тест обновления только `is_liked`;
+	- тест обновления только `feedback`;
+	- тест запрета доступа к чужой генерации;
+	- два параллельных вызова `save_feedback` на SQLite;
+	- PostgreSQL integration test для atomic upsert.
+	  - DoD:
+	- [x] `test_services_feedback.py` проходит на SQLite.
+	- [x] SQLite не компилирует PostgreSQL-specific `Insert`.
+	- [x] PostgreSQL upsert проходит integration test.
+	- [x] Для одной генерации существует не более одной feedback-записи.
+	- [x] Параллельные callback-запросы не приводят к `FeedbackSaveError`.
+	- [x] `None` не затирает сохранённые значения.
+	- [x] AUD-019 не отмечен выполненным до прохождения SQLite и PostgreSQL тестов.
+- [x] AUD-040 — Настроить UX-ретрай для долгих стриминговых генераций (Tenacity/Taskiq)
+	  - Описание: При обрыве соединения с OpenRouter (ошибка `terminal [DONE] event not received` или read timeout) Tenacity выполняет тихий ретрай в фоне. Из-за этого пользователь не видит изменений и считает, что бот завис. Необходимо прокидывать статус ретрая в Telegram для обновления UI.
+	  - Затрагивает:
+	- `domains/generation/worker.py`
+	- `domains/generation/service.py` (где настроен Tenacity)
+	- `core/utils/retry.py`
+	- `ARCHITECTURE.md`
+	  - Агенту:
+	1. Увеличить `read` и `connect` таймауты HTTP-клиента (например, `httpx.Timeout(read=300.0)`) для долгих запросов генерации аудио.
+	2. Добавить кастомный коллбэк (параметр `before_sleep` или `after` в декораторе `@retry` библиотеки Tenacity) в функции, выполняющей запрос.
+	3. Выбрать и зафиксировать подход к обновлению UI:
+	   - прямой вызов API Telegram из Taskiq-воркера (потребует инициализации бота);
+	   - публикация event'а о ретрае в Redis (Pub/Sub), который будет слушать отдельный сервис-апдейтер.
+	4. В коллбэке ретрая формировать сообщение для пользователя (например: "Сервер нейросети моргнул, переподключаюсь... (Попытка N из M)").
+	5. Убедиться, что при исчерпании всех попыток Tenacity выбрасывает ошибку в Taskiq, и корректно отрабатывает `handle_generation_failed`.
+	6. Добавить проверку флага отмены генерации перед каждой попыткой retry.
+	  - DoD:
+	- [x] HTTP-клиент использует явно заданные увеличенные таймауты для OpenRouter (connect=30s, read=300s).
+	- [x] При `GenerationStreamError` или `Timeout` UI в Telegram обновляется, информируя пользователя о номере попытки.
+	- [x] Подход к пробросу UI-уведомлений из воркера зафиксирован в `ARCHITECTURE.md` с описанием механизма on_retry коллбэка.
+	- [x] Написан unit-тест, проверяющий срабатывание механизма обновления UI при симуляции падения стрима.
+	- [x] Окончательное падение всех ретраев переводит статус в `FAILED` и отправляет финальное уведомление пользователю.
+	- [x] Проверка флага отмены генерации выполняется в `_before_sleep_generation` перед каждым retry.
 - [x] AUD-032 — Удалить устаревшие architectural claims
 	  - Описание: часть документации описывает более строгую изоляцию и более сильную идемпотентность, чем реально реализовано.
 	  - ТЗ:
