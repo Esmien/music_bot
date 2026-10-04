@@ -110,9 +110,9 @@ def is_retryable_error(exception: BaseException) -> bool:
     Returns:
         True, если запрос можно повторить, иначе False.
     """
-    # Сбои чтения стрима (post-request) категорически запрещено повторять
+    # DEVIATION: AUD-040 включает GenerationStreamError в повторяемые ошибки с UX-уведомлением
     if isinstance(exception, GenerationStreamError):
-        return False
+        return True
 
     # Транзиентные сетевые ошибки httpx
     if isinstance(exception, (httpx.TimeoutException, httpx.ConnectError)):
@@ -172,7 +172,7 @@ class wait_retry_after_or_exponential(wait_base):
         return float(self.fallback(retry_state))
 
 
-def make_retry_logger(service_name: str) -> Callable[[Any], None]:
+async def make_retry_logger(service_name: str) -> Callable[[Any], Any]:
     """Создаёт колбэк before_sleep для логирования попыток повтора с gen_id и фазой.
 
     Args:
@@ -182,15 +182,17 @@ def make_retry_logger(service_name: str) -> Callable[[Any], None]:
         Функция-обработчик для tenacity before_sleep.
     """
 
-    def _log_attempt(retry_state: Any) -> None:
+    async def _log_attempt(retry_state: Any) -> None:
         attempt = retry_state.attempt_number
         exception = retry_state.outcome.exception() if retry_state.outcome else None
         gen_id = retry_state.kwargs.get("gen_id", "none") if retry_state.kwargs else "none"
+        phase = "post-request" if isinstance(exception, GenerationStreamError) else "pre-request"
         log.warning(
-            "Retry attempt %d for %s (gen_id=%s, phase=pre-request) due to %s: %s",
+            "Retry attempt %d for %s (gen_id=%s, phase=%s) due to %s: %s",
             attempt,
             service_name,
             gen_id,
+            phase,
             type(exception).__name__ if exception else "unknown",
             str(exception)[:200] if exception else "",
         )

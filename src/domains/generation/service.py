@@ -15,10 +15,11 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 from sqlalchemy import select, update
@@ -47,6 +48,8 @@ from domains.generation.models import Generation, GenerationStatus
 
 log = logging.getLogger(__name__)
 
+RetryCallback = Callable[[int, int, BaseException | None], Any]
+
 # Минимальный интервал между правками сообщения прогресса (лимиты Telegram)
 PROGRESS_EDIT_INTERVAL = 3.0
 
@@ -56,7 +59,48 @@ LOCK_TTL_MS = 180_000
 # Таймаут ожидания захвата лока в секундах
 DEFAULT_LOCK_TIMEOUT = 10.0
 
-_log_generation_retry = make_retry_logger("OpenRouter Generation API")
+_log_generation_retry = None
+
+
+async def _get_logger() -> Callable[[Any], Any]:
+    """Получает logger для retry с поддержкой async."""
+    global _log_generation_retry
+    if _log_generation_retry is None:
+        _log_generation_retry = await make_retry_logger("OpenRouter Generation API")
+    return _log_generation_retry
+
+
+async def _before_sleep_generation(retry_state: Any) -> None:
+    """Коллбэк before_sleep для логирования и отправки UX-уведомления о ретрае.
+    
+    Проверяет флаг отмены генерации перед каждой попыткой retry.
+    Извлекает и вызывает пользовательский on_retry коллбэк для обновления UI.
+    """
+    logger = await _get_logger()
+    await logger(retry_state)
+
+    # Проверяем отмену генерации перед retry
+    gen_id = retry_state.kwargs.get("gen_id") if retry_state.kwargs else None
+    if gen_id is not None:
+        if await is_generation_cancelled(gen_id=gen_id):
+            raise asyncio.CancelledError
+
+    on_retry: RetryCallback | None = None
+    if retry_state.kwargs:
+        on_retry = retry_state.kwargs.get("on_retry")
+    if on_retry is None and retry_state.args and len(retry_state.args) >= 4:
+        on_retry = retry_state.args[3]
+
+    if on_retry:
+        attempt = retry_state.attempt_number
+        max_attempts = 3
+        exc = retry_state.outcome.exception() if retry_state.outcome else None
+        try:
+            res = on_retry(attempt, max_attempts, exc)
+            if asyncio.iscoroutine(res):
+                await res
+        except Exception:
+            log.exception("Error executing on_retry callback")
 
 
 # Максимальный размер аудио в base64-символах (~30 МБ после декодирования).
@@ -460,10 +504,15 @@ def load_mock_audio() -> bytes:
     stop=DEFAULT_RETRY_STOP,
     wait=default_retry_wait,
     retry=default_retry_predicate,
-    before_sleep=_log_generation_retry,
+    before_sleep=_before_sleep_generation,
     reraise=True,
 )
-async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCallback | None = None) -> bytes:
+async def generate_song_real(
+    prompt: str,
+    gen_id: int,
+    on_progress: ProgressCallback | None = None,
+    on_retry: RetryCallback | None = None,
+) -> bytes:
     """Генерирует песню через OpenRouter, читая ответ как SSE-поток.
 
     Аудио приходит кусками в base64 внутри delta-чанков. Чтобы не держать
@@ -521,8 +570,14 @@ async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCall
     if await is_generation_cancelled(gen_id=gen_id):
         raise asyncio.CancelledError
 
+    # Увеличенные таймауты для долгих запросов стриминга генерации аудио (AUD-040):
+    # connect=30s: установление соединения с OpenRouter
+    # read=300s (5 минут): чтение SSE-потока генерации аудио
+    # write=30s: отправка запроса
+    # pool=30s: получение соединения из пула
+    timeout = httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)
     async with (
-        httpx.AsyncClient(timeout=180.0) as client,
+        httpx.AsyncClient(timeout=timeout) as client,
         client.stream(
             method="POST",
             url="https://openrouter.ai/api/v1/chat/completions",
@@ -549,7 +604,12 @@ async def generate_song_real(prompt: str, gen_id: int, on_progress: ProgressCall
     return audio_bytes
 
 
-async def run_generation(prompt: str, gen_id: int, on_progress: ProgressCallback) -> bytes:
+async def run_generation(
+    prompt: str,
+    gen_id: int,
+    on_progress: ProgressCallback,
+    on_retry: RetryCallback | None = None,
+) -> bytes:
     """Запускает генерацию: демо-ветка в MOCK_MODE или реальный сервис.
 
     Проверяет только generation cancel-токен (отмена PROCESSING → CANCELLED).
@@ -585,7 +645,12 @@ async def run_generation(prompt: str, gen_id: int, on_progress: ProgressCallback
         return load_mock_audio()
 
     # Отдаем реально сгенерированный файл, если генерация шла через API
-    return await generate_song_real(prompt=prompt, gen_id=gen_id, on_progress=on_progress)
+    return await generate_song_real(
+        prompt=prompt,
+        gen_id=gen_id,
+        on_progress=on_progress,
+        on_retry=on_retry,
+    )
 
 
 async def claim_delivery_atomic(gen_id: int, delivery_attempt_id: str) -> bool:

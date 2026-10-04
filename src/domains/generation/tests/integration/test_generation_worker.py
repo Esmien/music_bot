@@ -122,7 +122,7 @@ async def test_worker_publishes_success_event(monkeypatch: pytest.MonkeyPatch, t
     telegram = FakeTelegramPort()
     published_events = []
 
-    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress: Any, on_retry: Any = None) -> bytes:
         await on_progress(stage="Получаю аудио…", fraction=0.5)
         return b"audio_content"
 
@@ -178,7 +178,7 @@ async def test_worker_publishes_generation_failed_on_error(monkeypatch: pytest.M
     telegram = FakeTelegramPort()
     published_events = []
 
-    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress: Any, on_retry: Any = None) -> bytes:
         raise RuntimeError("API timeout error")
 
     async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
@@ -239,7 +239,7 @@ async def test_worker_marks_cancelled_generation_and_publishes_failure(
     session = FakeSession(generation)
     telegram = FakeTelegramPort()
 
-    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress: Any, on_retry: Any = None) -> bytes:
         await on_progress(stage="Получаю аудио…", fraction=0.5)
         return b"audio"
 
@@ -321,7 +321,7 @@ async def test_worker_telegram_delivery_failure_keeps_generation_success(
     telegram = FailingTelegramPort()
     published_events = []
 
-    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress: Any, on_retry: Any = None) -> bytes:
         return b"audio_content"
 
     def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
@@ -422,7 +422,7 @@ async def test_worker_atomic_claim_concurrent(monkeypatch: pytest.MonkeyPatch) -
         async def commit(self) -> None:
             pass
 
-    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress: Any, on_retry: Any = None) -> bytes:
         nonlocal call_count
         call_count += 1
         await asyncio.sleep(0.01)
@@ -470,7 +470,7 @@ async def test_worker_notify_owner_failure_does_not_prevent_db_update(
     telegram = FakeTelegramPort()
     published_events = []
 
-    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress: Any, on_retry: Any = None) -> bytes:
         raise RuntimeError("OpenRouter 500 internal server error")
 
     async def fake_publish_event(*, task_name: str, event: Any, task: Any) -> None:
@@ -577,7 +577,7 @@ async def test_worker_save_audio_failure_marks_generation_failed(
     telegram = FakeTelegramPort()
     published_events = []
 
-    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress: Any, on_retry: Any = None) -> bytes:
         return b"valid_audio_bytes"
 
     def failing_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
@@ -693,7 +693,7 @@ async def test_concurrent_generation_worker_execution_with_barrier(
         async def commit(self) -> None:
             pass
 
-    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress: Any, on_retry: Any = None) -> bytes:
         nonlocal active_generations, max_parallel_generations, api_calls
         active_generations += 1
         max_parallel_generations = max(max_parallel_generations, active_generations)
@@ -785,7 +785,7 @@ async def test_worker_records_lifecycle_metrics(monkeypatch: pytest.MonkeyPatch,
     session = FakeSession(generation)
     telegram = FakeTelegramPort()
 
-    async def fake_run_generation(prompt: str, gen_id: int, on_progress) -> bytes:
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress: Any, on_retry: Any = None) -> bytes:
         return b"metric_audio"
 
     def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
@@ -816,3 +816,43 @@ async def test_worker_records_lifecycle_metrics(monkeypatch: pytest.MonkeyPatch,
     if hasattr(GENERATION_TOTAL.labels(status="success"), "_value"):
         assert GENERATION_TOTAL.labels(status="success")._value.get() == initial_gen_success + 1
         assert DELIVERY_TOTAL.labels(status="success")._value.get() == initial_del_success + 1
+
+
+async def test_worker_updates_ui_on_generation_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AUD-040: Воркер информирует пользователя о попытке ретрая через редактирование статусного сообщения."""
+    generation = Generation(
+        id=13,
+        user_id=10,
+        prompt="тестовый промпт",
+        enriched_prompt={"text": "тестовый промпт"},
+        title="Тест",
+        status=GenerationStatus.PENDING,
+    )
+    session = FakeSession(generation)
+    telegram = FakeTelegramPort()
+
+    async def fake_run_generation(prompt: str, gen_id: int, on_progress, on_retry=None) -> bytes:
+        if on_retry:
+            await on_retry(1, 3, RuntimeError("Stream disconnect"))
+        return b"recovered_audio"
+
+    def fake_save_audio(audio_bytes: bytes, gen_id: int) -> tuple[str, int, str]:
+        p = tmp_path / f"gen_{gen_id}.mp3"
+        p.write_bytes(audio_bytes)
+        return str(p), len(audio_bytes), hashlib.sha256(audio_bytes).hexdigest()
+
+    monkeypatch.setattr(worker, "get_session", lambda: session)
+    monkeypatch.setattr(worker, "run_generation", fake_run_generation)
+    monkeypatch.setattr(worker, "save_audio_to_storage", fake_save_audio)
+    monkeypatch.setattr(worker, "is_generation_cancelled", AsyncMock(return_value=False))
+    monkeypatch.setattr(worker, "_publish_event", AsyncMock())
+    monkeypatch.setattr(worker, "claim_delivery_atomic", AsyncMock(return_value=True))
+
+    await worker.run_generation_task(_command(gen_id=13), _context(telegram))
+
+    retry_edits = [msg for msg in telegram.edited_messages if "переподключаюсь" in msg.get("text", "")]
+    assert len(retry_edits) == 1
+    assert "Попытка 1 из 3" in retry_edits[0]["text"]
