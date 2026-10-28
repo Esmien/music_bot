@@ -5,6 +5,7 @@
 FSM-диалога: валидации, ветвления и переходы состояний.
 """
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -126,6 +127,41 @@ def test_build_generation_prompt_plain_lyrics():
 
     assert "lyrics" in result
     assert "просто стихи о море" in result
+
+
+def test_build_generation_prompt_renders_lyria_brief_from_json():
+    text = json.dumps(
+        {
+            "genre_and_style": "russian rock, post-punk",
+            "mood": "Melancholic, Groovy",
+            "instrumentation": ["warm electric guitar", "TR-909 drum machine"],
+            "tempo_bpm": 128,
+            "vocal_style": "Male Baritone, deadpan delivery",
+            "language": "Russian",
+            "lyrics": "[Verse 1]\nВ три часа звенит сигнал,\nПрод упал — пора в дорогу.",
+            "song_structure": ["[Intro] Clean guitar, no vocals.", "[Verse 1] Bass and kick enter."],
+        }
+    )
+
+    result = enricher_handlers._build_generation_prompt(text=text)
+
+    assert result.startswith("Russian rock, post-punk.")
+    assert "Mood: Melancholic, Groovy." in result
+    assert "Instruments: warm electric guitar, TR-909 drum machine." in result
+    assert "128 BPM." in result
+    assert "sung in Russian" in result
+    assert "Structure: [Intro] -> [Verse 1]." in result
+    assert result.endswith("Lyrics:\n[Verse 1]\nВ три часа звенит сигнал,\nПрод упал — пора в дорогу.")
+    assert "{" not in result
+
+
+def test_build_generation_prompt_json_without_lyrics_falls_back():
+    text = json.dumps({"genre_and_style": "russian rock"})
+
+    result = enricher_handlers._build_generation_prompt(text=text)
+
+    assert "Create a song based on these lyrics" in result
+    assert text in result
 
 
 # --- handle_idea ---

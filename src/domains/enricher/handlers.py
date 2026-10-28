@@ -3,6 +3,7 @@
 import contextlib
 import html
 import logging
+import re
 from uuid import uuid4
 
 from aiogram import F, Router
@@ -53,6 +54,7 @@ from domains.enricher.keyboards import (
 )
 from domains.enricher.service import format_enriched_prompt, save_enriched_prompt
 from domains.enricher.state_models import EnrichmentFlowState
+from domains.enricher.validator import parse_enricher_json
 from domains.generation.fsm import MAX_PROMPT_LEN
 from shared.contracts.commands import StartEnrichment
 from shared.contracts.events import EnrichmentCompleted, GenerationFailed
@@ -65,14 +67,22 @@ router = Router()
 
 
 def _build_generation_prompt(text: str) -> str:
-    """Оборачивает пользовательский текст в промпт для генерации.
+    """Собирает промпт для Lyria из JSON обогатителя либо оборачивает исходный текст.
+
+    Lyria 3 ждёт один английский бриф по формуле
+    [жанр] + [настроение] + [инструменты] + [темп] + [вокал и язык] + Lyrics:
+    поэтому поля JSON рендерятся в этом порядке, а не отправляются как JSON-блоб.
 
     Args:
-        text: Обогащённый или исходный текст описания песни.
+        text: Обогащённый JSON или исходный текст описания песни.
 
     Returns:
         Промпт для сервиса генерации.
     """
+    brief = _lyria_brief_from_json(text=text)
+    if brief is not None:
+        return brief
+
     if any(marker in text for marker in PROMPT_MARKERS):
         return (
             "Create a song based on the following brief. "
@@ -80,6 +90,61 @@ def _build_generation_prompt(text: str) -> str:
             f"{text}"
         )
     return f"Create a song based on these lyrics. If the lyrics are in Russian, sing in Russian.\n\n{text}"
+
+
+_STRUCTURE_TAG_RE = re.compile(r"\[(?:Intro|Outro|Instrumental|Hook|Pre-Chorus|Verse \d+|Chorus|Bridge)[^\]]*\]")
+
+
+def _lyria_brief_from_json(text: str) -> str | None:
+    """Рендерит бриф Lyria из JSON-контракта обогатителя.
+
+    Args:
+        text: Строка, которая может быть JSON-объектом обогатителя.
+
+    Returns:
+        Готовый бриф или None, если строка не JSON или в ней нет текста песни.
+    """
+    try:
+        data = parse_enricher_json(raw=text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    lyrics = str(data.get("lyrics") or "").strip()
+    if not lyrics:
+        return None
+
+    parts: list[str] = []
+    genre = str(data.get("genre_and_style") or "").strip()
+    if genre:
+        parts.append(f"{genre[0].upper()}{genre[1:]}.")
+    mood = str(data.get("mood") or "").strip()
+    if mood:
+        parts.append(f"Mood: {mood}.")
+    instruments = [str(item).strip() for item in (data.get("instrumentation") or []) if str(item).strip()]
+    if instruments:
+        parts.append(f"Instruments: {', '.join(instruments)}.")
+    bpm = data.get("tempo_bpm")
+    if isinstance(bpm, (int, float)) and bpm:
+        parts.append(f"{int(bpm)} BPM.")
+    vocal = str(data.get("vocal_style") or "").strip()
+    language = str(data.get("language") or "Russian").strip() or "Russian"
+    if vocal:
+        parts.append(f"Vocals: {vocal}, sung in {language}.")
+
+    structure = [str(item).strip() for item in (data.get("song_structure") or []) if str(item).strip()]
+    if structure:
+        tags: list[str] = []
+        for line in structure:
+            match = _STRUCTURE_TAG_RE.search(line)
+            if match:
+                tags.append(match.group(0))
+        if tags:
+            parts.append(f"Structure: {' -> '.join(tags)}.")
+        parts.append(f"Arrangement: {' '.join(structure)}")
+
+    return " ".join(parts) + "\n\nLyrics:\n" + lyrics
 
 
 async def _is_actual_enrich(state: FSMContext, enrich_id: str) -> bool:
